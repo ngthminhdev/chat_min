@@ -162,7 +162,7 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
           </button>
         )}
         {caps.threads && chat.threaded && (
-          <button aria-label="Trả lời trong thread" data-tip="Trả lời trong thread" onClick={() => openThread(k, m)}>
+          <button aria-label={replies?.length ? "Trả lời trong thread" : "Mở thread"} data-tip={replies?.length ? "Trả lời trong thread" : "Mở thread"} onClick={() => openThread(k, m)}>
             <Icon name="message-circle-reply" />
           </button>
         )}
@@ -304,14 +304,7 @@ function MediaView({ accountId, media }: { accountId: string; media: Media }) {
 
 function ThreadLink({ k, m, replies, open }: { k: string; m: Msg; replies?: Msg[]; open: boolean }) {
   const n = replies?.length ?? 0;
-  if (!n) {
-    return (
-      <button className={`thread-link${open ? " open" : ""}`} onClick={() => openThread(k, m)}>
-        <Icon name="message-circle-reply" />
-        Mở thread <Icon name="external-link" />
-      </button>
-    );
-  }
+  if (!n) return null;
   const faces = [...new Map(replies!.map((r) => [r.senderName, r])).values()].slice(0, 3);
   return (
     <button className={`thread-link${open ? " open" : ""}`} onClick={() => openThread(k, m)}>
