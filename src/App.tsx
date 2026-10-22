@@ -4,7 +4,7 @@ import { api, openUrl } from "./lib/bridge";
 import { themeBase } from "./lib/themes";
 import {
   boot, chatKeyOf, closeTab, confirmDialog, isThreadTab, cycleTab, jumpUnread, markRead, promptDialog, toast, totalUnread, useApp,
-  openChat,
+  openChat, openSearch,
 } from "./store";
 import { Titlebar } from "./components/Titlebar";
 import { Sidebar } from "./components/Sidebar";
@@ -19,6 +19,7 @@ import { ResizeHandle } from "./components/ResizeHandle";
 import { Welcome } from "./views/Welcome";
 import { Wizard, startWizard } from "./views/Wizard";
 import { Inbox } from "./views/Inbox";
+import { MessageSearch } from "./views/MessageSearch";
 import { Settings } from "./views/Settings";
 import { Icon } from "./ui/Icon";
 
@@ -69,7 +70,7 @@ export default function App() {
   }, [prefs]);
 
   const page = route === "welcome" || route === "wizard";
-  const tabPage = route === "inbox" || route === "settings";
+  const tabPage = route === "inbox" || route === "settings" || route === "search";
   useEffect(() => {
     if (tabPage && window.matchMedia("(max-width: 760px)").matches) useApp.setState({ leftCollapsed: true });
   }, [tabPage, route]);
@@ -113,6 +114,8 @@ export default function App() {
                   <section className="page-view"><Inbox /></section>
                 ) : route === "settings" ? (
                   <section className="page-view"><Settings /></section>
+                ) : route === "search" ? (
+                  <section className="page-view"><MessageSearch /></section>
                 ) : threadTab ? (
                   <ThreadView tab={threadTab} />
                 ) : (
@@ -208,7 +211,7 @@ function useGlobalHandlers() {
             drafts: s.editing[a] ? { ...s.drafts, [a]: "" } : s.drafts,
           });
         }
-        if (s.route === "inbox" || s.route === "settings") return st({ route: "shell" });
+        if (s.route === "inbox" || s.route === "settings" || s.route === "search") return st({ route: "shell" });
         return;
       }
       if (!mod || s.dialog) return;
@@ -223,11 +226,11 @@ function useGlobalHandlers() {
       }
       if (lower === "f" && e.shiftKey) {
         e.preventDefault();
-        return st({ palette: { mode: "msgs" } });
+        return openSearch();
       }
       if (lower === "f" && chatKeyOf(s.active) && s.route === "shell") {
         e.preventDefault();
-        return st({ palette: { mode: "msgs", scope: chatKeyOf(s.active)! } });
+        return openSearch(chatKeyOf(s.active)!);
       }
       if (lower === "n") {
         e.preventDefault();
@@ -265,7 +268,7 @@ function useGlobalHandlers() {
       }
       if (lower === "w") {
         e.preventDefault();
-        if (s.route === "inbox" || s.route === "settings") return st({ route: "shell" });
+        if (s.route === "inbox" || s.route === "settings" || s.route === "search") return st({ route: "shell" });
         if (s.active) closeTab(s.active);
         return;
       }

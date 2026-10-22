@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { closeTab, openChat, useApp } from "../store";
 import { Icon } from "../ui/Icon";
 
-const PAGE_TABS = { inbox: ["inbox", "All inboxes"], settings: ["settings", "Settings"] } as const;
+const PAGE_TABS = { inbox: ["inbox", "All inboxes"], settings: ["settings", "Settings"], search: ["search", "Tìm tin nhắn"] } as const;
 
 export function Tabs() {
   const tabs = useApp((s) => s.tabs);
@@ -14,7 +14,7 @@ export function Tabs() {
   const drafts = useApp((s) => s.drafts);
   const threadTabs = useApp((s) => s.threadTabs);
   const strip = useRef<HTMLElement>(null);
-  const page = route === "inbox" || route === "settings" ? PAGE_TABS[route] : null;
+  const page = route === "inbox" || route === "settings" || route === "search" ? PAGE_TABS[route] : null;
 
   useEffect(() => {
     strip.current?.querySelector(".tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });

@@ -527,7 +527,7 @@ async fn download(core: C<'_>, account_id: String, file_ref: String, name: Strin
 }
 #[tauri::command]
 fn search(core: C, query: String, account_id: Option<String>, chat_id: Option<String>, limit: i64) -> Res<Vec<Msg>> {
-    let scope = account_id.as_deref().zip(chat_id.as_deref());
+    let scope = account_id.as_deref().map(|a| (a, chat_id.as_deref().unwrap_or("")));
     core.store().search(&query, scope, limit)
 }
 #[tauri::command]

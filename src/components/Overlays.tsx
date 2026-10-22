@@ -4,7 +4,7 @@ import { api } from "../lib/bridge";
 import { esc, hm, norm, plain } from "../lib/format";
 import { COLORS, COLOR_LABELS } from "../lib/platforms";
 import type { Msg } from "../lib/types";
-import { key, openChat, splitKey, useApp, type Pop } from "../store";
+import { key, openChat, splitKey, useApp, openSearch, type Pop } from "../store";
 import { removeAccount, renameAccount } from "../App";
 import { startWizard } from "../views/Wizard";
 import { ChatAvatar, PersonAvatar } from "../ui/Avatar";
@@ -62,7 +62,7 @@ export function Overlays() {
 // ── command palette: ⌘K chats & commands, ⌘⇧F message search ────────────────
 const COMMANDS: [IconName, string, string, () => void][] = [
   ["user-plus", "Thêm account", "⌘N", () => startWizard()],
-  ["message-square-text", "Tìm trong tin nhắn", "⌘⇧F", () => useApp.setState({ palette: { mode: "msgs" } })],
+  ["message-square-text", "Tìm trong tin nhắn", "⌘⇧F", () => openSearch()],
   ["inbox", "All inboxes", "", () => useApp.setState({ route: "inbox" })],
   ["settings", "Settings", "⌘,", () => useApp.setState({ route: "settings" })],
   ["pencil", "Đổi tên account hiện tại", "⌘E", () => renameAccount()],
@@ -267,7 +267,7 @@ function PaletteBody({ mode, scope }: { mode: "chats" | "msgs"; scope?: string }
       />
       <div className="palette-mode" role="group" aria-label="Phạm vi tìm kiếm">
         <button className={mode === "chats" ? "on" : ""} aria-pressed={mode === "chats"} onClick={() => useApp.setState({ palette: { mode: "chats" } })}>Chat & lệnh <kbd className="kbd">⌘K</kbd></button>
-        <button className={mode === "msgs" ? "on" : ""} aria-pressed={mode === "msgs"} onClick={() => useApp.setState({ palette: { mode: "msgs", scope } })}>Tin nhắn <kbd className="kbd">⌘⇧F</kbd></button>
+        <button className={mode === "msgs" ? "on" : ""} aria-pressed={mode === "msgs"} onClick={() => openSearch(scope)}>Tin nhắn <kbd className="kbd">⌘⇧F</kbd></button>
         <button className="palette-close" aria-label="Đóng tìm kiếm" onClick={close}><Icon name="x" /></button>
       </div>
       <div className="cmd-list" id="palette-results" role="listbox" aria-label="Kết quả tìm kiếm" aria-busy={searching} ref={list}>

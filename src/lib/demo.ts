@@ -178,7 +178,8 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
       const q = String(a.query).normalize("NFD").replace(/\p{M}/gu, "").replace(/đ/g, "d").toLowerCase();
       return Object.values(msgs)
         .flat()
-        .filter((x) => (!a.chatId || x.chatId === a.chatId) && x.text.normalize("NFD").replace(/\p{M}/gu, "").replace(/đ/g, "d").toLowerCase().includes(q))
+        .filter((x) => (!a.accountId || x.accountId === a.accountId) && (!a.chatId || x.chatId === a.chatId) && `${x.text} ${x.media?.name ?? ""}`.normalize("NFD").replace(/\p{M}/gu, "").replace(/đ/g, "d").toLowerCase().includes(q))
+        .sort((x, y) => y.ts - x.ts)
         .slice(0, a.limit);
     }
     case "download":

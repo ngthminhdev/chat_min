@@ -1,3 +1,4 @@
+import { openSearch } from "../store";
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { dayKey, dayLabel, fmtCount, hm, plain } from "../lib/format";
@@ -98,7 +99,7 @@ export function Conversation() {
           aria-label="Tìm trong chat này"
           data-tip="Tìm trong chat này"
           data-kbd="⌘F"
-          onClick={() => useApp.setState({ palette: { mode: "msgs", scope: active } })}
+          onClick={() => openSearch(active)}
         >
           <Icon name="search" />
         </button>

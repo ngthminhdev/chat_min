@@ -204,7 +204,7 @@ impl Store {
             .prepare(
                 "SELECT m.data FROM messages_fts f
                  JOIN messages m ON m.account_id = f.account_id AND m.chat_id = f.chat_id AND m.id = f.id
-                 WHERE messages_fts MATCH ?1 AND (?2 = '' OR (f.account_id = ?2 AND f.chat_id = ?3))
+                 WHERE messages_fts MATCH ?1 AND (?2 = '' OR f.account_id = ?2) AND (?3 = '' OR f.chat_id = ?3)
                  ORDER BY json_extract(m.data, '$.ts') DESC LIMIT ?4",
             )
             .map_err(e)?;
@@ -282,6 +282,20 @@ mod tests {
         s.put_msg(&msg("1", 1, "đã đổi nội dung")).unwrap();
         assert!(s.search("rollback", None, 10).unwrap().is_empty());
         assert_eq!(s.search("doi", None, 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn search_filters_account_without_requiring_a_chat() {
+        let s = Store::memory();
+        let first = msg("1", 1, "deploy service");
+        let mut second = msg("2", 2, "deploy other chat");
+        second.chat_id = "other".into();
+        let mut third = msg("3", 3, "deploy other account");
+        third.account_id = "b".into();
+        s.put_msg(&first).unwrap(); s.put_msg(&second).unwrap(); s.put_msg(&third).unwrap();
+        assert_eq!(s.search("deploy", Some(("a", "")), 100).unwrap().len(), 2);
+        assert_eq!(s.search("deploy", Some(("a", "c")), 100).unwrap().len(), 1);
+        assert_eq!(s.search("deploy", None, 100).unwrap().len(), 3);
     }
 
     #[test]

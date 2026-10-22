@@ -6,7 +6,7 @@ import { createNotificationDeduper } from "./lib/notification-deduper";
 import type { Account, Chat, CoreEvent, Health, Media, Msg } from "./lib/types";
 import type { IconName } from "./ui/Icon";
 
-export type Route = "shell" | "inbox" | "settings" | "welcome" | "wizard";
+export type Route = "shell" | "inbox" | "settings" | "search" | "welcome" | "wizard";
 export type InspTab = "info" | "members" | "files" | "media" | "pinned";
 
 /** Chats and their message lists are keyed by "accountId|chatId". */
@@ -62,6 +62,9 @@ interface State {
   tabs: string[];
   active: string | null;
   route: Route;
+  searchQuery: string;
+  searchScope: string;
+  searchAccount: string;
   wizardFor: string | null;
   drafts: Record<string, string>;
   replyTo: Record<string, string>;
@@ -127,6 +130,9 @@ export const useApp = create<State>(() => ({
   tabs: saved.tabs ?? [],
   active: saved.active ?? null,
   route: "shell",
+  searchQuery: "",
+  searchScope: "",
+  searchAccount: "",
   wizardFor: null,
   drafts: saved.drafts ?? {},
   replyTo: {},
@@ -632,4 +638,9 @@ export async function toggleReaction(k: string, m: Msg, emoji: string) {
     set((s) => ({ msgs: { ...s.msgs, [k]: (s.msgs[k] ?? []).map((x) => (x.id === m.id ? m : x)) } }));
     fail(e);
   }
+}
+
+/** Dedicated message search, independent of the command palette. */
+export function openSearch(scope = "") {
+  set({ route: "search", palette: null, pop: null, searchScope: scope, searchAccount: scope ? splitKey(scope)[0] : "" });
 }

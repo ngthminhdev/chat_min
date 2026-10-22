@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { THEMES } from "../lib/themes";
-import { useApp } from "../store";
+import { useApp, openSearch } from "../store";
 import { startWizard } from "../views/Wizard";
 import { Icon } from "../ui/Icon";
 
@@ -21,21 +21,21 @@ export function Titlebar() {
       <div className="traffic" data-tauri-drag-region>
         <span className="app-name">ChatMin</span>
       </div>
-      <button className="search" type="button" aria-label="Mở command palette" onClick={() => useApp.setState({ palette: { mode: "chats" } })}>
+      <button className="search" type="button" aria-label="Tìm trong tin nhắn" onClick={() => openSearch()}>
         <Icon name="search" />
-        <span>Nhảy tới chat, người, lệnh…</span>
-        <kbd>⌘K</kbd>
+        <span>Tìm tin nhắn…</span>
+        <kbd>⌘⇧F</kbd>
       </button>
       <div className="toolbar" data-tauri-drag-region>
         <button
           className="tool-btn icon-only lg"
           type="button"
-          aria-label="Tìm trong tin nhắn"
-          data-tip="Tìm nội dung tin nhắn mọi account"
-          data-kbd="⌘⇧F"
-          onClick={() => useApp.setState({ palette: { mode: "msgs" } })}
+          aria-label="Mở command palette"
+          data-tip="Chuyển chat và chạy lệnh"
+          data-kbd="⌘K"
+          onClick={() => useApp.setState({ palette: { mode: "chats" } })}
         >
-          <Icon name="message-square-text" />
+          <Icon name="layers" />
         </button>
         <details
           className="appearance-menu"
