@@ -3,7 +3,7 @@ import { MotionConfig } from "motion/react";
 import { api, openUrl } from "./lib/bridge";
 import { themeBase } from "./lib/themes";
 import {
-  boot, chatKeyOf, closeTab, confirmDialog, isThreadTab, cycleTab, jumpUnread, key, markRead, promptDialog, sortedChats, toast, totalUnread, useApp,
+  boot, chatKeyOf, closeTab, confirmDialog, isThreadTab, cycleTab, jumpUnread, markRead, promptDialog, toast, totalUnread, useApp,
   openChat,
 } from "./store";
 import { Titlebar } from "./components/Titlebar";
@@ -246,12 +246,12 @@ function useGlobalHandlers() {
         e.preventDefault();
         return jumpUnread(k === "ArrowDown" ? 1 : -1);
       }
+      // ⌘1…8 → that open tab, ⌘9 → the last one (browser convention)
       if (/^[1-9]$/.test(k)) {
-        const a = s.accounts[Number(k) - 1];
-        if (!a) return;
+        const t = k === "9" ? s.tabs[s.tabs.length - 1] : s.tabs[Number(k) - 1];
+        if (!t) return;
         e.preventDefault();
-        const first = sortedChats(s.chats, a.id)[0];
-        if (first) void openChat(key(first.accountId, first.id));
+        void openChat(t);
         return;
       }
       if (lower === "e") {

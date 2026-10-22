@@ -160,11 +160,22 @@ function MessageList({ k }: { k: string }) {
   const [below, setBelow] = useState(0);
   const auto = useApp((s) => !!s.trAuto[k]);
 
-  const visible = useMemo(() => (list ?? []).filter((m) => !(chat?.threaded && m.threadReply)), [list, chat?.threaded]);
-  const replies = useMemo(() => {
+  // threaded spaces show thread starters with their replies folded underneath; a thread
+  // whose starter isn't loaded (older page, deleted) is led by its earliest reply instead
+  const { visible, replies } = useMemo(() => {
+    const all = list ?? [];
     const r: Record<string, Msg[]> = {};
-    if (chat?.threaded) for (const m of list ?? []) if (m.threadReply && m.threadId) (r[m.threadId] ??= []).push(m);
-    return r;
+    if (!chat?.threaded) return { visible: all, replies: r };
+    const led = new Set(all.filter((m) => !m.threadReply).map((m) => m.threadId));
+    const vis: Msg[] = [];
+    for (const m of all) {
+      if (!m.threadReply || !m.threadId) vis.push(m);
+      else if (!led.has(m.threadId)) {
+        led.add(m.threadId);
+        vis.push(m);
+      } else (r[m.threadId] ??= []).push(m);
+    }
+    return { visible: vis, replies: r };
   }, [list, chat?.threaded]);
 
   useEffect(() => {

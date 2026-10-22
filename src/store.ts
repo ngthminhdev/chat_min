@@ -488,9 +488,33 @@ export async function loadLatest(k: string) {
         unreadMark: mark,
       };
     });
+    void fillRoots(k);
   } catch (e) {
     set((s) => ({ loadErr: { ...s.loadErr, [k]: String(e) }, msgs: { ...s.msgs, [k]: s.msgs[k] ?? [] } }));
   }
+}
+
+/** Threaded spaces: a page of recent replies can lack the messages that started their
+ *  threads, which leaves the timeline empty. Fetch those threads (oldest first, so the
+ *  starter comes along). Each thread is tried once per session. */
+const rootTried = new Set<string>();
+async function fillRoots(k: string) {
+  const s = get();
+  if (!s.chats[k]?.threaded) return;
+  const list = s.msgs[k] ?? [];
+  const roots = new Set(list.filter((m) => !m.threadReply).map((m) => m.threadId));
+  const missing = [...new Set(list.filter((m) => m.threadReply && m.threadId && !roots.has(m.threadId)).map((m) => m.threadId))]
+    .filter((t) => !rootTried.has(`${k}#${t}`))
+    .slice(-8);
+  if (!missing.length) return;
+  missing.forEach((t) => rootTried.add(`${k}#${t}`));
+  const [accountId, chatId] = splitKey(k);
+  const pages = await Promise.all(missing.map((t) => api.thread(accountId, chatId, t).catch(() => [] as Msg[])));
+  set((st) => {
+    let next = st.msgs[k] ?? [];
+    for (const page of pages) for (const m of page) next = upsert(next, m);
+    return { msgs: { ...st.msgs, [k]: next } };
+  });
 }
 
 export async function loadOlder(k: string) {
@@ -506,6 +530,7 @@ export async function loadOlder(k: string) {
       for (const m of page) next = upsert(next, m);
       return { msgs: { ...st.msgs, [k]: next }, older: { ...st.older, [k]: page.length < PAGE / 2 ? "done" : "idle" } };
     });
+    void fillRoots(k);
   } catch {
     set((st) => ({ older: { ...st.older, [k]: "idle" } }));
   }

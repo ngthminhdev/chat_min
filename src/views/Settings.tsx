@@ -11,7 +11,7 @@ import { Glyph, Icon, type IconName } from "../ui/Icon";
 
 const SHORTCUTS: [string, string][] = [
   ["Thêm account", "⌘N"], ["Chat & lệnh", "⌘K"], ["Tìm tin mọi account", "⌘⇧F"], ["Tìm trong chat", "⌘F"],
-  ["Đổi account", "⌘1…9"], ["Tab trước / sau", "⌘[ / ⌘]"], ["Chat chưa đọc", "⌘↑ / ⌘↓"], ["Đổi tên account", "⌘E"],
+  ["Tới tab 1…8 / tab cuối", "⌘1…8 / ⌘9"], ["Tab trước / sau", "⌘[ / ⌘]"], ["Chat chưa đọc", "⌘↑ / ⌘↓"], ["Đổi tên account", "⌘E"],
   ["Xoá account", "⌘⌫"], ["Sidebar / Inspector", "⌘B / ⌘I"], ["Sửa tin vừa gửi", "↑"], ["Huỷ trả lời", "Esc"],
   ["Settings", "⌘,"], ["Đóng tab", "⌘W"], ["Gợi ý trả lời", "⌘J"], ["Dịch nháp", "⌘⇧L"],
 ];
