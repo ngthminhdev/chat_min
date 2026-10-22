@@ -14,6 +14,7 @@ import { ThreadView } from "./components/ThreadView";
 import { Inspector } from "./components/Inspector";
 import { Statusbar } from "./components/Statusbar";
 import { Overlays } from "./components/Overlays";
+import { Viewer } from "./components/Viewer";
 import { ResizeHandle } from "./components/ResizeHandle";
 import { Welcome } from "./views/Welcome";
 import { Wizard, startWizard } from "./views/Wizard";
@@ -152,6 +153,7 @@ export default function App() {
         </footer>
       </div>
       <Overlays />
+      <Viewer />
     </MotionConfig>
   );
 }
@@ -193,6 +195,7 @@ function useGlobalHandlers() {
       const k = e.key;
       const inField = (e.target as HTMLElement).matches?.("input, textarea, select");
       if (k === "Escape") {
+        if (s.viewer) return st({ viewer: null });
         if (s.dialog) return st({ dialog: null });
         if (s.pop) return st({ pop: null });
         if (s.palette) return st({ palette: null });

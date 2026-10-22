@@ -468,6 +468,55 @@ async fn set_muted(core: C<'_>, account_id: String, chat_id: String, muted: bool
     }
 }
 #[tauri::command]
+async fn delete_chat(core: C<'_>, account_id: String, chat_id: String, revoke: bool) -> Res<()> {
+    let core = core.inner().clone();
+    if core.platform(&account_id) != "telegram" {
+        return Err("Google Chat không cho xoá cuộc trò chuyện qua API".into());
+    }
+    core.tg.delete_chat(&core, &account_id, &chat_id, revoke).await
+}
+/// Copies a downloaded file out of ChatMin's folders: to `dest` (from a save dialog) or,
+/// when empty, into ~/Downloads without overwriting anything. Returns where it landed.
+#[tauri::command]
+fn save_file(core: C, src: String, name: String, dest: Option<String>) -> Res<String> {
+    let src = std::fs::canonicalize(&src).map_err(|e| e.to_string())?;
+    // only files the app itself downloaded: the webview must not copy arbitrary paths
+    let inside = |d: &PathBuf| std::fs::canonicalize(d).map(|d| src.starts_with(d)).unwrap_or(false);
+    if !inside(&core.data_dir) && !inside(&core.cache_dir) {
+        return Err("File nằm ngoài thư mục của ChatMin".into());
+    }
+    let dest = match dest.filter(|d| !d.is_empty()) {
+        Some(d) => PathBuf::from(d),
+        None => {
+            let dir = core.app.path().download_dir().map_err(|e| e.to_string())?;
+            unique_path(&dir, &save_name(&name, &src))
+        }
+    };
+    std::fs::copy(&src, &dest).map_err(|e| e.to_string())?;
+    Ok(dest.to_string_lossy().into())
+}
+
+/// Display name → a safe file name, borrowing the source's extension when it has none
+/// ("GIF", "Video tròn").
+fn save_name(name: &str, src: &std::path::Path) -> String {
+    let base = std::path::Path::new(name).file_name().and_then(|n| n.to_str()).unwrap_or("file").replace(['/', ':'], "-");
+    match (std::path::Path::new(&base).extension(), src.extension().and_then(|e| e.to_str())) {
+        (None, Some(ext)) => format!("{base}.{ext}"),
+        _ => base,
+    }
+}
+
+fn unique_path(dir: &std::path::Path, name: &str) -> PathBuf {
+    let p = std::path::Path::new(name);
+    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
+    let ext = p.extension().and_then(|e| e.to_str()).map(|e| format!(".{e}")).unwrap_or_default();
+    std::iter::once(dir.join(name))
+        .chain((1..).map(|i| dir.join(format!("{stem} ({i}){ext}"))))
+        .find(|c| !c.exists())
+        .unwrap()
+}
+
+#[tauri::command]
 async fn download(core: C<'_>, account_id: String, file_ref: String, name: String) -> Res<String> {
     let core = core.inner().clone();
     if core.platform(&account_id) == "telegram" {
@@ -530,6 +579,8 @@ pub fn run() {
             ai_config,
             ai_config_set,
             ai_run,
+            delete_chat,
+            save_file,
             tg_login_start,
             tg_phone,
             tg_code,
@@ -558,4 +609,23 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running ChatMin");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn save_names() {
+        let src = std::path::Path::new("/x/files/animation_12.mp4");
+        assert_eq!(save_name("GIF", src), "GIF.mp4");
+        assert_eq!(save_name("report.pdf", src), "report.pdf");
+        assert_eq!(save_name("../../etc/passwd", src), "passwd.mp4");
+        let dir = std::env::temp_dir().join(format!("chatmin-save-{}", now_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("photo.jpg"), b"").unwrap();
+        assert_eq!(unique_path(&dir, "photo.jpg"), dir.join("photo (1).jpg"));
+        assert_eq!(unique_path(&dir, "new.jpg"), dir.join("new.jpg"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

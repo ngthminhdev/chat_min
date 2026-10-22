@@ -112,3 +112,9 @@ Spec: `docs/superpowers/specs/2026-10-22-chatmin-design.md`. Prototype export: `
 - On api.anthropic.com: `output_config.effort: "low"` + server-side refusal fallback (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`) for Opus 5 / Fable 5.1 / Sonnet 5.5; any 400 retries once without the extras.
 - FE `src/ai.ts`: `tr` (inline translations, not persisted), `trAuto` (whole-chat mode, MessageList effect translates new incoming msgs), `aiLang` (per-chat writing language), prefs `aiMe` / `aiTo`.
 - UI: msg hover/menu "Dịch"; header 文A toggle = dịch cả chat; composer ✨ gợi ý (⌘J), 文A dịch nháp (⌘⇧L), tag `EN` chọn ngôn ngữ per chat, "Khôi phục bản gốc"; Settings › AI.
+
+## Media viewer + xoá chat (2026-10-22)
+- Root cause "click ảnh không làm gì": `opener:allow-open-path` không có scope → plugin chặn mọi path, lỗi bị nuốt. Capability giờ: `opener:default` (http/https/mailto/tel + reveal) + open-path scope `$APPDATA/**`, `$APPCACHE/**`. CSP thêm `media-src … asset:` (thiếu thì `<video>`/`<audio>` bị default-src chặn).
+- `components/Viewer.tsx` (store `viewer`): ảnh fit/100% khi click, video có tiếng; Esc đóng. MediaView: video ≤5MB / GIF / video tròn tự tải và phát muted loop inline; voice phát inline `<audio>`; chuột phải ảnh/video/file → Xem / Mở bằng app / Finder / Sao chép tên. GChat attachment `video/*` → kind "video".
+- Xoá chat (sidebar chuột phải): Telegram `tg.delete_chat` — private: deleteChatHistory(remove_from_list, revoke tuỳ chọn); basic group: leave + clear; supergroup/channel: leave. Google Chat không xoá được qua API → `hideChat` (store `hidden`, persisted; hiện lại khi lastTs mới hơn).
+- Lưu file: `save_file` (lib.rs) chỉ copy file nằm trong data/cache dir; không dest → ~/Downloads, tự đánh số "name (1).ext", mượn đuôi từ file nguồn. FE `saveMedia` (store) — menu chuột phải media/file, Viewer ⌘S / ⌘⇧S, Inspector file row.

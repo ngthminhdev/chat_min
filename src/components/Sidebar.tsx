@@ -6,7 +6,7 @@ import { EASE } from "../lib/motion";
 import { HEALTH_LABELS, PLATFORMS } from "../lib/platforms";
 import type { Account, Chat, Msg } from "../lib/types";
 import {
-  chatKeyOf, fail, key, loadLatest, markRead, openChat, openThreadTab, orderedAccounts, sortedChats, toast, toggleFavorite,
+  chatKeyOf, confirmDialog, fail, hideChat, key, loadLatest, markRead, openChat, openThreadTab, orderedAccounts, sortedChats, toast, toggleFavorite,
   totalUnread, useApp, type MenuItem,
 } from "../store";
 import { ChatAvatar } from "../ui/Avatar";
@@ -300,8 +300,41 @@ function chatMenu(k: string, c: Chat): MenuItem[] {
       },
     },
     { icon: "copy", label: "Sao chép ID chat", run: () => void navigator.clipboard.writeText(c.id).then(() => toast("Đã sao chép ID")) },
+    ...removeItems(k, c),
   ];
   return items.filter(Boolean) as MenuItem[];
+}
+
+function removeItems(k: string, c: Chat): MenuItem[] {
+  const platform = useApp.getState().accounts.find((a) => a.id === c.accountId)?.platform;
+  const name = c.title || "chat này";
+  if (platform !== "telegram") {
+    return [{
+      icon: "x",
+      label: "Ẩn khỏi ChatMin",
+      run: () => {
+        hideChat(k);
+        toast(`Đã ẩn “${name}” — sẽ hiện lại khi có tin mới`, "info");
+      },
+    }];
+  }
+  const del = (title: string, message: string, ok: string, revoke: boolean) => () =>
+    confirmDialog(title, message, ok, () =>
+      api.deleteChat(c.accountId, c.id, revoke).then(() => toast(`Đã xoá “${name}”`)).catch(fail),
+    );
+  if (c.kind === "dm") {
+    return [
+      { icon: "trash-2", label: "Xoá chat…", danger: true, run: del(`Xoá chat với “${name}”?`, "Lịch sử bị xoá ở phía bạn. Người kia vẫn giữ tin nhắn.", "Xoá chat", false) },
+      { icon: "trash-2", label: "Xoá cả hai phía…", danger: true, run: del(`Xoá chat với “${name}” cho cả hai bên?`, "Toàn bộ tin nhắn bị xoá ở cả hai phía. Không hoàn tác được.", "Xoá cả hai phía", true) },
+    ];
+  }
+  const what = c.kind === "channel" ? "kênh" : "nhóm";
+  return [{
+    icon: "trash-2",
+    label: `Rời ${what}…`,
+    danger: true,
+    run: del(`Rời ${what} “${name}”?`, `Bạn sẽ không nhận tin từ ${what} này nữa và nó biến khỏi danh sách chat.`, `Rời ${what}`, false),
+  }];
 }
 
 interface RowProps {

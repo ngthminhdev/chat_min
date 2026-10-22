@@ -587,6 +587,34 @@ impl Tg {
         if open { f::open_chat(chat, c).await } else { f::close_chat(chat, c).await }.map_err(err)
     }
 
+    /// Telegram's "delete chat": private chats are cleared and dropped from the list
+    /// (`revoke` clears the other side too), basic groups are left then cleared,
+    /// supergroups and channels are left.
+    pub async fn delete_chat(&self, core: &Arc<Core>, account_id: &str, chat_id: &str, revoke: bool) -> R<()> {
+        let c = self.client(account_id)?;
+        let chat: i64 = chat_id.parse().unwrap_or(0);
+        let enums::Chat::Chat(ch) = f::get_chat(chat, c).await.map_err(err)?;
+        match ch.r#type {
+            ChatType::Private(_) | ChatType::Secret(_) => f::delete_chat_history(chat, true, revoke, c).await.map_err(err)?,
+            ChatType::BasicGroup(_) => {
+                f::leave_chat(chat, c).await.map_err(err)?;
+                f::delete_chat_history(chat, true, false, c).await.map_err(err)?;
+            }
+            ChatType::Supergroup(_) => {
+                f::leave_chat(chat, c).await.map_err(err)?;
+                // public supergroups refuse this; leaving already took it off the list
+                let _ = f::delete_chat_history(chat, true, false, c).await;
+            }
+        }
+        self.with(c, |a| {
+            if let Some(ch) = a.chats.get_mut(&chat) {
+                ch.order = 0;
+            }
+        });
+        core.remove_chat(account_id, chat_id);
+        Ok(())
+    }
+
     pub async fn set_muted(&self, account_id: &str, chat_id: &str, muted: bool) -> R<()> {
         let c = self.client(account_id)?;
         let chat: i64 = chat_id.parse().unwrap_or(0);

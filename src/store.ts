@@ -1,9 +1,9 @@
 import { create } from "zustand";
-import { api, notify, onEvent } from "./lib/bridge";
+import { api, notify, onEvent, saveFile } from "./lib/bridge";
 import { plain } from "./lib/format";
 import { PLATFORMS, type Cap } from "./lib/platforms";
 import { createNotificationDeduper } from "./lib/notification-deduper";
-import type { Account, Chat, CoreEvent, Health, Msg } from "./lib/types";
+import type { Account, Chat, CoreEvent, Health, Media, Msg } from "./lib/types";
 import type { IconName } from "./ui/Icon";
 
 export type Route = "shell" | "inbox" | "settings" | "welcome" | "wizard";
@@ -90,6 +90,10 @@ interface State {
   auth: Record<string, AuthState>;
   sync: Record<string, SyncState>;
   jumpTo: string | null;
+  /** chats hidden from the sidebar → lastTs when hidden; a newer message brings them back */
+  hidden: Record<string, number>;
+  /** full-window image/video viewer */
+  viewer: { media: Media; path: string } | null;
   /** inline translations, keyed "chatKey#msgId" — never persisted */
   tr: Record<string, Translation>;
   /** chats translating every message as it loads */
@@ -147,6 +151,8 @@ export const useApp = create<State>(() => ({
   auth: {},
   sync: {},
   jumpTo: null,
+  hidden: saved.hidden ?? {},
+  viewer: null,
   tr: {},
   trAuto: saved.trAuto ?? {},
   aiLang: saved.aiLang ?? {},
@@ -160,11 +166,11 @@ let persistT: ReturnType<typeof setTimeout> | undefined;
 useApp.subscribe((s) => {
   clearTimeout(persistT);
   persistT = setTimeout(() => {
-    const { tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, favorites, accountOrder, trAuto, aiLang } = s;
+    const { tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, favorites, accountOrder, trAuto, aiLang, hidden } = s;
     try {
       localStorage.setItem(
         PERSIST,
-        JSON.stringify({ tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, favorites, accountOrder, trAuto, aiLang }),
+        JSON.stringify({ tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, favorites, accountOrder, trAuto, aiLang, hidden }),
       );
     } catch {}
   }, 300);
@@ -193,6 +199,33 @@ export const sortedChats = (chats: Record<string, Chat>, accountId: string) =>
 export const totalUnread = (chats: Record<string, Chat>) =>
   Object.values(chats).filter((c) => !c.muted).reduce((s, c) => s + c.unread, 0);
 
+/** Local only: drop a chat from the sidebar until its next message. */
+export function hideChat(k: string) {
+  set((s) => {
+    const chats = { ...s.chats };
+    const lastTs = chats[k]?.lastTs ?? Date.now();
+    delete chats[k];
+    const tabs = s.tabs.filter((t) => t !== k && s.threadTabs[t]?.chatKey !== k);
+    return {
+      chats,
+      tabs,
+      hidden: { ...s.hidden, [k]: lastTs },
+      favorites: s.favorites.filter((f) => f !== k),
+      active: s.active && tabs.includes(s.active) ? s.active : tabs[0] ?? null,
+    };
+  });
+}
+
+/** Save a downloaded file (quick → ~/Downloads, else a dialog) and say where it went. */
+export async function saveMedia(path: string, name: string, ask: boolean) {
+  try {
+    const out = await saveFile(path, name, ask);
+    if (out) toast(`Đã lưu ${out.replace(/^.*\/(Downloads\/)/, "$1")}`, "download");
+  } catch (e) {
+    fail(e);
+  }
+}
+
 // ── feedback ────────────────────────────────────────────────────────────────
 let toastId = 0;
 export function toast(text: string, icon: IconName = "check") {
@@ -217,7 +250,8 @@ if (import.meta.hot) import.meta.hot.dispose(() => { eventOff?.(); eventOff = nu
 async function bootOnce() {
   const st = await api.appState();
   const chats: Record<string, Chat> = {};
-  for (const c of st.chats) chats[key(c.accountId, c.id)] = c;
+  const hidden = get().hidden;
+  for (const c of st.chats) if (!(c.lastTs <= hidden[key(c.accountId, c.id)])) chats[key(c.accountId, c.id)] = c;
   const tabs = get().tabs.filter((t) => chats[t] || (isThreadTab(t) && chats[get().threadTabs[t]?.chatKey ?? ""]));
   const active = get().active && tabs.includes(get().active!) ? get().active : tabs[0] ?? null;
   set({
@@ -281,6 +315,14 @@ export function applyEvent(e: CoreEvent) {
       return;
     case "chat": {
       const k = key(e.chat.accountId, e.chat.id);
+      const hid = get().hidden[k];
+      if (hid !== undefined) {
+        if (e.chat.lastTs <= hid) return;
+        set((s) => {
+          const { [k]: _, ...hidden } = s.hidden;
+          return { hidden };
+        });
+      }
       set((s) => ({ chats: { ...s.chats, [k]: e.chat } }));
       // the open chat stays read while it is on screen
       if (e.chat.unread > 0 && isWatching(k)) markRead(k);
@@ -291,8 +333,8 @@ export function applyEvent(e: CoreEvent) {
       set((s) => {
         const chats = { ...s.chats };
         delete chats[k];
-        const tabs = s.tabs.filter((t) => t !== k);
-        return { chats, tabs, active: s.active === k ? tabs[0] ?? null : s.active };
+        const tabs = s.tabs.filter((t) => t !== k && s.threadTabs[t]?.chatKey !== k);
+        return { chats, tabs, favorites: s.favorites.filter((f) => f !== k), active: s.active && tabs.includes(s.active) ? s.active : tabs[0] ?? null };
       });
       return;
     }

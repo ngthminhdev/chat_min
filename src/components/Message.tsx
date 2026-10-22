@@ -1,11 +1,11 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import { motion } from "motion/react";
 import { EASE } from "../lib/motion";
 import { fileSrc, openPath, openUrl, revealPath } from "../lib/bridge";
 import { fileSize, fmt, hm, plain } from "../lib/format";
 import { CAP_OFF_NOTE, type Cap } from "../lib/platforms";
 import type { Chat, Media, Msg } from "../lib/types";
-import { anchor, confirmDialog, fail, openThreadTab, retry, toast, toggleReaction, useApp, type MenuItem } from "../store";
+import { anchor, confirmDialog, fail, openThreadTab, retry, saveMedia, toast, toggleReaction, useApp, type MenuItem } from "../store";
 import { api } from "../lib/bridge";
 import { PersonAvatar } from "../ui/Avatar";
 import { Icon, type IconName } from "../ui/Icon";
@@ -203,8 +203,37 @@ const FILE_ICON = (name: string): IconName =>
 
 function MediaView({ accountId, media }: { accountId: string; media: Media }) {
   const isImage = media.kind === "image" || (media.kind === "sticker" && !!media.fileRef);
-  const dl = useDownload(accountId, media, isImage && (media.size === 0 || media.size < 15e6));
+  const isVideo = media.kind === "video";
+  // GIFs, round videos and short clips play inline, muted, like Telegram
+  const inline = isVideo && (media.name === "GIF" || media.name === "Video tròn" || (media.size > 0 && media.size < 5e6));
+  const dl = useDownload(accountId, media, (isImage && (media.size === 0 || media.size < 15e6)) || inline);
+  const [playing, setPlaying] = useState(false);
   const ratio = media.width && media.height ? `${media.width}/${media.height}` : undefined;
+
+  const ensure = async () => {
+    const p = dl.path || (await dl.get());
+    if (!p) toast("Tải file không được", "circle-alert");
+    return p;
+  };
+  const view = async () => {
+    const p = await ensure();
+    if (p) useApp.setState({ viewer: { media, path: p } });
+  };
+  const menu = (e: React.MouseEvent, viewable: boolean) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const items: MenuItem[] = media.url
+      ? [{ icon: "external-link", label: "Mở trên Google Drive", run: () => void openUrl(media.url) }]
+      : [
+          ...(viewable ? [{ icon: "image" as const, label: "Xem", run: () => void view() }] : []),
+          { icon: "external-link", label: "Mở bằng app mặc định", run: () => void ensure().then((p) => { if (p) openPath(p).catch(fail); }) },
+          { icon: "folder-open", label: "Hiện trong Finder", run: () => void ensure().then((p) => { if (p) revealPath(p).catch(fail); }) },
+          { icon: "download", label: "Lưu vào Downloads", run: () => void ensure().then((p) => { if (p) void saveMedia(p, media.name, false); }) },
+          { icon: "download", label: "Lưu thành…", run: () => void ensure().then((p) => { if (p) void saveMedia(p, media.name, true); }) },
+          { icon: "copy", label: "Sao chép tên file", run: () => void navigator.clipboard.writeText(media.name).then(() => toast("Đã sao chép")) },
+        ];
+    useApp.setState({ pop: { kind: "menu", x: e.clientX, y: e.clientY, top: e.clientY, items } });
+  };
 
   if (isImage) {
     const src = dl.path ? fileSrc(dl.path) : media.thumb;
@@ -212,48 +241,64 @@ function MediaView({ accountId, media }: { accountId: string; media: Media }) {
       <figure
         className={`img-msg${media.kind === "sticker" ? " sticker" : ""}${dl.path ? "" : " pending"}`}
         style={{ aspectRatio: ratio }}
-        onClick={() => dl.path && void openPath(dl.path)}
+        onClick={() => void view()}
+        onContextMenu={(e) => menu(e, true)}
       >
         {src ? <img className="od-media" src={src} alt={media.name} /> : <span className="veil-spinner" />}
       </figure>
     );
   }
-  if (media.kind === "video" && media.thumb) {
+  if (isVideo) {
+    const live = inline && dl.path;
     return (
-      <figure className="img-msg video" style={{ aspectRatio: ratio }} onClick={() => void dl.get().then((p) => { if (p) void openPath(p); })}>
-        <img className="od-media" src={media.thumb} alt={media.name} />
-        <span className="play">{dl.state === "loading" ? <span className="veil-spinner" /> : <Icon name="play" />}</span>
+      <figure
+        className={`img-msg video${media.name === "Video tròn" ? " round" : ""}`}
+        style={{ aspectRatio: ratio ?? "16/9" }}
+        onClick={() => void view()}
+        onContextMenu={(e) => menu(e, true)}
+      >
+        {live ? (
+          <video className="od-media" src={fileSrc(dl.path)} poster={media.thumb || undefined} muted loop autoPlay playsInline />
+        ) : media.thumb ? (
+          <img className="od-media" src={media.thumb} alt={media.name} />
+        ) : null}
+        {!live && <span className="play">{dl.state === "loading" ? <span className="veil-spinner" /> : <Icon name="play" />}</span>}
+        <span className="media-badge">{media.name === "GIF" ? "GIF" : media.size > 0 ? fileSize(media.size) : "Video"}</span>
       </figure>
     );
   }
-  const icon: IconName = media.kind === "voice" ? "audio-lines" : media.kind === "video" ? "film" : FILE_ICON(media.name);
+  const voice = media.kind === "voice";
+  const icon: IconName = voice ? "audio-lines" : FILE_ICON(media.name);
   const act = async () => {
     if (media.url) return void openUrl(media.url);
-    const p = dl.path || (await dl.get());
-    if (p) void openPath(p);
-    else toast("Tải file không được", "circle-alert");
+    const p = await ensure();
+    if (!p) return;
+    if (voice) setPlaying(true);
+    else openPath(p).catch(fail);
   };
   return (
-    <div className="file-card">
-      <span className="file-ic"><Icon name={icon} /></span>
-      <span style={{ minWidth: 0 }}>
-        <strong>{media.name}</strong>
-        <small>{media.url ? "Google Drive" : [fileSize(media.size), dl.path ? "đã tải" : ""].filter(Boolean).join(" · ")}</small>
-      </span>
-      <button
-        className="tool-btn icon-only"
-        aria-label={`Mở ${media.name}`}
-        data-tip={media.url ? "Mở trên Drive" : dl.path ? "Mở" : "Tải về"}
-        onClick={act}
-        onContextMenu={(e) => {
-          if (!dl.path) return;
-          e.preventDefault();
-          void revealPath(dl.path);
-        }}
-      >
-        {dl.state === "loading" ? <span className="veil-spinner" /> : <Icon name={media.url ? "external-link" : dl.path ? "folder-open" : "download"} />}
-      </button>
-    </div>
+    <>
+      <div className="file-card" onContextMenu={(e) => menu(e, false)}>
+        <span className="file-ic"><Icon name={icon} /></span>
+        <span style={{ minWidth: 0 }}>
+          <strong>{media.name}</strong>
+          <small>{media.url ? "Google Drive" : [fileSize(media.size), dl.path ? "đã tải" : ""].filter(Boolean).join(" · ")}</small>
+        </span>
+        <button
+          className="tool-btn icon-only"
+          aria-label={voice ? "Phát" : `Mở ${media.name}`}
+          data-tip={voice ? "Phát" : media.url ? "Mở trên Drive" : dl.path ? "Mở" : "Tải về"}
+          onClick={act}
+        >
+          {dl.state === "loading" ? (
+            <span className="veil-spinner" />
+          ) : (
+            <Icon name={voice ? "play" : media.url ? "external-link" : dl.path ? "folder-open" : "download"} />
+          )}
+        </button>
+      </div>
+      {voice && playing && dl.path && <audio className="voice-audio" src={fileSrc(dl.path)} controls autoPlay />}
+    </>
   );
 }
 

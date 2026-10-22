@@ -183,6 +183,10 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
     }
     case "download":
       throw new Error("Demo không có file thật");
+    case "delete_chat":
+      await wait(200);
+      emit({ type: "chatRemoved", accountId: a.accountId, chatId: a.chatId });
+      return;
     case "ai_config":
       return { ...ai, hasKey: true };
     case "ai_config_set":

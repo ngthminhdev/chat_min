@@ -50,6 +50,7 @@ export const api = {
   markRead: (accountId: string, chatId: string, msgIds: string[]) => call<void>("mark_read", { accountId, chatId, msgIds }),
   setOpen: (accountId: string, chatId: string, open: boolean) => call<void>("set_open", { accountId, chatId, open }),
   setMuted: (accountId: string, chatId: string, muted: boolean) => call<void>("set_muted", { accountId, chatId, muted }),
+  deleteChat: (accountId: string, chatId: string, revoke: boolean) => call<void>("delete_chat", { accountId, chatId, revoke }),
   download: (accountId: string, fileRef: string, name: string) => call<string>("download", { accountId, fileRef, name }),
   search: (query: string, limit = 40, accountId?: string, chatId?: string) => call<Msg[]>("search", { query, limit, accountId, chatId }),
   aiConfig: () => call<AiView>("ai_config"),
@@ -84,6 +85,20 @@ export async function pickFile(filters?: { name: string; extensions: string[] }[
   const { open } = await import("@tauri-apps/plugin-dialog");
   const picked = await open({ multiple: false, directory: false, filters });
   return typeof picked === "string" ? picked : null;
+}
+
+/** Copy a downloaded file out of the app: `ask` shows a save dialog, otherwise ~/Downloads.
+ *  Resolves to the saved path, or null when the dialog was cancelled. */
+export async function saveFile(src: string, name: string, ask: boolean): Promise<string | null> {
+  if (!isTauri) return null;
+  let dest: string | undefined;
+  if (ask) {
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    const picked = await save({ defaultPath: name, title: "Lưu file" });
+    if (!picked) return null;
+    dest = picked;
+  }
+  return invoke<string>("save_file", { src, name, dest });
 }
 
 export async function notify(title: string, body: string) {

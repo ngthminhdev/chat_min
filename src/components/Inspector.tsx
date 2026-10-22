@@ -4,7 +4,7 @@ import { api, fileSrc } from "../lib/bridge";
 import { fileSize, fmtCount, hm, norm, plain } from "../lib/format";
 import { CAP_LABELS, CAP_OFF_NOTE, PLATFORMS, type Cap } from "../lib/platforms";
 import type { Member, Msg } from "../lib/types";
-import { capsOf, chatKeyOf, fail, useApp, type InspTab } from "../store";
+import { capsOf, chatKeyOf, fail, saveMedia, toast, useApp, type InspTab } from "../store";
 import { ChatAvatar, PersonAvatar } from "../ui/Avatar";
 import { Glyph, Icon } from "../ui/Icon";
 import { useDownload } from "./Conversation";
@@ -224,10 +224,26 @@ function FileRow({ m }: { m: Msg }) {
     const { openPath, openUrl } = await import("../lib/bridge");
     if (m.media!.url) return void openUrl(m.media!.url);
     const p = dl.path || (await dl.get());
-    if (p) void openPath(p);
+    if (p) openPath(p).catch(fail);
+  };
+  const menu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (m.media!.url) return;
+    const ensure = async () => dl.path || (await dl.get());
+    useApp.setState({
+      pop: {
+        kind: "menu", x: e.clientX, y: e.clientY, top: e.clientY,
+        items: [
+          { icon: "external-link", label: "Mở", run: () => void open() },
+          { icon: "download", label: "Lưu vào Downloads", run: () => void ensure().then((p) => { if (p) void saveMedia(p, m.media!.name, false); }) },
+          { icon: "download", label: "Lưu thành…", run: () => void ensure().then((p) => { if (p) void saveMedia(p, m.media!.name, true); }) },
+          { icon: "message-square-text", label: "Tới tin nhắn", run: () => useApp.setState({ jumpTo: m.id }) },
+        ],
+      },
+    });
   };
   return (
-    <div className="file-row">
+    <div className="file-row" onContextMenu={menu}>
       <span className="file-ic"><Icon name={m.media!.kind === "voice" ? "audio-lines" : "file-text"} /></span>
       <span style={{ minWidth: 0 }}>
         <b>{m.media!.name}</b>
@@ -254,8 +270,27 @@ function MediaTab({ imgs }: { imgs: Msg[] }) {
 function MediaCell({ m }: { m: Msg }) {
   const dl = useDownload(m.accountId, m.media, m.media!.kind === "image");
   const src = dl.path && m.media!.kind === "image" ? fileSrc(dl.path) : m.media!.thumb;
+  const view = async () => {
+    const p = dl.path || (await dl.get());
+    if (p) useApp.setState({ viewer: { media: m.media!, path: p } });
+    else toast("Tải file không được", "circle-alert");
+  };
   return (
-    <figure onClick={() => useApp.setState({ jumpTo: m.id })}>
+    <figure
+      onClick={() => void view()}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        useApp.setState({
+          pop: {
+            kind: "menu", x: e.clientX, y: e.clientY, top: e.clientY,
+            items: [
+              { icon: "image", label: "Xem", run: () => void view() },
+              { icon: "message-square-text", label: "Tới tin nhắn", run: () => useApp.setState({ jumpTo: m.id }) },
+            ],
+          },
+        });
+      }}
+    >
       {src ? <img className="od-media" src={src} alt="" /> : <div className="media-ph" />}
       <figcaption>
         {(m.outgoing ? "Bạn" : m.senderName).split(" ").pop()} · {hm(m.ts)}

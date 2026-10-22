@@ -878,7 +878,13 @@ fn to_msg(account_id: &str, me: &str, m: &Value) -> Msg {
         let mime = a["contentType"].as_str().unwrap_or_default();
         let drive = a["driveDataRef"]["driveFileId"].as_str();
         Media {
-            kind: if mime.starts_with("image/") && drive.is_none() { "image" } else { "file" }.into(),
+            kind: match mime.split('/').next() {
+                _ if drive.is_some() => "file",
+                Some("image") => "image",
+                Some("video") => "video",
+                _ => "file",
+            }
+            .into(),
             name: a["contentName"].as_str().unwrap_or("file").into(),
             mime: mime.into(),
             file_ref: a["attachmentDataRef"]["resourceName"].as_str().unwrap_or_default().into(),
