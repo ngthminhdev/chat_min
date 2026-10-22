@@ -217,12 +217,11 @@ button.tab-close { padding: 0; border: 0; background: transparent; font-family: 
 
 /* NEW: hover action bar (glass) */
 .msg-actions {
-  position: absolute; top: 0; left: 0; right: auto; transform: translateY(calc(-100% - 4px)); display: flex; gap: 2px; padding: 3px;
+  position: absolute; top: 0; right: 0; left: auto; transform: translateY(calc(-100% - 4px)); display: flex; gap: 2px; padding: 3px;
   background: var(--glass); backdrop-filter: blur(16px) saturate(160%); border: 1px solid var(--line-2);
   border-radius: var(--radius-md); box-shadow: var(--shadow); opacity: 0; pointer-events: none;
   transition: opacity var(--motion-fast) var(--ease-ui); z-index: var(--z-raised);
 }
-.msg.me .msg-actions { right: 0; left: auto; }
 .msg:hover .msg-actions, .msg:focus-within .msg-actions { opacity: 1; pointer-events: auto; }
 .msg-actions button { width: 26px; height: 26px; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-2); }
 .msg-actions button:hover { background: var(--pane-3); color: var(--text); }
