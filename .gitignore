@@ -1,13 +1,35 @@
+# deps / build
 node_modules/
 dist/
 src-tauri/target/
 src-tauri/gen/
+*.tsbuildinfo
+
+# secrets — never commit (full account access)
+.env
+.env.*
+!.env.example
+.secrets/
+secrets/
+client_secret_*.json
+*.pem
+*.key
+*.p12
+tg.session
+gchat-token.json
+gchat-credentials.json
+
+# local tooling
 .worktrees/
 .superpowers/
+.codegraph/
 .claude/settings.local.json
+.vscode/
+.idea/
+
+# audit backups (git history replaces them)
+docs/audits/*-before/
+
+# os / logs
 .DS_Store
 *.log
-spike/.secrets/
-spike/.env
-spike/client_secret_*.json
-.codegraph/
