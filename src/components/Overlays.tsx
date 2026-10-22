@@ -4,7 +4,7 @@ import { api } from "../lib/bridge";
 import { esc, hm, norm, plain } from "../lib/format";
 import { COLORS, COLOR_LABELS } from "../lib/platforms";
 import type { Msg } from "../lib/types";
-import { key, openChat, splitKey, useApp, openSearch, type Pop } from "../store";
+import { forwardMsg, key, openChat, splitKey, useApp, openSearch, type Pop } from "../store";
 import { removeAccount, renameAccount } from "../App";
 import { startWizard } from "../views/Wizard";
 import { ChatAvatar, PersonAvatar } from "../ui/Avatar";
@@ -97,7 +97,7 @@ function Palette() {
             exit={{ opacity: 0, scale: 0.98, y: -6, transition: { duration: 0.1 } }}
             transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
           >
-            <PaletteBody key={palette.mode + (palette.scope ?? "")} mode={palette.mode} scope={palette.scope} />
+            <PaletteBody key={palette.mode + (palette.scope ?? "") + (palette.forward?.id ?? "")} mode={palette.mode} scope={palette.scope} forward={palette.forward} />
           </motion.div>
         </motion.div>
       )}
@@ -105,7 +105,7 @@ function Palette() {
   );
 }
 
-function PaletteBody({ mode, scope }: { mode: "chats" | "msgs"; scope?: string }) {
+function PaletteBody({ mode, scope, forward }: { mode: "chats" | "msgs"; scope?: string; forward?: Msg }) {
   const chats = useApp((s) => s.chats);
   const accounts = useApp((s) => s.accounts);
   const tabs = useApp((s) => s.tabs);
@@ -153,11 +153,11 @@ function PaletteBody({ mode, scope }: { mode: "chats" | "msgs"; scope?: string }
         seen.add(k);
         return !nq || norm(c.title).includes(nq) || norm(acc(c.accountId)?.name ?? "").includes(nq);
       });
-      matched.slice(0, nq ? 14 : 6).forEach((c, i) => {
+      matched.filter((c) => !forward || c.canSend).slice(0, nq || forward ? 14 : 6).forEach((c, i) => {
         const a = acc(c.accountId);
         out.push({
-          group: i === 0 ? (nq ? "Chat" : "Gần đây") : undefined,
-          run: () => void openChat(key(c.accountId, c.id)),
+          group: i === 0 ? (forward ? "Chuyển tiếp tới" : nq ? "Chat" : "Gần đây") : undefined,
+          run: () => (forward ? void forwardMsg(forward, key(c.accountId, c.id)) : void openChat(key(c.accountId, c.id))),
           node: (
             <>
               <ChatAvatar chat={c} size="sm" platform={a?.platform} />
@@ -174,7 +174,7 @@ function PaletteBody({ mode, scope }: { mode: "chats" | "msgs"; scope?: string }
           ),
         });
       });
-      COMMANDS.filter(([, l]) => !nq || norm(l).includes(nq)).forEach(([ic, l, kbd, run], i) =>
+      if (!forward) COMMANDS.filter(([, l]) => !nq || norm(l).includes(nq)).forEach(([ic, l, kbd, run], i) =>
         out.push({
           group: i === 0 ? "Lệnh" : undefined,
           run,
@@ -239,7 +239,8 @@ function PaletteBody({ mode, scope }: { mode: "chats" | "msgs"; scope?: string }
   };
 
   const placeholder =
-    mode === "msgs" ? (scopeChat ? `Tìm trong ${scopeChat.title}…` : "Tìm nội dung tin nhắn trong mọi account…") : "Nhảy tới chat, người, hoặc gõ lệnh…";
+    forward ? `Chuyển tiếp “${(plain(forward.text) || forward.media?.name || "tin nhắn").slice(0, 40)}” tới…`
+    : mode === "msgs" ? (scopeChat ? `Tìm trong ${scopeChat.title}…` : "Tìm nội dung tin nhắn trong mọi account…") : "Nhảy tới chat, người, hoặc gõ lệnh…";
   return (
     <>
       <input
@@ -296,7 +297,7 @@ function PaletteBody({ mode, scope }: { mode: "chats" | "msgs"; scope?: string }
       </div>
       <div className="palette-foot">
         <span>↑↓ chọn</span>
-        <span>↵ mở</span>
+        <span>{forward ? "↵ chuyển tiếp" : "↵ mở"}</span>
         <span>Esc đóng</span>
       </div>
     </>
@@ -479,7 +480,7 @@ function Toasts() {
           <motion.div
             key={t.id}
             layout
-            className={`toast${t.icon === "circle-alert" ? " error" : ""}`}
+            className={`toast ${t.icon === "circle-alert" ? "error" : t.icon === "info" ? "info" : "ok"}`}
             role="status"
             initial={{ opacity: 0, y: 12, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}

@@ -1,17 +1,20 @@
 import type { Platform } from "./types";
 
 // CAPABILITY: one layout for every platform. A feature the platform lacks is hidden or
-// dimmed with a tooltip — never a platform-specific screen. Add Messenger/Zalo here.
+// dimmed with a tooltip — never a platform-specific screen. Messenger/Zalo are web apps (see web.rs).
 export type Cap = "reply" | "reactions" | "edit" | "delete" | "pin" | "threads" | "stickers" | "voice" | "readReceipts" | "typing";
 
 export const PLATFORMS: Record<Platform, { name: string; caps: Record<Cap, boolean> }> = {
   telegram: {
     name: "Telegram",
-    caps: { reply: true, reactions: true, edit: true, delete: true, pin: true, threads: false, stickers: false, voice: false, readReceipts: true, typing: true },
+    caps: { reply: true, reactions: true, edit: true, delete: true, pin: true, threads: false, stickers: true, voice: true, readReceipts: true, typing: true },
   },
+  // web apps run in their own webview: ChatMin's own message tools don't apply
+  messenger: { name: "Messenger", caps: { reply: false, reactions: false, edit: false, delete: false, pin: false, threads: false, stickers: false, voice: false, readReceipts: false, typing: false } },
+  zalo: { name: "Zalo", caps: { reply: false, reactions: false, edit: false, delete: false, pin: false, threads: false, stickers: false, voice: false, readReceipts: false, typing: false } },
   gchat: {
     name: "Google Chat",
-    caps: { reply: true, reactions: true, edit: true, delete: true, pin: false, threads: true, stickers: false, voice: false, readReceipts: false, typing: false },
+    caps: { reply: true, reactions: true, edit: true, delete: true, pin: false, threads: true, stickers: false, voice: true, readReceipts: false, typing: false },
   },
 };
 
@@ -23,8 +26,7 @@ export const CAP_LABELS: Record<Cap, string> = {
 
 export const CAP_OFF_NOTE: Partial<Record<Cap, string>> = {
   threads: "Telegram không có thread — dùng Trả lời",
-  stickers: "ChatMin chưa hỗ trợ gửi sticker",
-  voice: "ChatMin chưa hỗ trợ ghi âm",
+  stickers: "Google Chat không có sticker",
   readReceipts: "Google Chat không trả “đã xem” cho space/nhóm",
   pin: "Google Chat API không hỗ trợ ghim tin",
   typing: "Google Chat API không có trạng thái đang gõ",

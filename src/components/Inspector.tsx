@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { api, fileSrc } from "../lib/bridge";
-import { fileSize, fmtCount, hm, norm, plain } from "../lib/format";
+import { dayLabel, fileSize, fmtCount, hm, listTime, norm, plain } from "../lib/format";
 import { CAP_LABELS, CAP_OFF_NOTE, PLATFORMS, type Cap } from "../lib/platforms";
 import type { Member, Msg } from "../lib/types";
-import { capsOf, chatKeyOf, fail, saveMedia, toast, useApp, type InspTab } from "../store";
+import { capsOf, chatKeyOf, fail, loadTopics, openThreadTab, openTopicTab, saveMedia, threadTabKey, toast, useApp, type InspTab } from "../store";
 import { ChatAvatar, PersonAvatar } from "../ui/Avatar";
 import { Glyph, Icon } from "../ui/Icon";
 import { useDownload } from "./Conversation";
@@ -36,6 +36,20 @@ export function Inspector() {
     </div>
   );
 
+  if (chat.kind === "web") {
+    return (
+      <aside className="inspector" aria-label="Thông tin chat">
+        {head}
+        <div className="inspector-scroll">
+          <div className="insp-empty">
+            <Icon name="external-link" />
+            {account.name} chạy bằng chính trang web của {PLATFORMS[account.platform].name}, đăng nhập riêng cho account này.
+            Tin nhắn không đi qua ChatMin nên không có tìm kiếm, dịch hay tóm tắt.
+          </div>
+        </div>
+      </aside>
+    );
+  }
   const msgs = (list ?? []).filter((m) => !m.deleted);
   const files = msgs.filter((m) => m.media && (m.media.kind === "file" || m.media.kind === "voice" || (m.media.kind === "video" && !m.media.thumb)));
   const imgs = msgs.filter((m) => m.media && (m.media.kind === "image" || (m.media.kind === "video" && m.media.thumb)));
@@ -46,6 +60,7 @@ export function Inspector() {
     ["files", "File", files.length || undefined],
     ["media", "Ảnh", imgs.length || undefined],
     ...(caps.pin ? [["pinned", "Ghim"] as [InspTab, string]] : []),
+    ...(chat.threaded || chat.forum ? [["threads", chat.forum ? "Topics" : "Threads"] as [InspTab, string]] : []),
   ];
 
   return (
@@ -73,6 +88,7 @@ export function Inspector() {
           {tab === "files" && <FilesTab files={files} />}
           {tab === "media" && <MediaTab imgs={imgs} />}
           {tab === "pinned" && <PinnedTab k={active} />}
+          {tab === "threads" && (chat.forum ? <TopicsTab k={active} /> : chat.threaded ? <ThreadsTab k={active} /> : null)}
         </motion.div>
       </AnimatePresence>
     </aside>
@@ -331,5 +347,77 @@ function PinnedTab({ k }: { k: string }) {
         </button>
       ))}
     </>
+  );
+}
+
+/** Google Chat threads of the loaded history, most recently active first. */
+function ThreadsTab({ k }: { k: string }) {
+  const list = useApp((s) => s.msgs[k]);
+  const tabs = useApp((s) => s.tabs);
+  const rows = useMemo(() => {
+    const roots = (list ?? []).filter((m) => !m.threadReply && m.threadId && !m.deleted && m.kind !== "service");
+    const replies: Record<string, Msg[]> = {};
+    for (const m of list ?? []) if (m.threadReply) (replies[m.threadId] ??= []).push(m);
+    return roots
+      .map((r) => ({ root: r, replies: replies[r.threadId] ?? [], last: Math.max(r.ts, ...(replies[r.threadId] ?? []).map((x) => x.ts)) }))
+      .filter((x) => x.replies.length)
+      .sort((a, b) => b.last - a.last);
+  }, [list]);
+  if (!list) return <div className="insp-empty"><span className="veil-spinner" /></div>;
+  if (!rows.length) return <div className="insp-empty"><Icon name="message-circle-reply" />Chưa có thread nào trong phần đã tải</div>;
+  return (
+    <div className="side-threads">
+      {rows.map(({ root, replies, last }) => {
+        const faces = [...new Map(replies.map((r) => [r.senderName, r])).values()].slice(0, 3);
+        return (
+          <button key={root.id} className={`side-thread${tabs.includes(threadTabKey(k, root.threadId)) ? " open" : ""}`} onClick={() => openThreadTab(k, root)}>
+            <span className="hd">
+              <b>{root.outgoing ? "Bạn" : root.senderName}</b>
+              <time>{dayLabel(last).split(" · ")[0]} {hm(last)}</time>
+            </span>
+            <span className="tx">{plain(root.text) || root.media?.name}</span>
+            <span className="meta">
+              <span className="faces">{faces.map((f) => <PersonAvatar key={f.senderName} name={f.senderName} accountId={f.accountId} photo={f.senderPhoto} />)}</span>
+              {replies.length} trả lời
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Telegram forum topics: name, unread, last message; click opens the topic tab. */
+function TopicsTab({ k }: { k: string }) {
+  const topics = useApp((s) => s.topics[k]);
+  const tabs = useApp((s) => s.tabs);
+  useEffect(() => {
+    void loadTopics(k);
+  }, [k]);
+  if (!topics) return <div className="insp-empty"><span className="veil-spinner" /></div>;
+  if (!topics.length) return <div className="insp-empty"><Icon name="hash" />Nhóm chưa có topic</div>;
+  return (
+    <div className="side-threads">
+      {topics.map((t) => (
+        <button key={t.id} className={`side-thread topic${tabs.includes(threadTabKey(k, t.id)) ? " open" : ""}`} onClick={() => openTopicTab(k, t)}>
+          <span className="hd">
+            <b>
+              <i className="topic-dot" style={{ background: `#${(t.color || 0x6fb9f0).toString(16).padStart(6, "0")}` }} />
+              {t.name}
+              {t.pinned && <Icon name="pin" />}
+              {t.closed && <Icon name="lock" />}
+            </b>
+            <time>{listTime(t.lastTs)}</time>
+          </span>
+          <span className="tx">{t.previewFrom ? `${t.previewFrom}: ` : ""}{t.preview || "Chưa có tin nhắn"}</span>
+          {(t.unread > 0 || t.mention) && (
+            <span className="meta">
+              {t.mention && <Icon name="at-sign" />}
+              {t.unread > 0 && <span className="badge unread">{t.unread}</span>}
+            </span>
+          )}
+        </button>
+      ))}
+    </div>
   );
 }

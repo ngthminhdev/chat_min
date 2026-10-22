@@ -44,6 +44,29 @@ pub struct Chat {
     pub photo: String,
     /// TDLib file id still to download for the avatar
     pub photo_ref: String,
+    /// Telegram supergroup with topics
+    #[serde(default)]
+    pub forum: bool,
+}
+
+/// A topic of a Telegram forum supergroup.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Topic {
+    pub account_id: String,
+    pub chat_id: String,
+    pub id: String,
+    pub name: String,
+    /// topic icon colour, 0xRRGGBB
+    pub color: i32,
+    pub unread: i32,
+    pub mention: bool,
+    pub last_ts: i64,
+    pub preview: String,
+    pub preview_from: String,
+    pub pinned: bool,
+    pub closed: bool,
+    pub general: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]

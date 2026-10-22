@@ -1,15 +1,16 @@
-import { openSearch } from "../store";
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { dayKey, dayLabel, fmtCount, hm, plain } from "../lib/format";
+import { dayKey, dayLabel, fmtCount } from "../lib/format";
 import type { Msg } from "../lib/types";
-import { capsOf, healthOf, loadLatest, loadOlder, splitKey, toast, useApp } from "../store";
+import { capsOf, healthOf, loadLatest, loadOlder, splitKey, threadTabKey, toast, useApp, openSearch } from "../store";
 import { api } from "../lib/bridge";
 import { startWizard } from "../views/Wizard";
 import { ChatAvatar, PersonAvatar } from "../ui/Avatar";
 import { Icon } from "../ui/Icon";
 import { Composer } from "./Composer";
-import { MessageItem, openThread } from "./Message";
+import { MessageItem } from "./Message";
+import { SummaryButton, SummaryCard } from "./Summary";
+import { useStickyScroll } from "./useStickyScroll";
 import { langLabel, toggleAutoTranslate, translateMissing } from "../ai";
 
 const HEALTH_MSG: Record<string, string> = {
@@ -24,7 +25,8 @@ export function Conversation() {
   const chat = useApp((s) => (s.active ? s.chats[s.active] : undefined));
   const health = useApp((s) => (chat ? s.health[chat.accountId] : undefined));
   const platform = useApp((s) => s.accounts.find((a) => a.id === chat?.accountId)?.platform);
-  const view = useApp((s) => (s.active ? s.convTab[s.active] : undefined)) ?? "msgs";
+  const insp = useApp((s) => s.inspTab);
+  const rightOff = useApp((s) => s.rightCollapsed);
   const auto = useApp((s) => (s.active ? !!s.trAuto[s.active] : false));
   const aiMe = useApp((s) => s.prefs.aiMe);
   const threadCount = useApp((s) => (s.active && chat?.threaded ? new Set((s.msgs[s.active] ?? []).filter((m) => m.threadReply).map((m) => m.threadId)).size : 0));
@@ -53,6 +55,7 @@ export function Conversation() {
       </div>
     );
   }
+  if (chat.kind === "web") return <WebConversation chatKey={active} />;
   const h = healthOf(chat.accountId).health;
   const banner = HEALTH_MSG[h];
   const sub =
@@ -69,22 +72,19 @@ export function Conversation() {
           <strong>{chat.title}</strong>
           <span>{sub}</span>
         </div>
-        {chat.threaded && (
-          <div className="mini-tabs conv-tabs" role="tablist" aria-label="Chế độ xem">
-            {([["msgs", "Tin nhắn"], ["threads", "Threads"]] as const).map(([v, l]) => (
-              <button
-                key={v}
-                role="tab"
-                aria-selected={view === v}
-                className={view === v ? "active" : ""}
-                onClick={() => useApp.setState((s) => ({ convTab: { ...s.convTab, [active]: v } }))}
-              >
-                {l}
-                {v === "threads" && threadCount > 0 && <small>{threadCount}</small>}
-              </button>
-            ))}
-          </div>
+        {(chat.threaded || chat.forum) && (
+          <button
+            className={`tool-btn conv-threads${insp === "threads" && !rightOff ? " active" : ""}`}
+            aria-label={chat.forum ? "Topics" : "Threads"}
+            data-tip={chat.forum ? "Danh sách topic (right dock)" : "Danh sách thread (right dock)"}
+            onClick={() => useApp.setState({ inspTab: "threads", rightCollapsed: false })}
+          >
+            <Icon name="message-circle-reply" />
+            {chat.forum ? "Topics" : "Threads"}
+            {!chat.forum && threadCount > 0 && <small>{threadCount}</small>}
+          </button>
         )}
+        <SummaryButton tab={active} />
         <button
           className={`tool-btn icon-only${auto ? " active" : ""}`}
           aria-label="Dịch cả chat"
@@ -137,7 +137,8 @@ export function Conversation() {
           </div>
         )}
       </div>
-      {chat.threaded && view === "threads" ? <ThreadList k={active} key={`t-${active}`} /> : <MessageList k={active} key={active} />}
+      <SummaryCard tab={active} />
+      <MessageList k={active} key={active} />
       <Composer k={active} key={`c-${active}`} />
     </div>
   );
@@ -155,10 +156,6 @@ function MessageList({ k }: { k: string }) {
   const jumpTo = useApp((s) => s.jumpTo);
   const caps = capsOf(k);
   const box = useRef<HTMLDivElement>(null);
-  const prevHeight = useRef(0);
-  const prevFirst = useRef<string | undefined>(undefined);
-  const stick = useRef(true);
-  const [below, setBelow] = useState(0);
   const auto = useApp((s) => !!s.trAuto[k]);
 
   // threaded spaces show thread starters with their replies folded underneath; a thread
@@ -183,27 +180,13 @@ function MessageList({ k }: { k: string }) {
     if (auto) void translateMissing(k, visible);
   }, [auto, k, visible.length, visible[visible.length - 1]?.id]);
 
-  // keep the reading position: stick to the bottom for new messages, hold still when
-  // older pages are prepended above
-  useLayoutEffect(() => {
-    const el = box.current;
-    if (!el) return;
-    const first = visible[0]?.id;
-    if (prevFirst.current && first !== prevFirst.current && el.scrollHeight > prevHeight.current && !stick.current) {
-      el.scrollTop += el.scrollHeight - prevHeight.current;
-    } else if (stick.current) {
-      el.scrollTop = el.scrollHeight;
-    } else {
-      setBelow((n) => n + 1);
-    }
-    prevFirst.current = first;
-    prevHeight.current = el.scrollHeight;
-  }, [visible.length, visible[visible.length - 1]?.id]);
+  const scroll = useStickyScroll(box, visible[visible.length - 1]?.id, () => void loadOlder(k));
 
   useEffect(() => {
     if (!jumpTo) return;
     const el = document.getElementById(`m-${jumpTo}`);
     if (el) {
+      scroll.release();
       el.scrollIntoView({ block: "center", behavior: "smooth" });
       el.classList.remove("flash");
       void el.offsetWidth;
@@ -216,21 +199,6 @@ function MessageList({ k }: { k: string }) {
       useApp.setState({ jumpTo: null });
     }
   }, [jumpTo, list, older, k]);
-
-  const onScroll = () => {
-    const el = box.current!;
-    stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-    if (stick.current && below) setBelow(0);
-    if (el.scrollTop < 200) {
-      prevHeight.current = el.scrollHeight;
-      void loadOlder(k);
-    }
-  };
-
-  const toBottom = () => {
-    box.current?.scrollTo({ top: box.current.scrollHeight, behavior: "smooth" });
-    setBelow(0);
-  };
 
   let body: React.ReactNode;
   if (!list) {
@@ -291,7 +259,7 @@ function MessageList({ k }: { k: string }) {
                 last={!group(m, next)}
                 fresh={!!fresh[m.id]}
                 replies={m.threadId ? replies[m.threadId] : undefined}
-                threadOpen={!!m.threadId && threadTabs.includes(`thread:${m.threadId}`)}
+                threadOpen={!!m.threadId && threadTabs.includes(threadTabKey(k, m.threadId))}
               />
             </Fragment>
           );
@@ -310,82 +278,83 @@ function MessageList({ k }: { k: string }) {
   }
 
   return (
-    <div className="msgs" ref={box} onScroll={onScroll} aria-live="polite">
+    <div className="msgs" ref={box} onScroll={scroll.onScroll} aria-live="polite">
       <div className="msgs-inner">{body}</div>
-      <AnimatePresence>
-        {below > 0 && (
-          <motion.button
-            className="jump-bottom"
-            initial={{ opacity: 0, y: 8, scale: 0.9 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 8, scale: 0.9 }}
-            onClick={toBottom}
-            aria-label="Tới tin mới nhất"
-          >
-            <Icon name="arrow-down" />
-            {below} tin mới
-          </motion.button>
-        )}
-      </AnimatePresence>
+      <JumpBottom away={scroll.away} fresh={scroll.fresh} onClick={scroll.toBottom} />
     </div>
   );
 }
 
 /** Google Chat space as a list of threads, most recently active first. */
-function ThreadList({ k }: { k: string }) {
-  const list = useApp((s) => s.msgs[k]);
-  const tabs = useApp((s) => s.tabs);
-  const rows = useMemo(() => {
-    const roots = (list ?? []).filter((m) => !m.threadReply && m.threadId && !m.deleted && m.kind !== "service");
-    const replies: Record<string, Msg[]> = {};
-    for (const m of list ?? []) if (m.threadReply) (replies[m.threadId] ??= []).push(m);
-    return roots
-      .map((r) => ({ root: r, replies: replies[r.threadId] ?? [], last: Math.max(r.ts, ...(replies[r.threadId] ?? []).map((x) => x.ts)) }))
-      .sort((a, b) => b.last - a.last);
-  }, [list]);
-  if (!list) return <div className="msgs"><div className="section-veil on"><span className="veil-spinner" /></div></div>;
+/** Messenger / Zalo: the site's own web app in a native webview laid over this box. */
+function WebConversation({ chatKey }: { chatKey: string }) {
+  const chat = useApp((s) => s.chats[chatKey]);
+  const platform = useApp((s) => s.accounts.find((a) => a.id === chat?.accountId)?.platform);
+  const account = useApp((s) => s.accounts.find((a) => a.id === chat?.accountId));
+  // the webview is native and always on top: step aside while an overlay is up
+  const covered = useApp((s) => !!(s.palette || s.pop || s.dialog || s.viewer));
+  const host = useRef<HTMLDivElement>(null);
+  const id = chat?.accountId ?? "";
+  useEffect(() => {
+    const el = host.current;
+    if (!el || !id) return;
+    if (covered) {
+      void api.webHide(id);
+      return;
+    }
+    const place = () => {
+      const r = el.getBoundingClientRect();
+      void api.webShow(id, { x: r.left, y: r.top, w: r.width, h: r.height }).catch((e) => toast(String(e), "circle-alert"));
+    };
+    place();
+    const ro = new ResizeObserver(place);
+    ro.observe(el);
+    window.addEventListener("resize", place);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", place);
+      void api.webHide(id);
+    };
+  }, [id, covered]);
+  if (!chat) return null;
   return (
-    <div className="msgs">
-      <div className="msgs-inner thread-list">
-        {rows.length ? (
-          rows.map(({ root, replies, last }) => {
-            const faces = [...new Map(replies.map((r) => [r.senderName, r])).values()].slice(0, 3);
-            return (
-              <button key={root.id} className={`thread-row${tabs.includes(`thread:${root.threadId}`) ? " open" : ""}`} onClick={() => openThread(k, root)}>
-                <PersonAvatar name={root.senderName} accountId={root.accountId} photo={root.senderPhoto} />
-                <span style={{ minWidth: 0 }}>
-                  <span className="hd">
-                    <b>{root.outgoing ? "Bạn" : root.senderName}</b>
-                    <time>{dayLabel(root.ts).split(" · ")[0]} {hm(root.ts)}</time>
-                  </span>
-                  <span className="tx">{plain(root.text) || root.media?.name}</span>
-                  <span className="meta">
-                    {replies.length ? (
-                      <>
-                        <span className="faces">
-                          {faces.map((f) => <PersonAvatar key={f.senderName} name={f.senderName} accountId={f.accountId} photo={f.senderPhoto} />)}
-                        </span>
-                        {replies.length} trả lời
-                        <small>lần cuối {hm(last)}</small>
-                      </>
-                    ) : (
-                      <small>Chưa có trả lời</small>
-                    )}
-                  </span>
-                </span>
-                <Icon name="chevron-right" className="count" />
-              </button>
-            );
-          })
-        ) : (
-          <div className="conv-empty">
-            <span className="ring"><Icon name="message-circle-reply" /></span>
-            <strong>Chưa có thread nào trong phần đã tải</strong>
-            <p>Thread bắt đầu khi ai đó trả lời một tin trong space.</p>
-          </div>
-        )}
+    <div className="content web-content">
+      <div className="conv-head">
+        <ChatAvatar chat={chat} platform={platform} />
+        <div className="title">
+          <strong>{account?.name ?? chat.title}</strong>
+          <span>{chat.description.replace(/^https:\/\//, "").replace(/\/$/, "")} · đăng nhập ngay trong khung bên dưới</span>
+        </div>
+        <button className="tool-btn icon-only" aria-label="Tải lại" data-tip="Tải lại trang" onClick={() => void api.webReload(id)}>
+          <Icon name="rotate-cw" />
+        </button>
+      </div>
+      <div className="web-host" ref={host}>
+        <span className="veil-spinner" /> Đang mở {chat.title}…
       </div>
     </div>
+  );
+}
+
+/** Floating "↓" — whenever scrolled away from the bottom, with a count of arrivals. */
+export function JumpBottom({ away, fresh, onClick }: { away: boolean; fresh: number; onClick: () => void }) {
+  return (
+    <AnimatePresence>
+      {(away || fresh > 0) && (
+        <motion.button
+          className={`jump-bottom${fresh ? " has-new" : ""}`}
+          initial={{ opacity: 0, y: 8, scale: 0.9 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 8, scale: 0.9 }}
+          onClick={onClick}
+          aria-label="Xuống tin mới nhất"
+          data-tip="Xuống tin mới nhất"
+        >
+          <Icon name="arrow-down" />
+          {fresh > 0 && <span>{fresh} tin mới</span>}
+        </motion.button>
+      )}
+    </AnimatePresence>
   );
 }
 

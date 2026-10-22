@@ -1,10 +1,13 @@
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { fmtCount, plain } from "../lib/format";
 import { capsOf, openChat, toast, useApp } from "../store";
 import { ChatAvatar } from "../ui/Avatar";
 import { Icon } from "../ui/Icon";
 import { Composer } from "./Composer";
 import { MessageItem } from "./Message";
+import { JumpBottom } from "./Conversation";
+import { useStickyScroll } from "./useStickyScroll";
+import { SummaryButton, SummaryCard } from "./Summary";
 
 /** A Google Chat thread in its own workspace tab: root, replies, and a composer that answers in-thread. */
 export function ThreadView({ tab }: { tab: string }) {
@@ -15,22 +18,23 @@ export function ThreadView({ tab }: { tab: string }) {
   const fresh = useApp((s) => s.fresh);
   const jumpTo = useApp((s) => s.jumpTo);
   const box = useRef<HTMLDivElement>(null);
-  const stick = useRef(true);
 
   const root = list?.find((m) => m.id === meta?.rootId);
-  const replies = useMemo(() => (list ?? []).filter((m) => m.threadReply && m.threadId === meta?.threadId), [list, meta?.threadId]);
+  // a Telegram topic is a plain timeline of its messages; a Google Chat thread is root + replies
+  const replies = useMemo(
+    () => (list ?? []).filter((m) => m.threadId === meta?.threadId && (meta?.topic || m.threadReply)),
+    [list, meta?.threadId, meta?.topic],
+  );
 
-  useLayoutEffect(() => {
-    const el = box.current;
-    if (el && stick.current) el.scrollTop = el.scrollHeight;
-  }, [replies.length, !!root]);
+  const scroll = useStickyScroll(box, replies[replies.length - 1]?.id ?? root?.id);
   useEffect(() => {
-    stick.current = true;
+    scroll.stick.current = true;
   }, [tab]);
   useEffect(() => {
     if (!jumpTo) return;
     const el = document.getElementById(`m-${jumpTo}`);
     if (el && box.current?.contains(el)) {
+      scroll.release();
       el.scrollIntoView({ block: "center", behavior: "smooth" });
       el.classList.remove("flash");
       void el.offsetWidth;
@@ -58,30 +62,30 @@ export function ThreadView({ tab }: { tab: string }) {
         </button>
         <ChatAvatar chat={chat} platform={platform} />
         <div className="title">
-          <strong>{root ? plain(root.text).slice(0, 90) || "Thread" : meta.title}</strong>
+          <strong>{meta.topic ? `# ${meta.title}` : root ? plain(root.text).slice(0, 90) || "Thread" : meta.title}</strong>
           <span>
-            Thread trong tab riêng · {chat.title} · {fmtCount(replies.length)} trả lời
+            {meta.topic ? `Topic · ${chat.title} · ${fmtCount(replies.length)} tin đã tải` : `Thread trong tab riêng · ${chat.title} · ${fmtCount(replies.length)} trả lời`}
           </span>
         </div>
+        <SummaryButton tab={tab} />
       </div>
+      <SummaryCard tab={tab} />
       <div
         className="msgs"
         ref={box}
-        onScroll={() => {
-          const el = box.current!;
-          stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-        }}
+        onScroll={scroll.onScroll}
       >
         <div className="msgs-inner">
           {meta.error && <div className="empty-note" role="alert">Chưa tải được thread: {meta.error} <button className="tool-btn" onClick={() => void openChat(tab)}>Thử lại</button></div>}
-          {root ? (
+          {meta.topic ? null : root ? (
             <div className="thread-root">
               <MessageItem k={meta.chatKey} tab={tab} m={root} chat={chat} caps={caps} first last fresh={false} threadOpen={false} />
             </div>
           ) : !meta.error ? (
             <div className="section-veil on" role="status"><span className="veil-spinner" /><span>Đang tải thread…</span></div>
           ) : null}
-          <div className="day-sep" role="separator"><span>{replies.length ? `${replies.length} trả lời` : "Chưa có trả lời"}</span></div>
+          {!meta.topic && <div className="day-sep" role="separator"><span>{replies.length ? `${replies.length} trả lời` : "Chưa có trả lời"}</span></div>}
+          {meta.topic && !replies.length && !meta.error && <div className="section-veil on" role="status"><span className="veil-spinner" /><span>Đang tải topic…</span></div>}
           {replies.map((m, i) => {
             const prev = replies[i - 1];
             const next = replies[i + 1];
@@ -102,8 +106,9 @@ export function ThreadView({ tab }: { tab: string }) {
             );
           })}
         </div>
+        <JumpBottom away={scroll.away} fresh={scroll.fresh} onClick={scroll.toBottom} />
       </div>
-      <Composer k={tab} chatKey={meta.chatKey} threadId={meta.threadId} placeholder="Trả lời trong thread…" key={`c-${tab}`} />
+      <Composer k={tab} chatKey={meta.chatKey} threadId={meta.threadId} placeholder={meta.topic ? `Nhắn vào # ${meta.title}…` : "Trả lời trong thread…"} key={`c-${tab}`} />
     </div>
   );
 }

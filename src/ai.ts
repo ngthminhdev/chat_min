@@ -3,7 +3,8 @@
 import { api } from "./lib/bridge";
 import { plain } from "./lib/format";
 import type { Msg, Suggestion } from "./lib/types";
-import { fail, useApp } from "./store";
+import { fail, isThreadTab, useApp } from "./store";
+import { hm } from "./lib/format";
 
 /** [name sent to the model, label, short tag] */
 export const LANGS = [
@@ -104,4 +105,25 @@ export async function suggestReplies(chatKey: string, threadId?: string): Promis
   if (!lines.length) return [];
   const [me, to] = langs(chatKey);
   return api.aiRun<Suggestion>("suggest", lines, me, to);
+}
+
+/** Catch-up summary of a chat tab (unread first) or of a whole thread tab. */
+export async function summarize(tab: string) {
+  const s = useApp.getState();
+  const meta = isThreadTab(tab) ? s.threadTabs[tab] : undefined;
+  const chatKey = meta?.chatKey ?? tab;
+  const all = (s.msgs[chatKey] ?? []).filter((m) => !m.deleted && m.kind !== "service" && (!meta || m.threadId === meta.threadId));
+  const unread = meta ? 0 : s.chats[chatKey]?.unread ?? 0;
+  const pick = all.slice(-Math.min(150, unread > 0 ? Math.max(unread, 20) : 80));
+  if (!pick.length) return;
+  const lines = pick.map((m) => `${hm(m.ts)} ${m.outgoing ? "Me" : m.senderName}: ${(plain(m.text) || `[${m.media?.kind ?? "attachment"}]`).slice(0, 600)}`);
+  const set = (v: { state: "loading" | "ok" | "err"; text: string }) =>
+    useApp.setState((st) => ({ summary: { ...st.summary, [tab]: { ...v, n: pick.length } } }));
+  set({ state: "loading", text: "" });
+  try {
+    const [out] = await api.aiRun("summarize", lines, s.prefs.aiMe, targetOf(chatKey));
+    set({ state: "ok", text: out });
+  } catch (e) {
+    set({ state: "err", text: String(e) });
+  }
 }

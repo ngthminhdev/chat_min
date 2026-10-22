@@ -1,10 +1,10 @@
 //! Telegram through TDLib. One TDLib client per account; a single thread drains
 //! `tdlib_rs::receive()` and routes every update to its account by client id. TDLib owns
 //! sync, gaps and reconnects — this module only translates updates into the shared model.
-use crate::model::{Account, Chat, LinkCard, Media, Member, Msg, Reaction};
+use crate::model::{Account, Chat, LinkCard, Media, Member, Msg, Reaction, Topic};
 use crate::Core;
 use base64::Engine;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use tdlib_rs::enums::{self, AuthorizationState, ChatType, MessageContent, MessageSender, Update};
 use tdlib_rs::{functions as f, types as t};
@@ -30,6 +30,8 @@ struct Acc {
     chats: HashMap<i64, Chat>,
     read_outbox: HashMap<i64, i64>,
     supergroups: HashMap<i64, i64>,
+    /// supergroup ids that are forums (have topics)
+    forums: HashSet<i64>,
 }
 
 type R<T> = Result<T, String>;
@@ -149,13 +151,22 @@ impl Tg {
             }
             Update::Supergroup(u) => {
                 let sg = u.supergroup;
-                self.with(c, |a| a.supergroups.insert(sg.id, sg.member_count as i64));
+                let (id, forum) = (sg.id, sg.is_forum);
+                let changed = self.with(c, |a| {
+                    a.supergroups.insert(sg.id, sg.member_count as i64);
+                    if forum { a.forums.insert(id) } else { a.forums.remove(&id) }
+                });
+                // supergroup chat ids are -100<supergroup id>
+                if changed == Some(true) {
+                    self.patch_chat(core, c, -1_000_000_000_000 - id, |ch| ch.forum = forum);
+                }
             }
             Update::NewChat(u) => {
                 let chat = self.with(c, |a| {
                     let mut chat = to_chat(a, &account_id, &u.chat);
                     if let ChatType::Supergroup(sg) = &u.chat.r#type {
                         chat.member_count = *a.supergroups.get(&sg.supergroup_id).unwrap_or(&0) as i32;
+                        chat.forum = a.forums.contains(&sg.supergroup_id);
                     }
                     a.read_outbox.insert(u.chat.id, u.chat.last_read_outbox_message_id);
                     a.chats.insert(u.chat.id, chat.clone());
@@ -456,6 +467,67 @@ impl Tg {
         Ok(msgs)
     }
 
+    /// Topics of a forum supergroup, as the server orders them (pinned first, then by activity).
+    pub async fn topics(&self, account_id: &str, chat_id: &str) -> R<Vec<Topic>> {
+        let c = self.client(account_id)?;
+        let chat: i64 = chat_id.parse().map_err(|_| "bad chat id")?;
+        let enums::ForumTopics::ForumTopics(found) = f::get_forum_topics(chat, String::new(), 0, 0, 0, 100, c).await.map_err(err)?;
+        let out = self
+            .with(c, |a| {
+                found
+                    .topics
+                    .iter()
+                    .filter(|t| !t.info.is_hidden)
+                    .map(|t| {
+                        let (preview_from, preview) = t.last_message.as_ref().map(|m| preview_of(a, m)).unwrap_or_default();
+                        Topic {
+                            account_id: account_id.into(),
+                            chat_id: chat_id.into(),
+                            id: t.info.forum_topic_id.to_string(),
+                            name: t.info.name.clone(),
+                            color: t.info.icon.color,
+                            unread: t.unread_count,
+                            mention: t.unread_mention_count > 0,
+                            last_ts: t.last_message.as_ref().map(|m| m.date as i64 * 1000).unwrap_or(0),
+                            preview,
+                            preview_from,
+                            pinned: t.is_pinned,
+                            closed: t.info.is_closed,
+                            general: t.info.is_general,
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(out)
+    }
+
+    /// One topic's messages older than `before` (0 = newest), oldest first.
+    pub async fn topic_history(&self, core: &Core, account_id: &str, chat_id: &str, topic: &str, before: i64, limit: i32) -> R<Vec<Msg>> {
+        let c = self.client(account_id)?;
+        let chat: i64 = chat_id.parse().map_err(|_| "bad chat id")?;
+        let topic: i32 = topic.parse().map_err(|_| "bad topic id")?;
+        let mut from = before;
+        let mut out: Vec<t::Message> = vec![];
+        for _ in 0..4 {
+            let enums::Messages::Messages(page) =
+                f::get_forum_topic_history(chat, topic, from, 0, limit - out.len() as i32, c).await.map_err(err)?;
+            let got: Vec<t::Message> = page.messages.into_iter().flatten().filter(|m| m.id != from).collect();
+            if got.is_empty() {
+                break;
+            }
+            from = got.last().unwrap().id;
+            out.extend(got);
+            if out.len() as i32 >= limit {
+                break;
+            }
+        }
+        out.reverse();
+        let msgs: Vec<Msg> = out.iter().map(|m| self.msg(core, c, m)).collect();
+        core.store_mut().put_msgs(&msgs)?;
+        Ok(msgs)
+    }
+
     pub async fn pinned(&self, core: &Core, account_id: &str, chat_id: &str) -> R<Vec<Msg>> {
         let c = self.client(account_id)?;
         let chat: i64 = chat_id.parse().map_err(|_| "bad chat id")?;
@@ -499,7 +571,7 @@ impl Tg {
     }
 
     // ── writes ──────────────────────────────────────────────────────────────
-    pub async fn send(&self, core: &Core, account_id: &str, chat_id: &str, text: String, reply_to: Option<String>, file: Option<String>) -> R<Msg> {
+    pub async fn send(&self, core: &Core, account_id: &str, chat_id: &str, text: String, reply_to: Option<String>, topic: Option<String>, file: Option<String>, voice: Option<i32>) -> R<Msg> {
         let c = self.client(account_id)?;
         let chat: i64 = chat_id.parse().map_err(|_| "bad chat id")?;
         let reply = reply_to.and_then(|r| r.parse::<i64>().ok()).map(|id| {
@@ -507,6 +579,13 @@ impl Tg {
         });
         let caption = t::FormattedText { text, entities: vec![] };
         let content = match file {
+            Some(path) if voice.is_some() => enums::InputMessageContent::InputMessageVoiceNote(t::InputMessageVoiceNote {
+                voice_note: enums::InputFile::Local(t::InputFileLocal { path }),
+                duration: voice.unwrap_or(0),
+                waveform: String::new(),
+                caption: Some(caption),
+                self_destruct_type: None,
+            }),
             Some(path) => {
                 let input = enums::InputFile::Local(t::InputFileLocal { path: path.clone() });
                 if is_image(&path) {
@@ -532,10 +611,54 @@ impl Tg {
             }
             None => enums::InputMessageContent::InputMessageText(t::InputMessageText { text: caption, link_preview_options: None, clear_draft: true }),
         };
-        let enums::Message::Message(m) = f::send_message(chat, None, reply, None, content, c).await.map_err(err)?;
+        let topic = topic.and_then(|t| t.parse::<i32>().ok()).map(|id| enums::MessageTopic::Forum(t::MessageTopicForum { forum_topic_id: id }));
+        let enums::Message::Message(m) = f::send_message(chat, topic, reply, None, content, c).await.map_err(err)?;
         let msg = self.msg(core, c, &m);
         core.store().put_msg(&msg)?;
         Ok(msg)
+    }
+
+    /// Recent stickers plus the installed packs (first 15), for the picker.
+    pub async fn stickers(&self, account_id: &str) -> R<Vec<StickerPack>> {
+        let c = self.client(account_id)?;
+        let mut out = vec![];
+        if let Ok(enums::Stickers::Stickers(r)) = f::get_recent_stickers(false, c).await {
+            if !r.stickers.is_empty() {
+                out.push(StickerPack { id: "recent".into(), title: "Gần đây".into(), stickers: r.stickers.iter().map(sticker_view).collect() });
+            }
+        }
+        let enums::StickerSets::StickerSets(sets) = f::get_installed_sticker_sets(enums::StickerType::Regular, c).await.map_err(err)?;
+        let packs = futures::future::join_all(sets.sets.iter().take(15).map(|s| f::get_sticker_set(s.id, c))).await;
+        for p in packs.into_iter().flatten() {
+            let enums::StickerSet::StickerSet(p) = p;
+            out.push(StickerPack { id: p.id.to_string(), title: p.title, stickers: p.stickers.iter().map(sticker_view).collect() });
+        }
+        Ok(out)
+    }
+
+    pub async fn send_sticker(&self, core: &Core, account_id: &str, chat_id: &str, topic: Option<String>, file_id: i32, width: i32, height: i32, emoji: String) -> R<Msg> {
+        let c = self.client(account_id)?;
+        let chat: i64 = chat_id.parse().map_err(|_| "bad chat id")?;
+        let topic = topic.and_then(|t| t.parse::<i32>().ok()).map(|id| enums::MessageTopic::Forum(t::MessageTopicForum { forum_topic_id: id }));
+        let content = enums::InputMessageContent::InputMessageSticker(t::InputMessageSticker {
+            sticker: enums::InputFile::Id(t::InputFileId { id: file_id }),
+            thumbnail: None,
+            width,
+            height,
+            emoji,
+        });
+        let enums::Message::Message(m) = f::send_message(chat, topic, None, None, content, c).await.map_err(err)?;
+        let msg = self.msg(core, c, &m);
+        core.store().put_msg(&msg)?;
+        Ok(msg)
+    }
+
+    /// Native forward inside one Telegram account (keeps the "Forwarded from" header).
+    pub async fn forward(&self, account_id: &str, chat_id: &str, from_chat_id: &str, msg_id: &str) -> R<()> {
+        let c = self.client(account_id)?;
+        let (chat, from, id) = (chat_id.parse().unwrap_or(0), from_chat_id.parse().unwrap_or(0), msg_id.parse().unwrap_or(0));
+        f::forward_messages(chat, None, from, vec![id], None, false, false, c).await.map_err(err)?;
+        Ok(())
     }
 
     pub async fn edit(&self, account_id: &str, chat_id: &str, msg_id: &str, text: String) -> R<()> {
@@ -675,6 +798,39 @@ fn to_chat(a: &Acc, account_id: &str, c: &t::Chat) -> Chat {
 }
 
 /// Downloaded avatars are local paths; anything else is a file id the UI asks to download.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StickerView {
+    /// TDLib file id of the sticker itself (what send_sticker needs)
+    id: i32,
+    /// preview: local path or TDLib file id; empty when only an animated format exists
+    thumb: String,
+    /// "img" | "video" — how the preview renders
+    thumb_kind: String,
+    emoji: String,
+    width: i32,
+    height: i32,
+}
+
+#[derive(serde::Serialize)]
+pub struct StickerPack {
+    id: String,
+    title: String,
+    stickers: Vec<StickerView>,
+}
+
+fn sticker_view(s: &t::Sticker) -> StickerView {
+    // static WebP renders as-is; animated packs ship a WebP/WebM thumbnail (TGS can't render here)
+    let (thumb, thumb_kind) = match (&s.format, &s.thumbnail) {
+        (enums::StickerFormat::Webp, _) => (file_ref(&s.sticker), "img"),
+        (enums::StickerFormat::Webm, _) => (file_ref(&s.sticker), "video"),
+        (_, Some(th)) if matches!(th.format, enums::ThumbnailFormat::Webp | enums::ThumbnailFormat::Png | enums::ThumbnailFormat::Jpeg) => (file_ref(&th.file), "img"),
+        (_, Some(th)) if matches!(th.format, enums::ThumbnailFormat::Webm) => (file_ref(&th.file), "video"),
+        _ => (String::new(), "img"),
+    };
+    StickerView { id: s.sticker.id, thumb, thumb_kind: thumb_kind.into(), emoji: s.emoji.clone(), width: s.width, height: s.height }
+}
+
 fn file_ref(f: &t::File) -> String {
     if f.local.is_downloading_completed { f.local.path.clone() } else { f.id.to_string() }
 }
@@ -758,6 +914,9 @@ fn to_msg(a: &Acc, m: &t::Message) -> Msg {
         mentions_me: m.contains_unread_mention,
         ..Default::default()
     };
+    if let Some(enums::MessageTopic::Forum(t)) = &m.topic_id {
+        out.thread_id = t.forum_topic_id.to_string();
+    }
     if let Some(enums::MessageReplyTo::Message(r)) = &m.reply_to {
         if r.chat_id == m.chat_id || r.chat_id == 0 {
             out.reply_to = r.message_id.to_string();

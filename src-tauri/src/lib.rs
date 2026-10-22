@@ -3,9 +3,10 @@ mod gchat;
 mod model;
 mod store;
 mod tg;
+mod web;
 
 use gchat::GChat;
-use model::{Account, Chat, Event, Member, Msg};
+use model::{Account, Chat, Event, Member, Msg, Topic};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -144,7 +145,32 @@ impl Core {
         }
     }
     fn platform(&self, account_id: &str) -> &'static str {
-        if account_id.starts_with("gc-") { "gchat" } else { "telegram" }
+        if account_id.starts_with("gc-") {
+            "gchat"
+        } else if account_id.starts_with("messenger-") {
+            "messenger"
+        } else if account_id.starts_with("zalo-") {
+            "zalo"
+        } else {
+            "telegram"
+        }
+    }
+    /// A web app's page title changed: its unread count goes onto its sidebar row.
+    pub fn web_unread(&self, account_id: &str, n: i32) {
+        let chat = self.store().chat(account_id, "web");
+        if let Ok(Some(mut chat)) = chat {
+            if chat.unread == n {
+                return;
+            }
+            if n > chat.unread {
+                chat.last_ts = now_ms();
+                chat.preview = format!("{n} tin chưa đọc");
+            } else if n == 0 {
+                chat.preview = String::new();
+            }
+            chat.unread = n;
+            self.put_chat(chat);
+        }
     }
 }
 
@@ -157,7 +183,10 @@ fn default_name(a: &Account, existing: &[Account]) -> String {
     } else {
         None
     }
-    .unwrap_or_else(|| if a.platform == "gchat" { "Google Chat".into() } else { "Telegram".into() });
+    .unwrap_or_else(|| match a.platform.as_str() {
+        "gchat" => "Google Chat".into(),
+        p => web::site(p).map(|s| s.0).unwrap_or("Telegram").into(),
+    });
     let taken = |n: &str| existing.iter().any(|x| x.name == n);
     if !taken(&base) {
         return base;
@@ -329,11 +358,13 @@ fn account_update(core: C, id: String, name: Option<String>, color: Option<Strin
 }
 #[tauri::command]
 async fn account_remove(core: C<'_>, id: String) -> Res<()> {
-    if core.platform(&id) == "telegram" {
-        core.tg.close(&id, true).await;
-        let _ = std::fs::remove_dir_all(core.data_dir.join("tg").join(&id));
-    } else {
-        core.gchat.stop(&core, &id);
+    match core.platform(&id) {
+        "telegram" => {
+            core.tg.close(&id, true).await;
+            let _ = std::fs::remove_dir_all(core.data_dir.join("tg").join(&id));
+        }
+        "gchat" => core.gchat.stop(&core, &id),
+        _ => web::close(&core, &id),
     }
     core.store().remove_account(&id)?;
     core.health.lock().unwrap().remove(&id);
@@ -391,10 +422,11 @@ async fn send(
     reply_to: Option<String>,
     thread_id: Option<String>,
     file: Option<String>,
+    voice: Option<i32>,
 ) -> Res<Msg> {
     let core = core.inner().clone();
     if core.platform(&account_id) == "telegram" {
-        core.tg.send(&core, &account_id, &chat_id, text, reply_to, file).await
+        core.tg.send(&core, &account_id, &chat_id, text, reply_to, thread_id, file, voice).await
     } else {
         core.gchat.send(&core, &account_id, &chat_id, text, reply_to, thread_id, file).await
     }
@@ -466,6 +498,60 @@ async fn set_muted(core: C<'_>, account_id: String, chat_id: String, muted: bool
         core.emit(Event::Chat { chat });
         Ok(())
     }
+}
+#[tauri::command]
+fn web_add(core: C, platform: String) -> Res<Account> {
+    web::add(&core, &platform)
+}
+#[tauri::command]
+fn web_show(core: C, account_id: String, x: f64, y: f64, w: f64, h: f64) -> Res<()> {
+    let a = core.store().accounts()?.into_iter().find(|a| a.id == account_id).ok_or("Không thấy account")?;
+    web::show(core.inner(), &a, x, y, w, h)
+}
+#[tauri::command]
+fn web_hide(core: C, account_id: String) {
+    web::hide(&core, &account_id);
+}
+#[tauri::command]
+fn web_reload(core: C, account_id: String) {
+    web::reload(&core, &account_id);
+}
+#[tauri::command]
+async fn stickers(core: C<'_>, account_id: String) -> Res<Vec<tg::StickerPack>> {
+    core.tg.stickers(&account_id).await
+}
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+async fn send_sticker(core: C<'_>, account_id: String, chat_id: String, thread_id: Option<String>, file_id: i32, width: i32, height: i32, emoji: String) -> Res<Msg> {
+    let core = core.inner().clone();
+    core.tg.send_sticker(&core, &account_id, &chat_id, thread_id, file_id, width, height, emoji).await
+}
+/// A recording from the webview → a file in the cache that `send` can upload.
+#[tauri::command]
+fn save_temp(core: C, name: String, data: String) -> Res<String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(data).map_err(|e| e.to_string())?;
+    let dir = core.cache_dir.join("outbox");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = unique_path(&dir, &save_name(&name, std::path::Path::new("")));
+    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().into())
+}
+#[tauri::command]
+async fn topics(core: C<'_>, account_id: String, chat_id: String) -> Res<Vec<Topic>> {
+    core.tg.topics(&account_id, &chat_id).await
+}
+#[tauri::command]
+async fn topic_history(core: C<'_>, account_id: String, chat_id: String, topic: String, before: i64, limit: i32) -> Res<Vec<Msg>> {
+    let core = core.inner().clone();
+    core.tg.topic_history(&core, &account_id, &chat_id, &topic, before, limit).await
+}
+#[tauri::command]
+async fn forward(core: C<'_>, account_id: String, chat_id: String, from_chat_id: String, msg_id: String) -> Res<()> {
+    if core.platform(&account_id) != "telegram" {
+        return Err("Chỉ Telegram có chuyển tiếp gốc".into());
+    }
+    core.tg.forward(&account_id, &chat_id, &from_chat_id, &msg_id).await
 }
 #[tauri::command]
 async fn delete_chat(core: C<'_>, account_id: String, chat_id: String, revoke: bool) -> Res<()> {
@@ -542,6 +628,23 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        // remember window size/position across launches, like the other _min apps
+        // (not visibility: quitting with the window hidden must not launch hidden)
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(tauri_plugin_window_state::StateFlags::all() & !tauri_plugin_window_state::StateFlags::VISIBLE)
+                .build(),
+        )
+        // a messenger keeps running when its window closes (notifications, Dock badge);
+        // ⌘Q quits, clicking the Dock icon brings the window back
+        .on_window_event(|w, e| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = e {
+                if w.label() == "main" {
+                    api.prevent_close();
+                    let _ = w.hide();
+                }
+            }
+        })
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             let cache_dir = app.path().app_cache_dir()?;
@@ -565,10 +668,16 @@ pub fn run() {
             let accounts = core.store().accounts()?;
             for a in accounts {
                 core.health.lock().unwrap().insert(a.id.clone(), Health { health: "reconnecting".into(), text: "Đang kết nối".into(), until: 0 });
-                if a.platform == "telegram" {
-                    core.tg.open(&core, &a.id, false);
-                } else {
-                    GChat::start(core.clone(), a, false);
+                match a.platform.as_str() {
+                    "telegram" => {
+                        core.tg.open(&core, &a.id, false);
+                    }
+                    "gchat" => GChat::start(core.clone(), a, false),
+                    _ => {
+                        // web apps load lazily when their row is opened; the count starts over
+                        core.put_chat(web::chat_of(&a));
+                        core.set_health(&a.id, "ok", "Web", 0);
+                    }
                 }
             }
             Ok(())
@@ -580,6 +689,16 @@ pub fn run() {
             ai_config_set,
             ai_run,
             delete_chat,
+            forward,
+            topics,
+            stickers,
+            send_sticker,
+            save_temp,
+            web_add,
+            web_show,
+            web_hide,
+            web_reload,
+            topic_history,
             save_file,
             tg_login_start,
             tg_phone,
@@ -607,8 +726,16 @@ pub fn run() {
             search,
             set_badge,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running ChatMin");
+        .build(tauri::generate_context!())
+        .expect("error while building ChatMin")
+        .run(|app, event| {
+            if let tauri::RunEvent::Reopen { .. } = event {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+            }
+        });
 }
 
 #[cfg(test)]

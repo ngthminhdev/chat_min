@@ -89,11 +89,27 @@ m(G, "spaces/AAAAm1nhTr4", "Minh Trần", at(0, "09:18"), "Em cập nhật polic
 m(G, "spaces/AAAAr3lQ4tr", "Đức Hoàng", at(1, "16:00"), "Go/no-go for v4.18 is Friday 15:30. Checklist link in the pinned message.");
 m(G, "spaces/AAAAaLlh4nD", "Lan Phạm", at(0, "08:30"), "Văn phòng tầng 12 bảo trì điều hoà sáng thứ Bảy 24/10, mọi người mang laptop về nhé.");
 
+// forum topics of Vietnam Gophers
+const GO = "-1001120457788";
+const topics = [
+  { id: "1", name: "General", color: 0x6fb9f0, unread: 0, mention: false, pinned: true, closed: false, general: true },
+  { id: "7", name: "Hỏi đáp", color: 0xffd67e, unread: 12, mention: true, pinned: false, closed: false, general: false },
+  { id: "12", name: "Việc làm", color: 0x8eee98, unread: 3, mention: false, pinned: false, closed: false, general: false },
+  { id: "19", name: "Show & tell", color: 0xff93b2, unread: 0, mention: false, pinned: false, closed: true, general: false },
+];
+for (const [t, who, hhmm, text] of [
+  ["7", "An Phạm", "08:10", "Ai dùng sqlc với pgx v5 rồi cho hỏi transaction nested xử lý sao ạ?"],
+  ["7", "Bảo Lê", "08:14", "Dùng `pgx.BeginFunc` rồi truyền `Queries.WithTx(tx)` là gọn nhất."],
+  ["7", "me", "08:20", "Mình thêm: nhớ set `default_query_exec_mode` nếu đi qua pgbouncer."],
+  ["12", "HR Tiki", "09:02", "[Tuyển] Senior Go Engineer — remote, 3.5–5k USD. Inbox mình nhé."],
+  ["1", "Admin", "07:00", "Chào mừng 12 thành viên mới tuần này 👋"],
+] as const) m(T, GO, who, at(0, hhmm), text, { threadId: t });
+
 const chats: Chat[] = [
   chat({ accountId: T, id: "-1001839204417", kind: "group", title: "Backend Go — Mine Wallet", pinned: true, memberCount: 12, unread: 4, mention: true, description: "Team backend Mine Wallet: Go/Gin, PostgreSQL, Redis. PR review, deploy staging, incident.", created: "03/2024" }),
   chat({ accountId: T, id: "-1002214558830", kind: "group", title: "Hội anh em đi Hà Giang tháng 11 — chốt lịch, chốt xe, chốt homestay nhé mọi người", memberCount: 9, unread: 23, description: "Đi 4 ngày 3 đêm, xuất phát sáng thứ Bảy 14/11." }),
   chat({ accountId: T, id: "402918331", kind: "dm", title: "Linh Nguyễn" }),
-  chat({ accountId: T, id: "-1001120457788", kind: "group", title: "Vietnam Gophers", memberCount: 2847, muted: true, unread: 128, description: "Cộng đồng Go tại Việt Nam." }),
+  chat({ accountId: T, id: "-1001120457788", kind: "group", title: "Vietnam Gophers", memberCount: 2847, muted: true, unread: 128, forum: true, description: "Cộng đồng Go tại Việt Nam." }),
   chat({ accountId: T, id: "188230017", kind: "dm", title: "Mẹ" }),
   chat({ accountId: T, id: "5530021984", kind: "dm", title: "Duy Phạm" }),
   chat({ accountId: G, id: "spaces/AAAA8xQm2Lk", kind: "space", title: "eng-platform", memberCount: 48, unread: 7, mention: true, threaded: true, description: "Platform engineering: infra, CI/CD, observability (Loki, Prometheus, Grafana), Kafka, Postgres.", created: "01/2025" }),
@@ -129,6 +145,26 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
       const older = a.before ? list.filter((x) => x.sort < a.before) : list;
       return older.slice(-a.limit);
     }
+    case "web_show":
+    case "web_hide":
+    case "web_reload":
+      return;
+    case "web_add":
+      throw new Error("Messenger / Zalo chỉ chạy trong app ChatMin, không có trong bản demo trình duyệt");
+    case "stickers":
+      return [{ id: "recent", title: "Gần đây", stickers: ["👍", "😂", "🔥", "🙏", "🎉", "😅", "🫡", "❤️", "👀", "🤝"].map((e, i) => ({ id: i + 1, thumb: "", thumbKind: "img", emoji: e, width: 512, height: 512 })) }];
+    case "send_sticker":
+      return call("send", { accountId: a.accountId, chatId: a.chatId, text: a.emoji });
+    case "save_temp":
+      return `/tmp/${a.name}`;
+    case "topics":
+      return topics.map((t) => {
+        const last = (msgs[k(a.accountId, a.chatId)] ?? []).filter((x) => x.threadId === t.id).pop();
+        return { ...t, accountId: a.accountId, chatId: a.chatId, lastTs: last?.ts ?? 0, preview: last?.text.replace(/`/g, "") ?? "", previewFrom: last ? (last.outgoing ? "Bạn" : last.senderName.split(" ")[0]) : "" };
+      });
+    case "topic_history":
+      await wait(250);
+      return (msgs[k(a.accountId, a.chatId)] ?? []).filter((x) => x.threadId === a.topic);
     case "thread":
       return (msgs[k(a.accountId, a.chatId)] ?? []).filter((x) => x.threadId === a.threadId);
     case "pinned":
@@ -184,6 +220,10 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
     }
     case "download":
       throw new Error("Demo không có file thật");
+    case "forward": {
+      const src = msgs[k(a.accountId, a.fromChatId)]?.find((x) => x.id === a.msgId);
+      return call("send", { accountId: a.accountId, chatId: a.chatId, text: `↪ ${src?.senderName ?? ""}: ${src?.text ?? ""}` });
+    }
     case "delete_chat":
       await wait(200);
       emit({ type: "chatRemoved", accountId: a.accountId, chatId: a.chatId });
@@ -202,6 +242,8 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
           { reply: "Could you share the failing cases first?", meaning: "Gửi mình mấy case fail trước được không?" },
           { reply: "Let's sync tomorrow morning on this.", meaning: "Sáng mai mình bàn chuyện này nhé." },
         ];
+      if (a.task === "summarize")
+        return ["• Huy chốt lịch deploy thứ Sáu: freeze 14:00, migration 14:30, canary 16:00.\n• Staging đang trả 502 ở /v1/budgets, chưa rõ nguyên nhân.\n• Quân profile job weekly report: json.Marshal chiếm phần lớn CPU.\nCần bạn:\n• Trí check giúp phần rollback, nhất là bước tắt flag."];
       return texts.map((t) => `[${a.task === "translate_to" ? a.to : a.me}] ${t}`);
     }
     default:

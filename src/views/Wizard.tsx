@@ -80,6 +80,16 @@ export function Wizard() {
                       setPlatform={setPlatform}
                       next={() => {
                         setError("");
+                        // Messenger / Zalo: nothing to configure — the site's own login runs in its webview
+                        if (platform === "messenger" || platform === "zalo") {
+                          api.webAdd(platform)
+                            .then((a) => {
+                              leave(`Đã thêm ${a.name} — đăng nhập ngay trong khung chat`);
+                              void openChat(key(a.id, "web"));
+                            })
+                            .catch((e) => setError(String(e)));
+                          return;
+                        }
                         setStep(2);
                       }}
                     />
@@ -136,7 +146,7 @@ export function Wizard() {
 }
 
 function PlatformStep({ platform, setPlatform, next }: { platform: Platform; setPlatform: (p: Platform) => void; next: () => void }) {
-  const cards: [string, string, boolean][] = [["telegram", "Telegram", true], ["gchat", "Google Chat", true], ["messenger", "Messenger", false], ["zalo", "Zalo", false]];
+  const cards: [string, string, boolean][] = [["telegram", "Telegram", true], ["gchat", "Google Chat", true], ["messenger", "Messenger", true], ["zalo", "Zalo", true]];
   return (
     <form className="wizard-form" onSubmit={(e) => (e.preventDefault(), next())}>
       <div className="engine-cards">
@@ -151,7 +161,7 @@ function PlatformStep({ platform, setPlatform, next }: { platform: Platform; set
           >
             {on ? <Glyph platform={p as Platform} /> : <Icon name="messages-square" />}
             <strong>{label}</strong>
-            <span>{on ? "Kết nối account" : "Coming soon"}</span>
+            <span>{p === "messenger" || p === "zalo" ? "Web app · đăng nhập trong app" : on ? "Kết nối account" : "Coming soon"}</span>
           </button>
         ))}
       </div>

@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import { MotionConfig } from "motion/react";
 import { api, openUrl } from "./lib/bridge";
+import { PLATFORMS } from "./lib/platforms";
 import { themeBase } from "./lib/themes";
 import {
   boot, chatKeyOf, closeTab, confirmDialog, isThreadTab, cycleTab, jumpUnread, markRead, promptDialog, toast, totalUnread, useApp,
   openChat, openSearch,
 } from "./store";
 import { Titlebar } from "./components/Titlebar";
-import { Sidebar } from "./components/Sidebar";
+import { HoverPeek, Sidebar } from "./components/Sidebar";
 import { Tabs } from "./components/Tabs";
 import { Conversation } from "./components/Conversation";
 import { ThreadView } from "./components/ThreadView";
@@ -157,6 +158,7 @@ export default function App() {
       </div>
       <Overlays />
       <Viewer />
+      <HoverPeek />
     </MotionConfig>
   );
 }
@@ -181,7 +183,7 @@ export function removeAccount(id = activeAccount()?.id) {
   if (!a) return;
   confirmDialog(
     `Xoá account “${a.name}”?`,
-    `ChatMin sẽ đăng xuất ${a.handle} và xoá cache tin nhắn trên máy này. Tài khoản ${a.platform === "telegram" ? "Telegram" : "Google Chat"} của bạn không bị ảnh hưởng.`,
+    `ChatMin sẽ đăng xuất ${a.handle} và xoá cache tin nhắn trên máy này. Tài khoản ${PLATFORMS[a.platform].name} của bạn không bị ảnh hưởng.`,
     "Xoá account",
     () => {
       api.accountRemove(a.id).then(() => toast(`Đã xoá account ${a.name}`)).catch((e) => toast(String(e), "circle-alert"));

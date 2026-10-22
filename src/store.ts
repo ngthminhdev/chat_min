@@ -3,11 +3,11 @@ import { api, notify, onEvent, saveFile } from "./lib/bridge";
 import { plain } from "./lib/format";
 import { PLATFORMS, type Cap } from "./lib/platforms";
 import { createNotificationDeduper } from "./lib/notification-deduper";
-import type { Account, Chat, CoreEvent, Health, Media, Msg } from "./lib/types";
+import type { Account, Chat, CoreEvent, Health, Media, Msg, Topic } from "./lib/types";
 import type { IconName } from "./ui/Icon";
 
 export type Route = "shell" | "inbox" | "settings" | "search" | "welcome" | "wizard";
-export type InspTab = "info" | "members" | "files" | "media" | "pinned";
+export type InspTab = "info" | "members" | "files" | "media" | "pinned" | "threads";
 
 /** Chats and their message lists are keyed by "accountId|chatId". */
 export const key = (accountId: string, chatId: string) => `${accountId}|${chatId}`;
@@ -39,7 +39,8 @@ export const anchor = (el: Element) => {
 export type Dialog =
   | { kind: "confirm"; title: string; message: string; ok: string; onOk: () => void }
   | { kind: "prompt"; title: string; value: string; onOk: (v: string) => void };
-export interface ThreadTab { chatKey: string; threadId: string; rootId: string; title: string; error?: string }
+/** A thread (Google Chat) or forum topic (Telegram) opened in its own tab. */
+export interface ThreadTab { chatKey: string; threadId: string; rootId: string; title: string; error?: string; topic?: boolean }
 export interface Toast { id: number; text: string; icon: IconName }
 export interface AuthState { step: string; info: string; error: string }
 export interface SyncState { checks: ("idle" | "run" | "ok" | "err")[]; log: string[] }
@@ -72,7 +73,7 @@ interface State {
   inspTab: InspTab;
   /** Google Chat spaces: timeline or thread list */
   convTab: Record<string, "msgs" | "threads">;
-  /** thread tabs ("thread:<threadId>") → the space they belong to */
+  /** thread/topic tabs ("thread:<chatKey>:<threadId>") → the chat they belong to */
   threadTabs: Record<string, ThreadTab>;
   /** ChatMin's own pins: cross-account, user-ordered, shown on top of the sidebar */
   favorites: string[];
@@ -95,6 +96,14 @@ interface State {
   jumpTo: string | null;
   /** chats hidden from the sidebar → lastTs when hidden; a newer message brings them back */
   hidden: Record<string, number>;
+  /** manual chat order per sidebar section ("accountId:section") — a prefix; the rest sorts by activity */
+  chatOrder: Record<string, string[]>;
+  /** sidebar hover preview */
+  hoverPeek: { k: string; x: number; y: number } | null;
+  /** Telegram forum topics per chat */
+  topics: Record<string, Topic[]>;
+  /** AI summaries, keyed by tab (chat or thread tab) — never persisted */
+  summary: Record<string, { state: "loading" | "ok" | "err"; text: string; n: number }>;
   /** full-window image/video viewer */
   viewer: { media: Media; path: string } | null;
   /** inline translations, keyed "chatKey#msgId" — never persisted */
@@ -159,6 +168,10 @@ export const useApp = create<State>(() => ({
   jumpTo: null,
   hidden: saved.hidden ?? {},
   viewer: null,
+  chatOrder: saved.chatOrder ?? {},
+  hoverPeek: null,
+  topics: {},
+  summary: {},
   tr: {},
   trAuto: saved.trAuto ?? {},
   aiLang: saved.aiLang ?? {},
@@ -172,11 +185,11 @@ let persistT: ReturnType<typeof setTimeout> | undefined;
 useApp.subscribe((s) => {
   clearTimeout(persistT);
   persistT = setTimeout(() => {
-    const { tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, favorites, accountOrder, trAuto, aiLang, hidden } = s;
+    const { tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, favorites, accountOrder, trAuto, aiLang, hidden, chatOrder } = s;
     try {
       localStorage.setItem(
         PERSIST,
-        JSON.stringify({ tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, favorites, accountOrder, trAuto, aiLang, hidden }),
+        JSON.stringify({ tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, favorites, accountOrder, trAuto, aiLang, hidden, chatOrder }),
       );
     } catch {}
   }, 300);
@@ -184,6 +197,7 @@ useApp.subscribe((s) => {
 
 // ── selectors ───────────────────────────────────────────────────────────────
 export const isThreadTab = (t: string | null | undefined): t is string => !!t && t.startsWith("thread:");
+export const threadTabKey = (chatKey: string, threadId: string) => `thread:${chatKey}:${threadId}`;
 /** The chat behind a tab: itself, or the space a thread tab belongs to. */
 export const chatKeyOf = (t: string | null | undefined): string | null => (isThreadTab(t) ? get().threadTabs[t]?.chatKey ?? null : t ?? null);
 export const orderedAccounts = (accounts: Account[], order: string[]) =>
@@ -329,7 +343,10 @@ export function applyEvent(e: CoreEvent) {
           return { hidden };
         });
       }
+      const before = get().chats[k];
       set((s) => ({ chats: { ...s.chats, [k]: e.chat } }));
+      // web apps only report a count: tell the user when it grows
+      if (e.chat.kind === "web" && e.chat.unread > (before?.unread ?? 0)) maybeNotifyWeb(k, e.chat.unread);
       // the open chat stays read while it is on screen
       if (e.chat.unread > 0 && isWatching(k)) markRead(k);
       return;
@@ -415,6 +432,15 @@ function maybeNotify(k: string, m: Msg) {
   void notify(title, body);
 }
 
+function maybeNotifyWeb(k: string, n: number) {
+  const chat = get().chats[k];
+  if (!chat || chat.muted || isWatching(k)) return;
+  const p = get().notif[chat.accountId] ?? DEFAULT_NOTIFY;
+  if (!p.enabled || quiet(p) || p.mentions) return;
+  const name = get().accounts.find((a) => a.id === chat.accountId)?.name ?? chat.title;
+  void notify(name, `${n} tin nhắn chưa đọc`);
+}
+
 // ── chats & messages ────────────────────────────────────────────────────────
 const PAGE = 50;
 
@@ -429,8 +455,10 @@ export async function openChat(k: string) {
   set({ tabs, active: k, route: "shell", inspTab: s.active === k ? s.inspTab : "info", ...(window.matchMedia("(max-width: 760px)").matches ? { leftCollapsed: true } : {}) });
   const chatKey = chatKeyOf(k);
   if (!chatKey) return;
+  // web apps (Messenger, Zalo) live in their own webview: nothing to load or mark here
+  if (get().chats[chatKey]?.kind === "web") return;
   const [accountId, chatId] = splitKey(chatKey);
-  if (prevChat && prevChat !== chatKey) void api.setOpen(...splitKey(prevChat), false).catch(() => {});
+  if (prevChat && prevChat !== chatKey && get().chats[prevChat]?.kind !== "web") void api.setOpen(...splitKey(prevChat), false).catch(() => {});
   void api.setOpen(accountId, chatId, true).catch(() => {});
   if (!get().msgs[chatKey]) await loadLatest(chatKey);
   else void loadLatest(chatKey);
@@ -443,10 +471,26 @@ export function openThreadTab(chatKey: string, root: Msg) {
   if (!root.threadId) return toast("Tin nhắn này chưa có thread ID từ Google Chat", "info");
   const threadId = root.threadId;
   if (root.threadReply) root = get().msgs[chatKey]?.find((m) => m.threadId === threadId && !m.threadReply) ?? root;
-  const t = `thread:${chatKey}:${threadId}`;
+  const t = threadTabKey(chatKey, threadId);
   set((s) => ({
     threadTabs: { ...s.threadTabs, [t]: { chatKey, threadId, rootId: root.id, title: plain(root.text).slice(0, 60) || root.media?.name || "Thread" } },
   }));
+  void openChat(t);
+}
+
+export async function loadTopics(k: string) {
+  const [accountId, chatId] = splitKey(k);
+  try {
+    const topics = await api.topics(accountId, chatId);
+    set((s) => ({ topics: { ...s.topics, [k]: topics } }));
+  } catch (e) {
+    fail(e);
+  }
+}
+
+export function openTopicTab(chatKey: string, topic: Topic) {
+  const t = threadTabKey(chatKey, topic.id);
+  set((s) => ({ threadTabs: { ...s.threadTabs, [t]: { chatKey, threadId: topic.id, rootId: "", title: topic.name, topic: true } } }));
   void openChat(t);
 }
 
@@ -455,7 +499,7 @@ async function loadThread(t: string) {
   if (!meta) return;
   const [accountId, chatId] = splitKey(meta.chatKey);
   try {
-    const msgs = await api.thread(accountId, chatId, meta.threadId);
+    const msgs = meta.topic ? await api.topicHistory(accountId, chatId, meta.threadId, 0, 50) : await api.thread(accountId, chatId, meta.threadId);
     set((s) => {
       let list = s.msgs[meta.chatKey] ?? [];
       for (const m of msgs) list = upsert(list, m);
@@ -592,12 +636,45 @@ export function jumpUnread(d: number) {
 
 // ── sending ─────────────────────────────────────────────────────────────────
 let localId = 0;
-export async function send(k: string, text: string, opts: { replyTo?: string; threadId?: string; file?: string } = {}) {
+/** Show a message the backend just returned (e.g. a sent sticker) without waiting for its event. */
+export function addMsg(m: Msg) {
+  const k = key(m.accountId, m.chatId);
+  set((s) => ({ msgs: { ...s.msgs, [k]: upsert(s.msgs[k] ?? [], m) }, fresh: { ...s.fresh, [m.id]: true } }));
+}
+
+/** Message text for re-sending elsewhere: markup flattened, line breaks kept. */
+const sendable = (t: string) => t.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, l, u) => (l === u ? u : `${l} (${u})`)).replace(/@\{([^}]+)\}/g, "@$1");
+
+/** Forward `m` to chat `to`: native inside one Telegram account, otherwise a fresh
+ *  message with a "forwarded from" line (media re-uploaded from the local copy). */
+export async function forwardMsg(m: Msg, to: string) {
+  const s = get();
+  const [accountId, chatId] = splitKey(to);
+  const target = s.chats[to];
+  try {
+    const native = accountId === m.accountId && s.accounts.find((a) => a.id === accountId)?.platform === "telegram";
+    if (native) {
+      await api.forward(accountId, chatId, m.chatId, m.id);
+    } else {
+      const src = s.chats[key(m.accountId, m.chatId)];
+      const from = `↪ Chuyển tiếp từ ${m.outgoing ? "tôi" : m.senderName}${src && src.kind !== "dm" ? ` · ${src.title}` : ""}`;
+      let file: string | undefined;
+      if (m.media && !m.media.url && m.media.fileRef) file = m.media.localPath || (await api.download(m.accountId, m.media.fileRef, m.media.name));
+      const text = [from, sendable(m.text), m.media?.url ?? ""].filter((x) => x.trim()).join("\n");
+      await send(to, text, { file });
+    }
+    toast(`Đã chuyển tiếp tới ${target?.title ?? "chat"}`);
+  } catch (e) {
+    fail(e);
+  }
+}
+
+export async function send(k: string, text: string, opts: { replyTo?: string; threadId?: string; file?: string; voice?: number } = {}) {
   const [accountId, chatId] = splitKey(k);
   const temp: Msg = {
     accountId, chatId, id: `local-${++localId}`, sort: Number.MAX_SAFE_INTEGER - 1000 + localId, senderId: "", senderName: "", senderPhoto: "",
     outgoing: true, ts: Date.now(), edited: false, deleted: false, kind: opts.file ? "media" : "text", text,
-    media: opts.file ? { kind: "file", name: opts.file.split("/").pop() ?? "file", size: 0, mime: "", width: 0, height: 0, fileRef: "", localPath: "", thumb: "", url: "" } : null,
+    media: opts.file ? { kind: opts.voice !== undefined ? "voice" : "file", name: opts.file.split("/").pop() ?? "file", size: 0, mime: "", width: 0, height: 0, fileRef: "", localPath: "", thumb: "", url: "" } : null,
     link: null, replyTo: opts.replyTo ?? "", replyName: "", replyText: "", reactions: [], threadId: opts.threadId ?? "",
     threadReply: !!opts.threadId, status: "sending", error: "", pinned: false, mentionsMe: false, rev: "",
   };

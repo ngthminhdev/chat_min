@@ -2,7 +2,7 @@
 // goes to the in-memory demo backend, so the UI can be checked without real accounts.
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { Account, AiView, AppState, CoreEvent, Member, Msg } from "./types";
+import type { Account, AiView, AppState, CoreEvent, Member, Msg, StickerPack, Topic } from "./types";
 
 export const isTauri = "__TAURI_INTERNALS__" in window;
 
@@ -41,7 +41,15 @@ export const api = {
   thread: (accountId: string, chatId: string, threadId: string) => call<Msg[]>("thread", { accountId, chatId, threadId }),
   pinned: (accountId: string, chatId: string) => call<Msg[]>("pinned", { accountId, chatId }),
   members: (accountId: string, chatId: string) => call<Member[]>("members", { accountId, chatId }),
-  send: (a: { accountId: string; chatId: string; text: string; replyTo?: string; threadId?: string; file?: string }) => call<Msg>("send", a),
+  send: (a: { accountId: string; chatId: string; text: string; replyTo?: string; threadId?: string; file?: string; voice?: number }) => call<Msg>("send", a),
+  webAdd: (platform: string) => call<Account>("web_add", { platform }),
+  webShow: (accountId: string, r: { x: number; y: number; w: number; h: number }) => call<void>("web_show", { accountId, ...r }),
+  webHide: (accountId: string) => call<void>("web_hide", { accountId }),
+  webReload: (accountId: string) => call<void>("web_reload", { accountId }),
+  stickers: (accountId: string) => call<StickerPack[]>("stickers", { accountId }),
+  sendSticker: (a: { accountId: string; chatId: string; threadId?: string; fileId: number; width: number; height: number; emoji: string }) => call<Msg>("send_sticker", a),
+  /** base64 bytes → a cache file path that `send` can upload */
+  saveTemp: (name: string, data: string) => call<string>("save_temp", { name, data }),
   edit: (accountId: string, chatId: string, msgId: string, text: string) => call<void>("edit", { accountId, chatId, msgId, text }),
   deleteMsg: (accountId: string, chatId: string, msgId: string) => call<void>("delete_msg", { accountId, chatId, msgId }),
   react: (accountId: string, chatId: string, msgId: string, emoji: string, add: boolean) =>
@@ -50,6 +58,10 @@ export const api = {
   markRead: (accountId: string, chatId: string, msgIds: string[]) => call<void>("mark_read", { accountId, chatId, msgIds }),
   setOpen: (accountId: string, chatId: string, open: boolean) => call<void>("set_open", { accountId, chatId, open }),
   setMuted: (accountId: string, chatId: string, muted: boolean) => call<void>("set_muted", { accountId, chatId, muted }),
+  topics: (accountId: string, chatId: string) => call<Topic[]>("topics", { accountId, chatId }),
+  topicHistory: (accountId: string, chatId: string, topic: string, before: number, limit: number) =>
+    call<Msg[]>("topic_history", { accountId, chatId, topic, before, limit }),
+  forward: (accountId: string, chatId: string, fromChatId: string, msgId: string) => call<void>("forward", { accountId, chatId, fromChatId, msgId }),
   deleteChat: (accountId: string, chatId: string, revoke: boolean) => call<void>("delete_chat", { accountId, chatId, revoke }),
   download: (accountId: string, fileRef: string, name: string) => call<string>("download", { accountId, fileRef, name }),
   search: (query: string, limit = 40, accountId?: string, chatId?: string) => call<Msg[]>("search", { query, limit, accountId, chatId }),

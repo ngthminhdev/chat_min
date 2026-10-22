@@ -145,6 +145,11 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
         <button aria-label="Trả lời" data-tip="Trả lời" onClick={() => setReply(tab, m)}>
           <Icon name="reply" />
         </button>
+        {(!!m.text || !!m.media) && (
+          <button aria-label="Sao chép" data-tip="Sao chép" onClick={() => copyMsg(m)}>
+            <Icon name="copy" />
+          </button>
+        )}
         {caps.reactions && (
           <button
             aria-label="Thả reaction"
@@ -315,6 +320,12 @@ function ThreadLink({ k, m, replies, open }: { k: string; m: Msg; replies?: Msg[
   );
 }
 
+/** Copies what the message says, line breaks kept and markup flattened. */
+function copyMsg(m: Msg) {
+  const text = m.text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, l, u) => (l === u ? u : `${l} (${u})`)).replace(/@\{([^}]+)\}/g, "@$1").replace(/`/g, "");
+  void navigator.clipboard.writeText(text.trim() || m.media?.name || "").then(() => toast("Đã sao chép"));
+}
+
 export const openThread = (k: string, m: Msg) => openThreadTab(k, m);
 
 export function setReply(k: string, m: Msg) {
@@ -344,8 +355,9 @@ function menuFor(k: string, tab: string, m: Msg, caps: Record<Cap, boolean>): Me
       icon: "copy",
       label: "Sao chép văn bản",
       kbd: "⌘C",
-      run: () => void navigator.clipboard.writeText(plain(m.text) || m.media?.name || "").then(() => toast("Đã sao chép")),
+      run: () => copyMsg(m),
     },
+    !m.deleted && m.kind !== "service" && { icon: "forward", label: "Chuyển tiếp…", run: () => useApp.setState({ palette: { mode: "chats", forward: m } }) },
     caps.pin && {
       icon: m.pinned ? "pin-off" : "pin",
       label: m.pinned ? "Bỏ ghim" : "Ghim",

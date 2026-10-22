@@ -1,5 +1,5 @@
 // Mirrors src-tauri/src/model.rs (serde camelCase).
-export type Platform = "telegram" | "gchat";
+export type Platform = "telegram" | "gchat" | "messenger" | "zalo";
 export type HealthState = "ok" | "syncing" | "offline" | "reconnecting" | "expired" | "rate";
 
 export interface Account {
@@ -16,7 +16,7 @@ export interface Health { health: HealthState; text: string; until: number }
 export interface Chat {
   accountId: string;
   id: string;
-  kind: "dm" | "group" | "channel" | "space";
+  kind: "dm" | "group" | "channel" | "space" | "web";
   title: string;
   description: string;
   lastTs: number;
@@ -35,6 +35,8 @@ export interface Chat {
   photo: string;
   /** TDLib file id still to download */
   photoRef: string;
+  /** Telegram supergroup with topics */
+  forum?: boolean;
 }
 
 export interface Media {
@@ -108,3 +110,9 @@ export interface AppState {
 
 export interface AiView { format: "openai" | "anthropic"; endpoint: string; model: string; guide: string; hasKey: boolean }
 export interface Suggestion { reply: string; meaning: string }
+export interface Topic {
+  accountId: string; chatId: string; id: string; name: string; color: number; unread: number; mention: boolean;
+  lastTs: number; preview: string; previewFrom: string; pinned: boolean; closed: boolean; general: boolean;
+}
+export interface StickerView { id: number; thumb: string; thumbKind: "img" | "video"; emoji: string; width: number; height: number }
+export interface StickerPack { id: string; title: string; stickers: StickerView[] }

@@ -119,3 +119,17 @@ Spec: `docs/superpowers/specs/2026-10-22-chatmin-design.md`. Prototype export: `
 - Xoá chat (sidebar chuột phải): Telegram `tg.delete_chat` — private: deleteChatHistory(remove_from_list, revoke tuỳ chọn); basic group: leave + clear; supergroup/channel: leave. Google Chat không xoá được qua API → `hideChat` (store `hidden`, persisted; hiện lại khi lastTs mới hơn).
 - Lưu file: `save_file` (lib.rs) chỉ copy file nằm trong data/cache dir; không dest → ~/Downloads, tự đánh số "name (1).ext", mượn đuôi từ file nguồn. FE `saveMedia` (store) — menu chuột phải media/file, Viewer ⌘S / ⌘⇧S, Inspector file row.
 - Space dạng thread trống: trang tin gần nhất có thể toàn reply (`threadReply`), tin gốc nằm trang cũ hơn → `fillRoots` (store) tải thread thiếu gốc (tối đa 8, mỗi thread 1 lần); timeline dùng reply sớm nhất làm đại diện nếu vẫn không có gốc. ⌘1…8 = tab N, ⌘9 = tab cuối.
+
+## Round 2026-10-22 (tối)
+- Icon nền tảng: logo màu chính thức (Wikimedia Commons) ở `src/assets/brands/*.svg`, render bằng `<img>` trong `Glyph` (tránh trùng id gradient). Path đơn sắc cũ trùng simple-icons 16.35, chỉ là trông nhạt.
+- Contrast: `.badge` trung tính nổi hơn, `.badge.unread` nền accent đặc, toast nền đặc + viền trái theo loại, health banner có nền.
+- AI tóm tắt: task `summarize` (ai.rs), `src/components/Summary.tsx` (nút ✨ header + card nổi), state `summary[tab]`.
+- Chuyển tiếp: `forwardMsg` (store) — cùng account TG → `forward_messages` gốc; khác → gửi lại với dòng "↪ Chuyển tiếp từ …" (+ tải media rồi upload). Palette nhận `forward`.
+- Topic Telegram: `Chat.forum` (Supergroup.is_forum, `Acc.forums`), `Msg.thread_id` = forum_topic_id, commands `topics` / `topic_history`, send nhận topic qua `thread_id`. FE: tab topic = ThreadTab `topic: true` (ThreadView hiển thị timeline phẳng).
+- Threads/Topics chuyển sang right dock (Inspector tab "threads"); header chỉ còn nút mở. `threadTabKey(chatKey, threadId)` — sửa lỗi highlight thread đang mở.
+- Scroll: `components/useStickyScroll.ts` neo theo phần tử đang đọc (không theo scrollHeight) + ResizeObserver; `JumpBottom` luôn hiện khi cuộn xa đáy; spinner tải cũ là overlay sticky.
+- Sidebar: hover preview (`HoverPeek`, state `hoverPeek`), kéo đổi thứ tự trong nhánh (`chatOrder[accountId:section]` = prefix cố định, phần còn lại theo hoạt động; menu "Bỏ cố định vị trí"). Nút Sao chép trên toolbar tin.
+- Sticker (Telegram): `stickers` (gần đây + 15 bộ), `send_sticker`; picker `ComposerExtras.tsx`. Voice: MediaRecorder → `save_temp` (base64 → cache/outbox) → `send(voice=duration)` → TG `InputMessageVoiceNote`, GChat upload file. `src-tauri/Info.plist` có NSMicrophoneUsageDescription.
+- Messenger/Zalo: `web.rs` — child webview (`tauri` feature `unstable`, `Window::add_child`), `data_store_identifier` riêng từng account, UA Safari, unread từ document title "(N) …" → chat giả `id: "web", kind: "web"`. FE `WebConversation` đặt webview theo rect `.web-host`, ẩn khi có overlay (webview native luôn đè HTML). Account id `messenger-<ts>` / `zalo-<ts>`.
+- Cài đặt: bản release ở `/Applications/ChatMin.app`; bản debug bundle đã xoá.
+- Cửa sổ: `tauri-plugin-window-state` (không lưu VISIBLE) nhớ kích thước/vị trí/maximize/fullscreen; ✕ = ẩn (app vẫn chạy cho thông báo + badge), Dock click = hiện lại (`RunEvent::Reopen`), ⌘Q thoát.

@@ -3,9 +3,10 @@ import { AnimatePresence, motion } from "motion/react";
 import { api, pickFile } from "../lib/bridge";
 import { plain } from "../lib/format";
 import { CAP_OFF_NOTE, PLATFORMS } from "../lib/platforms";
-import { anchor, capsOf, fail, send, splitKey, toast, useApp } from "../store";
+import { addMsg, anchor, capsOf, fail, send, splitKey, toast, useApp } from "../store";
 import { Icon } from "../ui/Icon";
 import { startEdit } from "./Message";
+import { clock, StickerPanel, useRecorder } from "./ComposerExtras";
 import { LANGS, langLabel, langTag, suggestReplies, translateDraft } from "../ai";
 import type { Suggestion } from "../lib/types";
 
@@ -30,6 +31,19 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
   /** the draft before AI translated it, for one-click undo */
   const [orig, setOrig] = useState<string | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
+  const [stickers, setStickers] = useState(false);
+  const recorder = useRecorder();
+  const sendVoice = async () => {
+    const r = await recorder.stop(true);
+    if (!r) return;
+    void send(chatKey, "", { file: r.path, voice: r.duration, replyTo: replyId || undefined, threadId });
+    useApp.setState((s) => ({ replyTo: { ...s.replyTo, [k]: "" } }));
+  };
+  const sendSticker = (st: import("../lib/types").StickerView) => {
+    setStickers(false);
+    const [a, c] = splitKey(chatKey);
+    api.sendSticker({ accountId: a, chatId: c, threadId, fileId: st.id, width: st.width, height: st.height, emoji: st.emoji }).then(addMsg).catch(fail);
+  };
 
   useLayoutEffect(() => {
     const el = ta.current;
@@ -211,8 +225,19 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
             </motion.div>
           )}
         </AnimatePresence>
+        <AnimatePresence>
+          {stickers && caps.stickers && <StickerPanel accountId={accountId} onPick={sendSticker} onClose={() => setStickers(false)} />}
+        </AnimatePresence>
         <div className="composer-box main-composer">
+          {recorder.recording && (
+            <div className="rec-bar" role="status">
+              <span className="rec-dot" />
+              Đang ghi âm <b>{clock(recorder.secs ?? 0)}</b>
+              <small>Bấm Gửi để gửi · ✕ để huỷ</small>
+            </div>
+          )}
           <textarea
+            style={recorder.recording ? { display: "none" } : undefined}
             id="composer-input"
             ref={ta}
             rows={1}
@@ -307,14 +332,33 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
                 {langTag(lang)}
               </button>
             </span>
-            <button className="tool-btn icon-only is-off" aria-disabled="true" aria-label="Sticker" data-tip={CAP_OFF_NOTE.stickers} onClick={() => toast(CAP_OFF_NOTE.stickers!, "info")}>
-              <Icon name="sticker" />
-            </button>
-            <button className="tool-btn icon-only is-off" aria-disabled="true" aria-label="Tin nhắn thoại" data-tip={CAP_OFF_NOTE.voice} onClick={() => toast(CAP_OFF_NOTE.voice!, "info")}>
-              <Icon name="mic" />
+            {caps.stickers ? (
+              <button className={`tool-btn icon-only${stickers ? " active" : ""}`} aria-label="Sticker" data-tip="Sticker" disabled={blocked || saving || !!editId} onClick={() => setStickers((v) => !v)}>
+                <Icon name="sticker" />
+              </button>
+            ) : (
+              <button className="tool-btn icon-only is-off" aria-disabled="true" aria-label="Sticker" data-tip={CAP_OFF_NOTE.stickers} onClick={() => toast(CAP_OFF_NOTE.stickers!, "info")}>
+                <Icon name="sticker" />
+              </button>
+            )}
+            <button
+              className={`tool-btn icon-only${recorder.recording ? " rec-on" : ""}`}
+              aria-label={recorder.recording ? "Huỷ ghi âm" : "Ghi tin nhắn thoại"}
+              data-tip={recorder.recording ? "Huỷ ghi âm" : "Ghi tin nhắn thoại"}
+              disabled={blocked || saving || !!editId}
+              onClick={() => (recorder.recording ? void recorder.stop(false) : void recorder.start())}
+            >
+              <Icon name={recorder.recording ? "x" : "mic"} />
             </button>
             <span className="composer-key">↵ gửi · ⇧↵ xuống dòng</span>
-            <button className="tool-btn primary" aria-label={editId ? "Lưu chỉnh sửa" : "Gửi"} data-tip={editId ? "Lưu chỉnh sửa" : "Gửi"} data-kbd="↵" disabled={blocked || saving || !draft.trim()} onClick={() => void submit()}>
+            <button
+              className="tool-btn primary"
+              aria-label={editId ? "Lưu chỉnh sửa" : "Gửi"}
+              data-tip={recorder.recording ? "Gửi tin thoại" : editId ? "Lưu chỉnh sửa" : "Gửi"}
+              data-kbd="↵"
+              disabled={blocked || saving || (!draft.trim() && !recorder.recording)}
+              onClick={() => (recorder.recording ? void sendVoice() : void submit())}
+            >
               {saving ? "Đang lưu…" : editId ? "Lưu" : "Gửi"} <Icon name={editId ? "check" : "send"} />
             </button>
           </div>

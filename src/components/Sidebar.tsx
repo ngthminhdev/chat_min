@@ -6,7 +6,7 @@ import { EASE } from "../lib/motion";
 import { HEALTH_LABELS, PLATFORMS } from "../lib/platforms";
 import type { Account, Chat, Msg } from "../lib/types";
 import {
-  chatKeyOf, confirmDialog, fail, hideChat, key, loadLatest, markRead, openChat, openThreadTab, orderedAccounts, sortedChats, toast, toggleFavorite,
+  chatKeyOf, confirmDialog, fail, hideChat, key, loadTopics, openTopicTab, threadTabKey, loadLatest, markRead, openChat, openThreadTab, orderedAccounts, sortedChats, toast, toggleFavorite,
   totalUnread, useApp, type MenuItem,
 } from "../store";
 import { ChatAvatar } from "../ui/Avatar";
@@ -76,7 +76,8 @@ function useRowState() {
   const drafts = useApp((s) => s.drafts);
   const typing = useApp((s) => s.typing);
   const expanded = useApp((s) => s.expanded);
-  return { active, drafts, typing, expanded };
+  const chatOrder = useApp((s) => s.chatOrder);
+  return { active, drafts, typing, expanded, chatOrder };
 }
 
 function Favorites() {
@@ -213,19 +214,27 @@ function AccountGroup({ account: a, index, chats, filter, query }: { account: Ac
         {loading ? (
           <div className="side-empty"><span className="veil-spinner" /> Đang tải danh sách…</div>
         ) : list.length ? (
-          sections(list).map(([sec, label, items]) => (
-            <Section key={sec} id={`${a.id}:${sec}`} label={label} chats={items} forceOpen={!!q || filter !== "all"}>
-              {items.map((c) => {
-                const k = key(c.accountId, c.id);
-                return (
-                  <div key={k}>
-                    <ChatRow chat={c} k={k} {...rowProps(k, c, a, rs)} />
-                    {rs.expanded[k] && c.threaded && <ThreadPeek k={k} />}
-                  </div>
-                );
-              })}
-            </Section>
-          ))
+          sections(list).map(([sec, label, items]) => {
+            const id = `${a.id}:${sec}`;
+            const byKey = Object.fromEntries(items.map((c) => [key(c.accountId, c.id), c]));
+            const natural = Object.keys(byKey);
+            const shown = applyOrder(natural, rs.chatOrder[id]);
+            return (
+              <Section key={sec} id={id} label={label} chats={items} forceOpen={!!q || filter !== "all"}>
+                <Reorder.Group axis="y" as="div" values={shown} onReorder={(v) => setOrder(id, v, natural)}>
+                  {shown.map((k) => {
+                    const c = byKey[k];
+                    return (
+                      <Reorder.Item key={k} value={k} as="div" className="reorder-row" whileDrag={{ scale: 1.02, boxShadow: "var(--shadow)", zIndex: 5 }} transition={{ duration: 0.18, ease: EASE }}>
+                        <ChatRow chat={c} k={k} {...rowProps(k, c, a, rs)} />
+                        {rs.expanded[k] && (c.threaded || c.forum) && <ThreadPeek k={k} />}
+                      </Reorder.Item>
+                    );
+                  })}
+                </Reorder.Group>
+              </Section>
+            );
+          })
         ) : (
           <div className="side-empty">{q || filter !== "all" ? "Không có hội thoại khớp bộ lọc" : "Chưa có hội thoại"}</div>
         )}
@@ -241,7 +250,22 @@ const SECTIONS: [string, string, (c: Chat) => boolean][] = [
   ["group", "Nhóm", (c) => c.kind === "group"],
   ["space", "Space", (c) => c.kind === "space"],
   ["channel", "Kênh", (c) => c.kind === "channel"],
+  ["web", "Ứng dụng web", (c) => c.kind === "web"],
 ];
+
+/** Manually placed chats first (in their saved order), then the rest by activity. */
+function applyOrder(natural: string[], saved: string[] | undefined): string[] {
+  if (!saved?.length) return natural;
+  const fixed = saved.filter((k) => natural.includes(k));
+  return [...fixed, ...natural.filter((k) => !fixed.includes(k))];
+}
+
+/** Keep only the prefix the user actually rearranged, so chats below keep sorting by activity. */
+function setOrder(id: string, v: string[], natural: string[]) {
+  let last = -1;
+  for (let i = 0; i < v.length; i++) if (v[i] !== natural[i]) last = i;
+  useApp.setState((s) => ({ chatOrder: { ...s.chatOrder, [id]: v.slice(0, last + 1) } }));
+}
 
 function sections(list: Chat[]): [string, string, Chat[]][] {
   return SECTIONS.map(([id, label, match]) => [id, label, list.filter((c) => (id === "pinned" ? match(c) : !c.pinned && match(c)))] as [string, string, Chat[]]).filter(
@@ -285,9 +309,9 @@ function chatMenu(k: string, c: Chat): MenuItem[] {
   const items: (MenuItem | false)[] = [
     { icon: "external-link", label: "Mở trong tab", run: () => void openChat(k) },
     { icon: fav ? "pin-off" : "pin", label: fav ? "Bỏ ghim khỏi đầu danh sách" : "Ghim lên đầu danh sách", run: () => toggleFavorite(k) },
-    c.threaded && {
+    (c.threaded || !!c.forum) && {
       icon: "message-circle-reply",
-      label: useApp.getState().expanded[k] ? "Ẩn thread" : "Xem nhanh thread",
+      label: useApp.getState().expanded[k] ? "Ẩn" : c.forum ? "Xem nhanh topic" : "Xem nhanh thread",
       run: () => useApp.setState((s) => ({ expanded: { ...s.expanded, [k]: !s.expanded[k] } })),
     },
     c.unread > 0 && { icon: "check-check", label: "Đánh dấu đã đọc", run: () => markRead(k) },
@@ -300,9 +324,21 @@ function chatMenu(k: string, c: Chat): MenuItem[] {
       },
     },
     { icon: "copy", label: "Sao chép ID chat", run: () => void navigator.clipboard.writeText(c.id).then(() => toast("Đã sao chép ID")) },
+    ...unfixItem(k),
     ...removeItems(k, c),
   ];
   return items.filter(Boolean) as MenuItem[];
+}
+
+function unfixItem(k: string): MenuItem[] {
+  const order = useApp.getState().chatOrder;
+  const id = Object.keys(order).find((sec) => order[sec].includes(k));
+  if (!id) return [];
+  return [{
+    icon: "refresh-cw",
+    label: "Bỏ cố định vị trí",
+    run: () => useApp.setState((s) => ({ chatOrder: { ...s.chatOrder, [id]: s.chatOrder[id].filter((x) => x !== k) } })),
+  }];
 }
 
 function removeItems(k: string, c: Chat): MenuItem[] {
@@ -337,6 +373,63 @@ function removeItems(k: string, c: Chat): MenuItem[] {
   }];
 }
 
+// hover preview: rest on a row ~0.5s → the last messages of that chat beside the sidebar
+let hoverT: ReturnType<typeof setTimeout> | undefined;
+function hoverOn(k: string, el: HTMLElement) {
+  clearTimeout(hoverT);
+  hoverT = setTimeout(() => {
+    const r = el.getBoundingClientRect();
+    useApp.setState({ hoverPeek: { k, x: r.right + 8, y: r.top } });
+    if (!useApp.getState().msgs[k]) void loadLatest(k);
+  }, 500);
+}
+function hoverOff() {
+  clearTimeout(hoverT);
+  if (useApp.getState().hoverPeek) useApp.setState({ hoverPeek: null });
+}
+
+/** The floating card itself; rendered once by the sidebar. */
+export function HoverPeek() {
+  const peek = useApp((s) => s.hoverPeek);
+  const chat = useApp((s) => (peek ? s.chats[peek.k] : undefined));
+  const list = useApp((s) => (peek ? s.msgs[peek.k] : undefined));
+  const last = (list ?? []).filter((m) => !m.deleted && m.kind !== "service" && !m.threadReply).slice(-5);
+  const top = peek ? Math.min(peek.y, window.innerHeight - 340) : 0;
+  return (
+    <AnimatePresence>
+      {peek && chat && (
+        <motion.div
+          className="hover-peek"
+          style={{ left: peek.x, top: Math.max(8, top) }}
+          initial={{ opacity: 0, x: -6 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, transition: { duration: 0.08 } }}
+          transition={{ duration: 0.14, ease: EASE }}
+          aria-hidden="true"
+        >
+          <header>
+            <strong>{chat.title}</strong>
+            {chat.unread > 0 && <span className={`badge ${chat.muted ? "idle" : "unread"}`}>{chat.unread}</span>}
+          </header>
+          {!list ? (
+            <div className="hp-row muted"><span className="veil-spinner" /> Đang tải…</div>
+          ) : last.length ? (
+            last.map((m) => (
+              <div key={m.id} className={`hp-row${m.outgoing ? " me" : ""}`}>
+                <b>{m.outgoing ? "Bạn" : m.senderName.split(" ").slice(-1)[0]}</b>
+                <span>{plain(m.text) || m.media?.name || "Tệp đính kèm"}</span>
+                <time>{hm(m.ts)}</time>
+              </div>
+            ))
+          ) : (
+            <div className="hp-row muted">Chưa có tin nhắn</div>
+          )}
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
 interface RowProps {
   chat: Chat;
   k: string;
@@ -359,9 +452,15 @@ const ChatRow = memo(function ChatRow({ chat: c, k, active, draft, typing, expan
         className={`chat-row${active ? " active" : ""}${c.unread ? " unread" : ""}`}
         aria-label={`${c.title}${c.unread ? `, ${c.unread} chưa đọc` : ""}`}
         data-tip={rail ? `${c.title}${c.unread ? ` · ${c.unread} chưa đọc` : ""}` : undefined}
-        onClick={() => void openChat(k)}
+        onClick={() => {
+          hoverOff();
+          void openChat(k);
+        }}
+        onMouseEnter={(e) => !active && !rail && hoverOn(k, e.currentTarget)}
+        onMouseLeave={hoverOff}
         onContextMenu={(e) => {
           e.preventDefault();
+          hoverOff();
           useApp.setState({ pop: { kind: "menu", x: e.clientX, y: e.clientY, top: e.clientY, items: chatMenu(k, c) } });
         }}
       >
@@ -384,12 +483,12 @@ const ChatRow = memo(function ChatRow({ chat: c, k, active, draft, typing, expan
           </span>
         </span>
       </button>
-      {c.threaded && (
+      {(c.threaded || c.forum) && (
         <button
           className={`row-expand${expanded ? " on" : ""}`}
-          aria-label={expanded ? "Ẩn thread" : "Xem nhanh thread"}
+          aria-label={expanded ? "Ẩn" : c.forum ? "Xem nhanh topic" : "Xem nhanh thread"}
           aria-expanded={expanded}
-          data-tip={expanded ? "Ẩn thread" : "Xem nhanh thread"}
+          data-tip={expanded ? "Ẩn" : c.forum ? "Xem nhanh topic" : "Xem nhanh thread"}
           onClick={() => useApp.setState((s) => ({ expanded: { ...s.expanded, [k]: !expanded } }))}
         >
           <Icon name="message-circle-reply" />
@@ -401,6 +500,37 @@ const ChatRow = memo(function ChatRow({ chat: c, k, active, draft, typing, expan
 
 /** Level 3: the space's most recently active threads, one click to open as a tab. */
 function ThreadPeek({ k }: { k: string }) {
+  return useApp((s) => s.chats[k]?.forum) ? <TopicPeek k={k} /> : <GchatThreadPeek k={k} />;
+}
+
+function TopicPeek({ k }: { k: string }) {
+  const topics = useApp((s) => s.topics[k]);
+  const tabs = useApp((s) => s.tabs);
+  useEffect(() => {
+    void loadTopics(k);
+  }, [k]);
+  return (
+    <motion.div className="thread-peek" initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} transition={{ duration: 0.18, ease: EASE }}>
+      {!topics ? (
+        <div className="peek-row muted"><span className="veil-spinner" /> Đang tải…</div>
+      ) : topics.length ? (
+        topics.slice(0, 8).map((t) => (
+          <button key={t.id} className={`peek-row${tabs.includes(threadTabKey(k, t.id)) ? " open" : ""}`} onClick={() => openTopicTab(k, t)} title={t.name}>
+            <span className="peek-text"><b># {t.name}</b> {t.preview}</span>
+            <span className="peek-meta">
+              {t.unread > 0 && <span className="peek-count">{t.unread}</span>}
+              {listTime(t.lastTs)}
+            </span>
+          </button>
+        ))
+      ) : (
+        <div className="peek-row muted">Nhóm chưa có topic</div>
+      )}
+    </motion.div>
+  );
+}
+
+function GchatThreadPeek({ k }: { k: string }) {
   const list = useApp((s) => s.msgs[k]);
   const tabs = useApp((s) => s.tabs);
   useEffect(() => {
@@ -426,7 +556,7 @@ function ThreadPeek({ k }: { k: string }) {
         threads.map(({ root, count, last }) => (
           <button
             key={root.id}
-            className={`peek-row${tabs.includes(`thread:${root.threadId}`) ? " open" : ""}`}
+            className={`peek-row${tabs.includes(threadTabKey(k, root.threadId)) ? " open" : ""}`}
             onClick={() => openThreadTab(k, root)}
             title={plain(root.text)}
           >

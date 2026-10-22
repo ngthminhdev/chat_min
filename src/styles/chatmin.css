@@ -19,7 +19,7 @@ html, body { overflow: hidden; }
 .app-frame { min-width: 0; min-height: 0; height: 100dvh; }
 
 .ic { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.glyph { fill: currentColor; stroke: none; --od-icon-size: 12px; }
+.glyph { --od-icon-size: 12px; width: var(--od-icon-size); height: var(--od-icon-size); flex: none; object-fit: contain; user-select: none; }
 
 /* titlebar */
 .traffic { gap: 8px; }
@@ -679,9 +679,9 @@ body.inspector-unavailable .main.r2-tab .inspector, body.inspector-unavailable .
 .avatar.has-img { background: var(--pane-3); }
 .avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; display: block; }
 .avatar .avatar-badge { position: absolute; right: -3px; bottom: -3px; width: 14px; height: 14px; display: grid; place-items: center; border-radius: var(--radius-circle); background: var(--window); color: var(--text-2); box-shadow: 0 0 0 1.5px var(--window); }
-.avatar .avatar-badge .glyph { --od-icon-size: 10px; }
+.avatar .avatar-badge .glyph { --od-icon-size: 14px; }
 .avatar.lg .avatar-badge { width: 18px; height: 18px; }
-.avatar.lg .avatar-badge .glyph { --od-icon-size: 12px; }
+.avatar.lg .avatar-badge .glyph { --od-icon-size: 18px; }
 
 /* sidebar tree: account → kind sections → chats */
 .sec-head { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; align-items: center; gap: 6px; width: 100%; margin: 6px 0 2px; padding: 4px 6px 4px 10px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-3); font: 600 var(--fs-xs)/1.2 var(--font-body); letter-spacing: .06em; text-transform: uppercase; text-align: left; }
@@ -935,6 +935,62 @@ body.left-collapsed.right-collapsed .main:not(.r2-page) { grid-template-columns:
 .viewer.zoom .viewer-stage { place-items: start center; overflow: auto; }
 .viewer.zoom .viewer-stage img { max-width: none; max-height: none; cursor: zoom-out; }
 
+/* ── contrast pass: counts, unread badges, toasts, banners ───────────────── */
+/* neutral counts (account, section, inbox): lifted off the pane, readable */
+.badge { min-width: 18px; padding: 2px 6px; text-align: center; color: var(--text); background: color-mix(in oklab, var(--text), transparent 84%); font-weight: 600; }
+/* unread in a chat that notifies: solid accent, the one thing that should pop */
+.badge.unread, .chat-row.unread .badge.unread { color: var(--text-on-accent); background: var(--accent); }
+body.light .badge.unread, body.light .chat-row.unread .badge.unread { color: #fff; }
+/* muted chat: still a number you can read, just not shouting */
+.badge.idle { color: var(--text-2); background: color-mix(in oklab, var(--text), transparent 88%); }
+.chat-row .mention-ic { color: var(--accent); }
+.chat-row.unread .name { color: var(--text); }
+
+.toast { background: color-mix(in oklab, var(--window), var(--text) 6%); border: 1px solid var(--line-2); border-left: 3px solid var(--green); backdrop-filter: none; }
+.toast.error { border-left-color: var(--red); }
+.toast.info { border-left-color: var(--accent); }
+.toast.info .ic { color: var(--accent); }
+.toast-body { color: var(--text); }
+
+.health-banner { padding: 8px 12px; border: 0; border-radius: var(--radius-md); background: color-mix(in oklab, var(--orange), transparent 86%); }
+.health-banner.expired { background: color-mix(in oklab, var(--red), transparent 86%); }
+.unread-sep { font-weight: 600; }
+.unread-sep::before, .unread-sep::after { background: color-mix(in oklab, var(--orange), transparent 30%); }
+
+/* ── AI summary card, floating under the conversation header ─────────────── */
+.content { position: relative; }
+.summary-card { position: absolute; z-index: 5; top: 72px; left: 24px; right: 24px; max-width: 760px; margin-inline: auto; max-height: 55%; overflow: auto; padding: 10px 14px 12px; border: 1px solid var(--line-2); border-left: 3px solid var(--accent); border-radius: var(--radius-lg); background: color-mix(in oklab, var(--window), var(--text) 5%); box-shadow: var(--shadow); }
+.summary-card.err { border-left-color: var(--red); }
+.summary-card header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.summary-card header > .ic { --od-icon-size: 15px; color: var(--accent); }
+.summary-card header small { flex: 1; color: var(--text-3); font: var(--fs-xs) var(--font-mono); }
+.summary-card header .tool-btn.icon-only { width: 26px; min-width: 26px; height: 26px; border-color: transparent; }
+.summary-body p { margin: 0; color: var(--text); font-size: var(--fs-md); line-height: 1.5; }
+.summary-body .bullet { position: relative; padding-left: 14px; margin-top: 3px; }
+.summary-body .bullet::before { content: ""; position: absolute; left: 3px; top: .62em; width: 5px; height: 5px; border-radius: var(--radius-circle); background: var(--accent); }
+.summary-body .label { margin-top: 10px; color: var(--orange); font-weight: 650; }
+.summary-card.err .summary-body p { color: var(--red); }
+
+/* ── threads / topics in the right dock ───────────────────────────────────── */
+.conv-threads { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-color: transparent; color: var(--text-2); }
+.conv-threads.active { color: var(--accent-secondary); background: var(--accent-soft); }
+.conv-threads small { color: var(--text-3); font: var(--fs-xs) var(--font-mono); }
+.side-threads { display: grid; gap: 6px; }
+.side-thread { display: grid; gap: 4px; width: 100%; padding: 9px 10px; border: 1px solid var(--bubble-line); border-radius: var(--radius-md); background: var(--bubble); color: var(--text); font: inherit; text-align: left; cursor: pointer; transition: border-color var(--motion-fast) var(--ease-ui); }
+.side-thread:hover { border-color: color-mix(in oklab, var(--accent), transparent 50%); }
+.side-thread.open { border-color: var(--accent); }
+.side-thread .hd { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; }
+.side-thread .hd b { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 650; font-size: var(--fs-md); }
+.side-thread .hd b .ic { --od-icon-size: 12px; color: var(--text-3); }
+.side-thread .hd time { flex: none; color: var(--text-3); font: var(--fs-xs) var(--font-mono); }
+.side-thread .tx { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--text-2); font-size: var(--fs-md); line-height: 1.4; }
+.side-thread .meta { display: flex; align-items: center; gap: 6px; color: var(--accent-secondary); font-size: var(--fs-sm); }
+.side-thread .meta .ic { --od-icon-size: 13px; color: var(--accent); }
+.side-thread .faces { display: inline-flex; }
+.side-thread .faces .avatar { width: 18px; height: 18px; font-size: 8px; margin-right: -5px; box-shadow: 0 0 0 1.5px var(--pane-2); }
+.side-thread .faces + * { margin-left: 6px; }
+.topic-dot { flex: none; width: 9px; height: 9px; border-radius: var(--radius-circle); }
+
 /* Dedicated message search */
 .message-search { height: 100%; display: flex; flex-direction: column; min-width: 0; }
 .message-search-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 24px 28px 20px; }
@@ -971,3 +1027,47 @@ body.left-collapsed.right-collapsed .main:not(.r2-page) { grid-template-columns:
   .message-search-hit { gap: 8px; }
   .message-search-hit > .ic { display: none; }
 }
+
+/* ── scrolling: no layout shift while loading older pages; always-there ↓ ─── */
+.older-loading { position: sticky; top: 0; z-index: 2; height: 0; overflow: visible; display: flex; justify-content: center; pointer-events: none; }
+.older-loading .veil-spinner { margin-top: 8px; padding: 6px; box-sizing: content-box; border-radius: var(--radius-circle); background: var(--window); box-shadow: var(--shadow); }
+.msgs { overflow-anchor: none; }
+.jump-bottom { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 36px; height: 36px; padding: 0 10px; border: 1px solid var(--line-2); border-radius: var(--radius-pill); background: color-mix(in oklab, var(--window), var(--text) 6%); color: var(--text); box-shadow: var(--shadow); font: 600 var(--fs-sm) var(--font-body); cursor: pointer; }
+.jump-bottom .ic { --od-icon-size: 16px; }
+.jump-bottom.has-new { background: var(--accent); border-color: transparent; color: var(--text-on-accent); }
+body.light .jump-bottom.has-new { color: #fff; }
+
+/* ── sidebar hover preview ─────────────────────────────────────────────────── */
+.hover-peek { position: fixed; z-index: var(--z-toast); width: 340px; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: var(--radius-lg); background: color-mix(in oklab, var(--window), var(--text) 5%); box-shadow: var(--shadow); pointer-events: none; }
+.hover-peek header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.hover-peek header strong { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: var(--fs-md); }
+.hp-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px; align-items: baseline; padding: 4px 0; border-top: 1px solid var(--line); font-size: var(--fs-md); }
+.hp-row b { color: var(--accent-secondary); font-weight: 650; }
+.hp-row.me b { color: var(--text-3); }
+.hp-row span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--text); line-height: 1.4; }
+.hp-row time { color: var(--text-3); font: var(--fs-xs) var(--font-mono); }
+.hp-row.muted { display: flex; color: var(--text-3); }
+
+/* ── sticker picker + voice recording ─────────────────────────────────────── */
+.composer-inner { position: relative; }
+.sticker-panel { position: absolute; z-index: 6; right: 0; bottom: calc(100% + 8px); width: 360px; max-height: 380px; display: grid; grid-template-rows: auto auto minmax(0, 1fr); border: 1px solid var(--line-2); border-radius: var(--radius-lg); background: color-mix(in oklab, var(--window), var(--text) 4%); box-shadow: var(--shadow); overflow: hidden; }
+.sticker-tabs { display: flex; gap: 2px; padding: 6px; overflow-x: auto; border-bottom: 1px solid var(--line); scrollbar-width: none; }
+.sticker-tabs button { flex: none; width: 34px; height: 34px; display: grid; place-items: center; padding: 3px; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text-2); cursor: pointer; }
+.sticker-tabs button.on { background: var(--accent-soft); }
+.sticker-tabs img, .sticker-tabs video { width: 100%; height: 100%; object-fit: contain; }
+.sticker-title { padding: 6px 10px 2px; color: var(--text-3); font: 600 var(--fs-xs) var(--font-mono); text-transform: uppercase; letter-spacing: .04em; }
+.sticker-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; padding: 6px 8px 10px; overflow-y: auto; }
+.sticker-grid button { aspect-ratio: 1; display: grid; place-items: center; padding: 4px; border: 0; border-radius: var(--radius-md); background: transparent; cursor: pointer; }
+.sticker-grid button:hover { background: var(--row-hover); }
+.sticker-grid img, .sticker-grid video { width: 100%; height: 100%; object-fit: contain; }
+.sticker-emoji { font-size: 26px; }
+.sticker-empty { display: flex; align-items: center; gap: 8px; padding: 24px 16px; color: var(--text-3); }
+.rec-bar { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 4px 6px; color: var(--text); font-size: var(--fs-md); }
+.rec-bar b { font-family: var(--font-mono); }
+.rec-bar small { margin-left: auto; color: var(--text-3); }
+.rec-dot { width: 10px; height: 10px; border-radius: var(--radius-circle); background: var(--red); animation: blink 1.2s infinite var(--ease-ui); }
+.composer-tools .tool-btn.rec-on { color: var(--red); }
+
+/* ── Messenger / Zalo web apps: the native webview sits on top of .web-host ─ */
+.web-content { grid-template-rows: 64px minmax(0, 1fr); }
+.web-host { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 0; color: var(--text-3); background: var(--window); }

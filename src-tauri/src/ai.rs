@@ -95,6 +95,12 @@ pub async fn run(c: &AiConfig, task: &str, texts: &[String], me: &str, to: &str)
             let v: Vec<Value> = parse_array(&out)?;
             Ok(json!(v))
         }
+        // texts = transcript lines "HH:MM Name: text", oldest first; "Me" is the user
+        "summarize" => {
+            let sys = format!("You summarize a work chat for Me, a {me} speaker who was away. Write in {me}. Start with up to 6 short lines, each starting with '• ', covering what happened, what was decided, and what is still open — concrete names, numbers and deadlines, no filler. Then, only if something is asked of Me, mentions Me, or is waiting on Me, add a line exactly 'Cần bạn:' (translated into {me} if {me} is not Vietnamese) followed by '• ' lines. No intro, no closing. {DATA} {PLAIN}");
+            let out = complete(c, &sys, &format!("Conversation:\n{}", texts.join("\n"))).await?;
+            Ok(json!([out.trim()]))
+        }
         _ => Err(format!("Không rõ tác vụ AI: {task}")),
     }
 }

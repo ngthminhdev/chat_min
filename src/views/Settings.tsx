@@ -127,7 +127,9 @@ export function Settings() {
                           ...anchor(e.currentTarget),
                           items: [
                             { icon: "pencil", label: "Đổi tên", run: () => renameAccount(a.id) },
-                            { icon: "refresh-cw", label: "Đăng nhập lại", run: () => startWizard(a.id) },
+                            a.platform === "messenger" || a.platform === "zalo"
+                              ? { icon: "refresh-cw", label: "Tải lại trang", run: () => void api.webReload(a.id) }
+                              : { icon: "refresh-cw", label: "Đăng nhập lại", run: () => startWizard(a.id) },
                             { icon: "trash-2", label: "Xoá account…", danger: true, run: () => removeAccount(a.id) },
                           ],
                         },
