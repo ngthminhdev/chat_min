@@ -9,6 +9,7 @@ import { ChatAvatar, PersonAvatar } from "../ui/Avatar";
 import { Icon } from "../ui/Icon";
 import { Composer } from "./Composer";
 import { MessageItem, openThread } from "./Message";
+import { langLabel, toggleAutoTranslate, translateMissing } from "../ai";
 
 const HEALTH_MSG: Record<string, string> = {
   offline: "Account đang offline. Nháp vẫn được giữ trên máy.",
@@ -23,6 +24,8 @@ export function Conversation() {
   const health = useApp((s) => (chat ? s.health[chat.accountId] : undefined));
   const platform = useApp((s) => s.accounts.find((a) => a.id === chat?.accountId)?.platform);
   const view = useApp((s) => (s.active ? s.convTab[s.active] : undefined)) ?? "msgs";
+  const auto = useApp((s) => (s.active ? !!s.trAuto[s.active] : false));
+  const aiMe = useApp((s) => s.prefs.aiMe);
   const threadCount = useApp((s) => (s.active && chat?.threaded ? new Set((s.msgs[s.active] ?? []).filter((m) => m.threadReply).map((m) => m.threadId)).size : 0));
   const [, tick] = useState(0);
 
@@ -81,6 +84,15 @@ export function Conversation() {
             ))}
           </div>
         )}
+        <button
+          className={`tool-btn icon-only${auto ? " active" : ""}`}
+          aria-label="Dịch cả chat"
+          aria-pressed={auto}
+          data-tip={auto ? "Tắt dịch cả chat" : `Dịch cả chat sang ${langLabel(aiMe)}`}
+          onClick={() => toggleAutoTranslate(active)}
+        >
+          <Icon name="languages" />
+        </button>
         <button
           className="tool-btn icon-only"
           aria-label="Tìm trong chat này"
@@ -146,6 +158,7 @@ function MessageList({ k }: { k: string }) {
   const prevFirst = useRef<string | undefined>(undefined);
   const stick = useRef(true);
   const [below, setBelow] = useState(0);
+  const auto = useApp((s) => !!s.trAuto[k]);
 
   const visible = useMemo(() => (list ?? []).filter((m) => !(chat?.threaded && m.threadReply)), [list, chat?.threaded]);
   const replies = useMemo(() => {
@@ -153,6 +166,10 @@ function MessageList({ k }: { k: string }) {
     if (chat?.threaded) for (const m of list ?? []) if (m.threadReply && m.threadId) (r[m.threadId] ??= []).push(m);
     return r;
   }, [list, chat?.threaded]);
+
+  useEffect(() => {
+    if (auto) void translateMissing(k, visible);
+  }, [auto, k, visible.length, visible[visible.length - 1]?.id]);
 
   // keep the reading position: stick to the bottom for new messages, hold still when
   // older pages are prepended above

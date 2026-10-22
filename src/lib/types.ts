@@ -105,3 +105,6 @@ export interface AppState {
   tgConfigured: boolean;
   gchatConfigured: boolean;
 }
+
+export interface AiView { format: "openai" | "anthropic"; endpoint: string; model: string; guide: string; hasKey: boolean }
+export interface Suggestion { reply: string; meaning: string }

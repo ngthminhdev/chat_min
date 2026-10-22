@@ -83,8 +83,9 @@ m(G, "spaces/AAAA8xQm2Lk", "me", at(0, "09:20"), "Build Tools pipeline đã đ�
 m(G, "spaces/AAAA8xQm2Lk", "Đức Hoàng", at(0, "09:40"), "Consumer lag on `ledger-events` is back under 2k after the partition bump. Closing INC-4821.", { reactions: [{ emoji: "✅", count: 6, mine: false }], threadId: "spaces/AAAA8xQm2Lk/threads/t2" });
 m(G, "spaces/AAAA8xQm2Lk", "Lan Phạm", at(0, "10:20"), "@{Trí Võ} can you own the Loki retention change? Debug logs 30d → 14d, info stays 30d.", { mentionsMe: true, threadId: "spaces/AAAA8xQm2Lk/threads/t3" });
 m(G, "spaces/AAAA8xQm2Lk", "Sarah Chen", at(0, "10:24"), "RFC for the Promtail → Grafana Alloy migration is up, comments by Monday please: [RFC-112](https://docs.google.com/document/d/rfc-112)", { threadId: "spaces/AAAA8xQm2Lk/threads/t4" });
-m(G, "spaces/AAAAm1nhTr4", "Minh Trần", at(0, "09:10"), "Anh ơi, Vault agent sidecar có cần thêm policy cho namespace payments không ạ?");
-m(G, "spaces/AAAAm1nhTr4", "me", at(0, "09:16"), "Cần, copy policy của ledger-svc rồi đổi path là được", { status: "sent" });
+const dmRoot = m(G, "spaces/AAAAm1nhTr4", "Minh Trần", at(0, "09:10"), "Anh ơi, Vault agent sidecar có cần thêm policy cho namespace payments không ạ?", {threadId:"spaces/AAAAm1nhTr4/threads/policy"});
+m(G, "spaces/AAAAm1nhTr4", "me", at(0, "09:16"), "Cần, copy policy của ledger-svc rồi đổi path là được", { status: "sent", replyTo:dmRoot.id, threadId:"spaces/AAAAm1nhTr4/threads/answer" });
+m(G, "spaces/AAAAm1nhTr4", "Minh Trần", at(0, "09:18"), "Em cập nhật policy rồi ạ", {threadId:dmRoot.threadId,threadReply:true});
 m(G, "spaces/AAAAr3lQ4tr", "Đức Hoàng", at(1, "16:00"), "Go/no-go for v4.18 is Friday 15:30. Checklist link in the pinned message.");
 m(G, "spaces/AAAAaLlh4nD", "Lan Phạm", at(0, "08:30"), "Văn phòng tầng 12 bảo trì điều hoà sáng thứ Bảy 24/10, mọi người mang laptop về nhé.");
 
@@ -96,7 +97,7 @@ const chats: Chat[] = [
   chat({ accountId: T, id: "188230017", kind: "dm", title: "Mẹ" }),
   chat({ accountId: T, id: "5530021984", kind: "dm", title: "Duy Phạm" }),
   chat({ accountId: G, id: "spaces/AAAA8xQm2Lk", kind: "space", title: "eng-platform", memberCount: 48, unread: 7, mention: true, threaded: true, description: "Platform engineering: infra, CI/CD, observability (Loki, Prometheus, Grafana), Kafka, Postgres.", created: "01/2025" }),
-  chat({ accountId: G, id: "spaces/AAAAm1nhTr4", kind: "dm", title: "Minh Trần" }),
+  chat({ accountId: G, id: "spaces/AAAAm1nhTr4", kind: "dm", title: "Minh Trần", threaded:true }),
   chat({ accountId: G, id: "spaces/AAAAr3lQ4tr", kind: "space", title: "release-train-2026-q4", memberCount: 23, threaded: true, created: "10/2026" }),
   chat({ accountId: G, id: "spaces/AAAAaLlh4nD", kind: "space", title: "all-hands-announcements", memberCount: 312, muted: true, unread: 2, threaded: true, created: "02/2023" }),
 ];
@@ -112,6 +113,7 @@ chats.forEach((c, i) => {
 });
 
 const health = { "tg-demo": { health: "ok" as const, text: "", until: 0 }, "gc-demo": { health: "ok" as const, text: "", until: 0 } };
+const ai = { format: "openai", endpoint: "https://openrouter.ai/api/v1", model: "anthropic/claude-haiku", guide: "" };
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const k = (a: unknown, c: unknown) => `${a}|${c}`;
 
@@ -139,6 +141,8 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
     case "send": {
       await wait(500);
       const x = m(a.accountId, a.chatId, "me", Date.now(), a.text, { status: "sent", threadId: a.threadId ?? "", threadReply: !!a.threadId });
+      const quoted = a.replyTo ? (msgs[k(a.accountId, a.chatId)] ?? []).find((m) => m.id === a.replyTo) : undefined;
+      if (quoted) Object.assign(x, {replyTo:quoted.id,replyName:quoted.outgoing ? "Bạn" : quoted.senderName,replyText:quoted.text});
       if (/fail|lỗi/i.test(a.text)) throw new Error("Không gửi được — mất kết nối (demo)");
       // a DM answers back so live arrival + typing can be seen
       if (a.chatId === "402918331") {
@@ -179,6 +183,22 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
     }
     case "download":
       throw new Error("Demo không có file thật");
+    case "ai_config":
+      return { ...ai, hasKey: true };
+    case "ai_config_set":
+      Object.assign(ai, { format: a.format, endpoint: a.endpoint, model: a.model, guide: a.guide });
+      return;
+    case "ai_run": {
+      await wait(700);
+      const texts = a.texts as string[];
+      if (a.task === "suggest")
+        return [
+          { reply: "Sounds good, I'll take a look this afternoon.", meaning: "Nghe ổn, chiều nay mình xem nhé." },
+          { reply: "Could you share the failing cases first?", meaning: "Gửi mình mấy case fail trước được không?" },
+          { reply: "Let's sync tomorrow morning on this.", meaning: "Sáng mai mình bàn chuyện này nhé." },
+        ];
+      return texts.map((t) => `[${a.task === "translate_to" ? a.to : a.me}] ${t}`);
+    }
     default:
       throw new Error(`demo: ${cmd} chưa có`);
   }

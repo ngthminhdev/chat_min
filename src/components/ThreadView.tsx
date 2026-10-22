@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { fmtCount, plain } from "../lib/format";
-import { capsOf, openChat, useApp } from "../store";
+import { capsOf, openChat, toast, useApp } from "../store";
 import { ChatAvatar } from "../ui/Avatar";
 import { Icon } from "../ui/Icon";
 import { Composer } from "./Composer";
@@ -13,6 +13,7 @@ export function ThreadView({ tab }: { tab: string }) {
   const platform = useApp((s) => s.accounts.find((a) => a.id === chat?.accountId)?.platform);
   const list = useApp((s) => (meta ? s.msgs[meta.chatKey] : undefined));
   const fresh = useApp((s) => s.fresh);
+  const jumpTo = useApp((s) => s.jumpTo);
   const box = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
 
@@ -26,6 +27,17 @@ export function ThreadView({ tab }: { tab: string }) {
   useEffect(() => {
     stick.current = true;
   }, [tab]);
+  useEffect(() => {
+    if (!jumpTo) return;
+    const el = document.getElementById(`m-${jumpTo}`);
+    if (el && box.current?.contains(el)) {
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.classList.remove("flash");
+      void el.offsetWidth;
+      el.classList.add("flash");
+    } else toast("Tin gốc không có trong thread đã tải", "info");
+    useApp.setState({ jumpTo: null });
+  }, [jumpTo]);
 
   if (!meta || !chat) {
     return (
@@ -41,14 +53,14 @@ export function ThreadView({ tab }: { tab: string }) {
   return (
     <div className="content thread-content">
       <div className="conv-head">
-        <button className="tool-btn icon-only back-btn" aria-label={`Về #${chat.title}`} data-tip={`Về ${chat.title}`} onClick={() => void openChat(meta.chatKey)}>
+        <button className="tool-btn icon-only back-btn" aria-label={`Về ${chat.title}`} data-tip={`Về ${chat.title}`} onClick={() => void openChat(meta.chatKey)}>
           <Icon name="chevron-right" />
         </button>
         <ChatAvatar chat={chat} platform={platform} />
         <div className="title">
           <strong>{root ? plain(root.text).slice(0, 90) || "Thread" : meta.title}</strong>
           <span>
-            thread · {chat.title} · {fmtCount(replies.length)} trả lời
+            Thread trong tab riêng · {chat.title} · {fmtCount(replies.length)} trả lời
           </span>
         </div>
       </div>
@@ -61,13 +73,14 @@ export function ThreadView({ tab }: { tab: string }) {
         }}
       >
         <div className="msgs-inner">
+          {meta.error && <div className="empty-note" role="alert">Chưa tải được thread: {meta.error} <button className="tool-btn" onClick={() => void openChat(tab)}>Thử lại</button></div>}
           {root ? (
             <div className="thread-root">
               <MessageItem k={meta.chatKey} tab={tab} m={root} chat={chat} caps={caps} first last fresh={false} threadOpen={false} />
             </div>
-          ) : (
+          ) : !meta.error ? (
             <div className="section-veil on" role="status"><span className="veil-spinner" /><span>Đang tải thread…</span></div>
-          )}
+          ) : null}
           <div className="day-sep" role="separator"><span>{replies.length ? `${replies.length} trả lời` : "Chưa có trả lời"}</span></div>
           {replies.map((m, i) => {
             const prev = replies[i - 1];

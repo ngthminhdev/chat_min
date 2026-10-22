@@ -15,7 +15,12 @@ export const splitKey = (k: string): [string, string] => {
   return [k.slice(0, i), k.slice(i + 1)];
 };
 
-export interface Prefs { size: number; theme: string; uiFont: string; monoFont: string; compact: boolean }
+export interface Prefs {
+  size: number; theme: string; uiFont: string; monoFont: string; compact: boolean;
+  /** AI: the language the user reads in, and the default one to write in */
+  aiMe: string; aiTo: string;
+}
+export interface Translation { state: "loading" | "ok" | "err"; text: string }
 export interface NotifyPrefs { enabled: boolean; mentions: boolean; quiet: boolean; from: string; to: string; preview: boolean }
 export const DEFAULT_NOTIFY: NotifyPrefs = { enabled: true, mentions: false, quiet: false, from: "22:00", to: "08:00", preview: true };
 
@@ -33,7 +38,7 @@ export const anchor = (el: Element) => {
 export type Dialog =
   | { kind: "confirm"; title: string; message: string; ok: string; onOk: () => void }
   | { kind: "prompt"; title: string; value: string; onOk: (v: string) => void };
-export interface ThreadTab { chatKey: string; threadId: string; rootId: string; title: string }
+export interface ThreadTab { chatKey: string; threadId: string; rootId: string; title: string; error?: string }
 export interface Toast { id: number; text: string; icon: IconName }
 export interface AuthState { step: string; info: string; error: string }
 export interface SyncState { checks: ("idle" | "run" | "ok" | "err")[]; log: string[] }
@@ -84,6 +89,12 @@ interface State {
   auth: Record<string, AuthState>;
   sync: Record<string, SyncState>;
   jumpTo: string | null;
+  /** inline translations, keyed "chatKey#msgId" — never persisted */
+  tr: Record<string, Translation>;
+  /** chats translating every message as it loads */
+  trAuto: Record<string, boolean>;
+  /** per-chat language to write in, overrides prefs.aiTo */
+  aiLang: Record<string, string>;
 }
 
 const PERSIST = "chatmin.ui";
@@ -130,11 +141,14 @@ export const useApp = create<State>(() => ({
   pop: null,
   dialog: null,
   toasts: [],
-  prefs: { size: 13, theme: "", uiFont: "", monoFont: "", compact: false, ...saved.prefs },
+  prefs: { size: 13, theme: "", uiFont: "", monoFont: "", compact: false, aiMe: "Vietnamese", aiTo: "English", ...saved.prefs },
   notif: saved.notif ?? {},
   auth: {},
   sync: {},
   jumpTo: null,
+  tr: {},
+  trAuto: saved.trAuto ?? {},
+  aiLang: saved.aiLang ?? {},
 }));
 
 const get = useApp.getState;
@@ -145,11 +159,11 @@ let persistT: ReturnType<typeof setTimeout> | undefined;
 useApp.subscribe((s) => {
   clearTimeout(persistT);
   persistT = setTimeout(() => {
-    const { tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, favorites, accountOrder } = s;
+    const { tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, favorites, accountOrder, trAuto, aiLang } = s;
     try {
       localStorage.setItem(
         PERSIST,
-        JSON.stringify({ tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, favorites, accountOrder }),
+        JSON.stringify({ tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, favorites, accountOrder, trAuto, aiLang }),
       );
     } catch {}
   }, 300);
@@ -367,9 +381,12 @@ export async function openChat(k: string) {
 
 /** Opens a Google Chat thread as its own workspace tab, next to its space. */
 export function openThreadTab(chatKey: string, root: Msg) {
-  const t = `thread:${root.threadId}`;
+  if (!root.threadId) return toast("Tin nhắn này chưa có thread ID từ Google Chat", "info");
+  const threadId = root.threadId;
+  if (root.threadReply) root = get().msgs[chatKey]?.find((m) => m.threadId === threadId && !m.threadReply) ?? root;
+  const t = `thread:${chatKey}:${threadId}`;
   set((s) => ({
-    threadTabs: { ...s.threadTabs, [t]: { chatKey, threadId: root.threadId, rootId: root.id, title: plain(root.text).slice(0, 60) || root.media?.name || "Thread" } },
+    threadTabs: { ...s.threadTabs, [t]: { chatKey, threadId, rootId: root.id, title: plain(root.text).slice(0, 60) || root.media?.name || "Thread" } },
   }));
   void openChat(t);
 }
@@ -383,9 +400,12 @@ async function loadThread(t: string) {
     set((s) => {
       let list = s.msgs[meta.chatKey] ?? [];
       for (const m of msgs) list = upsert(list, m);
-      return { msgs: { ...s.msgs, [meta.chatKey]: list } };
+      const root = list.find((m) => m.threadId === meta.threadId && !m.threadReply);
+      return { msgs: { ...s.msgs, [meta.chatKey]: list }, threadTabs: s.threadTabs[t] ? { ...s.threadTabs, [t]: { ...s.threadTabs[t], rootId: root?.id ?? meta.rootId, error: "" } } : s.threadTabs };
     });
-  } catch {}
+  } catch (e) {
+    set((s) => ({ threadTabs: s.threadTabs[t] ? { ...s.threadTabs, [t]: { ...s.threadTabs[t], error: String(e) } } : s.threadTabs }));
+  }
 }
 
 export function toggleFavorite(k: string) {

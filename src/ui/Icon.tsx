@@ -1,9 +1,9 @@
 import {
   ArrowDown, AtSign, AudioLines, Bell, BellOff, Check, CheckCheck, ChevronDown, ChevronRight, CircleAlert, Clock, Copy,
   CornerDownRight, Download, Ellipsis, ExternalLink, FileArchive, FileCode, FileText, Film, FolderOpen, Forward, Hash, Image,
-  Inbox, Info, KeyRound, Layers, Link, Lock, Mail, Megaphone, MessageCircleReply, MessageSquareText, MessagesSquare, Mic,
+  Inbox, Info, KeyRound, Languages, Layers, Link, Lock, Mail, Megaphone, MessageCircleReply, MessageSquareText, MessagesSquare, Mic,
   Palette, PanelLeft, PanelRight, Paperclip, Pencil, Phone, Pin, PinOff, Play, Plus, QrCode, RefreshCw, Reply, RotateCw,
-  Search, Send, Settings, Smile, Sticker, Trash2, UserPlus, Users, WifiOff, X, type LucideIcon,
+  Search, Send, Settings, Smile, Sparkles, Sticker, Trash2, Undo2, UserPlus, Users, WifiOff, X, type LucideIcon,
 } from "lucide-react";
 import type { Platform } from "../lib/types";
 
@@ -13,11 +13,11 @@ const ICONS = {
   clock: Clock, copy: Copy, "corner-down-right": CornerDownRight, download: Download, ellipsis: Ellipsis,
   "external-link": ExternalLink, "file-archive": FileArchive, "file-code": FileCode, "file-text": FileText, film: Film,
   "folder-open": FolderOpen, forward: Forward, hash: Hash, image: Image, inbox: Inbox, info: Info, "key-round": KeyRound,
-  layers: Layers, link: Link, lock: Lock, mail: Mail, megaphone: Megaphone, "message-circle-reply": MessageCircleReply,
+  languages: Languages, layers: Layers, link: Link, lock: Lock, mail: Mail, megaphone: Megaphone, "message-circle-reply": MessageCircleReply,
   "message-square-text": MessageSquareText, "messages-square": MessagesSquare, mic: Mic, palette: Palette,
   "panel-left": PanelLeft, "panel-right": PanelRight, paperclip: Paperclip, pencil: Pencil, phone: Phone, pin: Pin,
   "pin-off": PinOff, play: Play, plus: Plus, "qr-code": QrCode, "refresh-cw": RefreshCw, reply: Reply, "rotate-cw": RotateCw,
-  search: Search, send: Send, settings: Settings, smile: Smile, sticker: Sticker, "trash-2": Trash2, "user-plus": UserPlus,
+  search: Search, send: Send, settings: Settings, smile: Smile, sparkles: Sparkles, sticker: Sticker, "trash-2": Trash2, "undo-2": Undo2, "user-plus": UserPlus,
   users: Users, "wifi-off": WifiOff, x: X,
 } satisfies Record<string, LucideIcon>;
 

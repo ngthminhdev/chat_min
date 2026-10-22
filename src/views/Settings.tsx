@@ -1,6 +1,10 @@
+import { useEffect, useState } from "react";
+import { api } from "../lib/bridge";
+import type { AiView } from "../lib/types";
 import { HEALTH_LABELS, PLATFORMS } from "../lib/platforms";
+import { LANGS } from "../ai";
 import { THEMES } from "../lib/themes";
-import { anchor, DEFAULT_NOTIFY, useApp, type NotifyPrefs } from "../store";
+import { anchor, DEFAULT_NOTIFY, fail, toast, useApp, type NotifyPrefs } from "../store";
 import { removeAccount, renameAccount } from "../App";
 import { startWizard } from "./Wizard";
 import { Glyph, Icon, type IconName } from "../ui/Icon";
@@ -9,7 +13,7 @@ const SHORTCUTS: [string, string][] = [
   ["Thêm account", "⌘N"], ["Chat & lệnh", "⌘K"], ["Tìm tin mọi account", "⌘⇧F"], ["Tìm trong chat", "⌘F"],
   ["Đổi account", "⌘1…9"], ["Tab trước / sau", "⌘[ / ⌘]"], ["Chat chưa đọc", "⌘↑ / ⌘↓"], ["Đổi tên account", "⌘E"],
   ["Xoá account", "⌘⌫"], ["Sidebar / Inspector", "⌘B / ⌘I"], ["Sửa tin vừa gửi", "↑"], ["Huỷ trả lời", "Esc"],
-  ["Settings", "⌘,"], ["Đóng tab", "⌘W"],
+  ["Settings", "⌘,"], ["Đóng tab", "⌘W"], ["Gợi ý trả lời", "⌘J"], ["Dịch nháp", "⌘⇧L"],
 ];
 
 function Row({ title, help, icon = "settings", children }: { title: string; help: string; icon?: IconName; children: React.ReactNode }) {
@@ -85,6 +89,8 @@ export function Settings() {
             <Toggle checked={prefs.compact} label="Compact density" onChange={(v) => setPrefs({ compact: v })} />
           </Row>
         </section>
+
+        <AiCard />
 
         <section className="settings-card">
           <h3>Accounts</h3>
@@ -182,6 +188,119 @@ export function Settings() {
         <p className="r2-muted">Giao diện và thông báo lưu trên máy này. Phiên đăng nhập ở ~/Library/Application Support/com.chatmin.app.</p>
       </div>
     </>
+  );
+}
+
+const ENDPOINT_HINT = {
+  openai: "https://openrouter.ai/api/v1",
+  anthropic: "https://api.anthropic.com/v1",
+};
+
+function AiCard() {
+  const prefs = useApp((s) => s.prefs);
+  const [cfg, setCfg] = useState<AiView | null>(null);
+  const [key, setKey] = useState("");
+  const [testing, setTesting] = useState(false);
+  useEffect(() => {
+    api.aiConfig().then(setCfg).catch(fail);
+  }, []);
+  if (!cfg) return null;
+
+  const save = (patch: Partial<AiView> & { key?: string }) => {
+    const next = { ...cfg, ...patch };
+    setCfg({ ...next, hasKey: patch.key !== undefined ? !!patch.key : cfg.hasKey });
+    const { hasKey: _, ...body } = next;
+    api.aiConfigSet({ ...body, key: patch.key }).catch(fail);
+  };
+  const setPrefs = (p: Partial<typeof prefs>) => useApp.setState((s) => ({ prefs: { ...s.prefs, ...p } }));
+  const test = async () => {
+    setTesting(true);
+    try {
+      const [out] = await api.aiRun("translate_to", ["Chào anh, chiều nay mình họp lúc 3h nhé."], prefs.aiMe, prefs.aiTo);
+      toast(`Kết nối ổn · “${out}”`, "check");
+    } catch (e) {
+      fail(e);
+    } finally {
+      setTesting(false);
+    }
+  };
+  const langSelect = (value: string, label: string, on: (v: string) => void) => (
+    <select className="settings-select" aria-label={label} value={value} onChange={(e) => on(e.target.value)}>
+      {LANGS.map(([name, l]) => <option key={name} value={name}>{l}</option>)}
+    </select>
+  );
+
+  return (
+    <section className="settings-card">
+      <h3>AI · dịch & gợi ý trả lời</h3>
+      <Row title="Định dạng API" help="OpenAI-compatible cho OpenRouter, OpenAI, Ollama… Anthropic cho api.anthropic.com hoặc proxy cùng chuẩn." icon="sparkles">
+        <div className="mini-tabs" role="tablist" aria-label="Định dạng API">
+          {(["openai", "anthropic"] as const).map((f) => (
+            <button key={f} role="tab" aria-selected={cfg.format === f} className={cfg.format === f ? "active" : ""} onClick={() => save({ format: f, endpoint: "" })}>
+              {f === "openai" ? "OpenAI · OpenRouter" : "Anthropic"}
+            </button>
+          ))}
+        </div>
+      </Row>
+      <Row title="Endpoint" help="Base URL. Để trống dùng mặc định." icon="link">
+        <input
+          className="settings-select ai-input"
+          placeholder={ENDPOINT_HINT[cfg.format]}
+          defaultValue={cfg.endpoint === ENDPOINT_HINT[cfg.format] ? "" : cfg.endpoint}
+          key={`ep-${cfg.format}`}
+          onBlur={(e) => save({ endpoint: e.target.value })}
+        />
+      </Row>
+      <Row title="API key" help="Lưu trong config.json của app (chmod 600), không gửi đi đâu ngoài endpoint." icon="key-round">
+        <input
+          className="settings-select ai-input"
+          type="password"
+          autoComplete="off"
+          placeholder={cfg.hasKey ? "•••••••• đã lưu — gõ để thay" : cfg.format === "anthropic" ? "sk-ant-…" : "sk-or-…"}
+          value={key}
+          onChange={(e) => setKey(e.target.value)}
+          onBlur={() => {
+            if (key.trim()) save({ key: key.trim() });
+            setKey("");
+          }}
+        />
+      </Row>
+      <Row title="Model" help={cfg.format === "anthropic" ? "Ví dụ claude-opus-5-5, claude-haiku-5-5 (nhanh, rẻ cho dịch)." : "Slug của OpenRouter, ví dụ anthropic/…, openai/…, google/…"} icon="layers">
+        <input
+          className="settings-select ai-input"
+          list={cfg.format === "anthropic" ? "ai-models" : undefined}
+          placeholder={cfg.format === "anthropic" ? "claude-opus-5-5" : "provider/model"}
+          defaultValue={cfg.model}
+          key={`m-${cfg.format}`}
+          onBlur={(e) => e.target.value.trim() !== cfg.model && save({ model: e.target.value })}
+        />
+        <datalist id="ai-models">
+          <option value="claude-opus-5-5" />
+          <option value="claude-sonnet-5-5" />
+          <option value="claude-haiku-5-5" />
+        </datalist>
+      </Row>
+      <Row title="Ngôn ngữ của tôi" help="Tin nhắn được dịch sang ngôn ngữ này để đọc." icon="languages">
+        {langSelect(prefs.aiMe, "Ngôn ngữ của tôi", (v) => setPrefs({ aiMe: v }))}
+      </Row>
+      <Row title="Ngôn ngữ viết mặc định" help="Nháp và gợi ý trả lời viết bằng ngôn ngữ này. Đổi riêng từng chat ở nút EN cạnh ô soạn tin." icon="send">
+        {langSelect(prefs.aiTo, "Ngôn ngữ viết mặc định", (v) => setPrefs({ aiTo: v }))}
+      </Row>
+      <Row title="Hướng dẫn dịch" help="Thuật ngữ giữ nguyên, giọng văn… áp dụng cho mọi bản dịch." icon="file-text">
+        <textarea
+          className="settings-select ai-input ai-guide"
+          rows={2}
+          placeholder="VD: giữ nguyên PR, deploy, staging, rollback; xưng anh/em"
+          defaultValue={cfg.guide}
+          onBlur={(e) => e.target.value !== cfg.guide && save({ guide: e.target.value })}
+        />
+      </Row>
+      <div className="settings-add">
+        <button type="button" className="tool-btn" disabled={testing || !cfg.model} onClick={() => void test()}>
+          {testing ? <span className="veil-spinner" /> : <Icon name="sparkles" />} Kiểm tra kết nối
+        </button>
+      </div>
+    </section>
   );
 }
 

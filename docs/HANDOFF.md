@@ -105,3 +105,10 @@ Spec: `docs/superpowers/specs/2026-10-22-chatmin-design.md`. Prototype export: `
 - Chưa làm: Telegram forum topics, forward, sticker/voice gửi, Messenger/Zalo webview.
 - Bẫy đã gặp (2 lần): temporary MutexGuard sống tới hết statement — struct literal (`app_state`, màn đen) và
   `if let x = core.store()...` có gọi store trong thân (`mark_read`, treo cả sync). Luôn bind kết quả ra biến trước.
+
+## AI (2026-10-22)
+- `src-tauri/src/ai.rs`: two wire formats — OpenAI-compatible `/chat/completions` (default endpoint OpenRouter) and Anthropic `/messages` (default api.anthropic.com). Config in `config.json` → `ai` {format, endpoint, model, key, guide}; key never sent to the FE (`ai_config` returns `hasKey`).
+- Tasks (`ai_run`): `translate` (one msg, auto direction me↔to), `translate_to` (draft → to), `translate_many` (JSON array in/out, reading into `me`), `suggest` (3 × {reply, meaning}).
+- On api.anthropic.com: `output_config.effort: "low"` + server-side refusal fallback (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`) for Opus 5 / Fable 5.1 / Sonnet 5.5; any 400 retries once without the extras.
+- FE `src/ai.ts`: `tr` (inline translations, not persisted), `trAuto` (whole-chat mode, MessageList effect translates new incoming msgs), `aiLang` (per-chat writing language), prefs `aiMe` / `aiTo`.
+- UI: msg hover/menu "Dịch"; header 文A toggle = dịch cả chat; composer ✨ gợi ý (⌘J), 文A dịch nháp (⌘⇧L), tag `EN` chọn ngôn ngữ per chat, "Khôi phục bản gốc"; Settings › AI.

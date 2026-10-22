@@ -10,6 +10,7 @@ import { api } from "../lib/bridge";
 import { PersonAvatar } from "../ui/Avatar";
 import { Icon, type IconName } from "../ui/Icon";
 import { useDownload } from "./Conversation";
+import { translateMsg, trKey } from "../ai";
 
 interface Props {
   k: string;
@@ -26,6 +27,8 @@ interface Props {
 }
 
 export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps, first, last, fresh, replies, threadOpen }: Props) {
+  const tr = useApp((s) => s.tr[trKey(k, m.id)]);
+  const original = useApp((s) => m.replyTo ? s.msgs[k]?.find((x) => x.id === m.replyTo) : undefined);
   if (m.kind === "service") {
     return (
       <div className="service-msg" id={`m-${m.id}`}>
@@ -58,13 +61,25 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
 
   const quote = m.replyTo ? (
     <button className="quote" aria-label="Tới tin được trả lời" onClick={() => useApp.setState({ jumpTo: m.replyTo })}>
-      <b>{m.replyName || "Tin nhắn"}</b>
-      <span>{m.replyText || "Tin nhắn cũ hơn"}</span>
+      <b>{m.replyName || (original?.outgoing ? "Bạn" : original?.senderName) || "Tin nhắn được trả lời"}</b>
+      <span>{plain(m.replyText || original?.text || "") || original?.media?.name || "Tin gốc chưa được tải · bấm để tìm"}</span>
     </button>
   ) : null;
 
   return (
-    <Wrap className={cls} id={`m-${m.id}`} {...anim}>
+    <Wrap className={cls} id={`m-${m.id}`} {...anim}
+      onContextMenu={(e: React.MouseEvent) => {
+        if (e.defaultPrevented) return;
+        e.preventDefault();
+        useApp.setState({ pop: { kind: "menu", x: e.clientX, y: e.clientY, top: e.clientY, items: menuFor(k, tab, m, caps) } });
+      }}
+      onKeyDown={(e: React.KeyboardEvent) => {
+        if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+          e.preventDefault();
+          useApp.setState({ pop: { kind: "menu", ...anchor(e.currentTarget), items: menuFor(k, tab, m, caps) } });
+        }
+      }}
+    >
       {side}
       <div className="msg-col">
         {sender}
@@ -72,6 +87,23 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
           {quote}
           {m.media && <MediaView accountId={m.accountId} media={m.media} />}
           {m.text && <div className="tx" dangerouslySetInnerHTML={{ __html: fmt(m.text) }} />}
+          {tr && (tr.state !== "ok" || tr.text) && (
+            <motion.div
+              className={`tx-tr${tr.state === "err" ? " err" : ""}`}
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              transition={{ duration: 0.18, ease: EASE }}
+            >
+              <Icon name="languages" />
+              {tr.state === "loading" ? (
+                <span className="tr-loading">Đang dịch…</span>
+              ) : tr.state === "err" ? (
+                <span>{tr.text}</span>
+              ) : (
+                <div className="tx" dangerouslySetInnerHTML={{ __html: fmt(tr.text) }} />
+              )}
+            </motion.div>
+          )}
           {m.link && (
             <a className="link-card" href={m.link.url}>
               <span className="site">{m.link.site}</span>
@@ -109,7 +141,6 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
             </button>
           </div>
         )}
-      </div>
       <div className="msg-actions" role="toolbar" aria-label="Thao tác tin nhắn">
         <button aria-label="Trả lời" data-tip="Trả lời" onClick={() => setReply(tab, m)}>
           <Icon name="reply" />
@@ -125,6 +156,11 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
             <Icon name="smile" />
           </button>
         )}
+        {!!m.text && (
+          <button aria-label="Dịch" data-tip={tr ? "Ẩn bản dịch" : "Dịch"} aria-pressed={!!tr} onClick={() => void translateMsg(k, m)}>
+            <Icon name="languages" />
+          </button>
+        )}
         {caps.threads && chat.threaded && (
           <button aria-label="Trả lời trong thread" data-tip="Trả lời trong thread" onClick={() => openThread(k, m)}>
             <Icon name="message-circle-reply" />
@@ -134,11 +170,12 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
           aria-label="Thêm"
           data-tip="Thêm"
           onClick={(e) => {
-            useApp.setState({ pop: { kind: "menu", ...anchor(e.currentTarget), items: menuFor(tab, m, caps) } });
+            useApp.setState({ pop: { kind: "menu", ...anchor(e.currentTarget), items: menuFor(k, tab, m, caps) } });
           }}
         >
           <Icon name="ellipsis" />
         </button>
+      </div>
       </div>
     </Wrap>
   );
@@ -226,7 +263,7 @@ function ThreadLink({ k, m, replies, open }: { k: string; m: Msg; replies?: Msg[
     return (
       <button className={`thread-link${open ? " open" : ""}`} onClick={() => openThread(k, m)}>
         <Icon name="message-circle-reply" />
-        Trả lời trong thread
+        Mở thread <Icon name="external-link" />
       </button>
     );
   }
@@ -234,7 +271,7 @@ function ThreadLink({ k, m, replies, open }: { k: string; m: Msg; replies?: Msg[
   return (
     <button className={`thread-link${open ? " open" : ""}`} onClick={() => openThread(k, m)}>
       <span className="faces">{faces.map((f) => <PersonAvatar key={f.senderName} name={f.senderName} accountId={f.accountId} photo={f.senderPhoto} />)}</span>
-      {n} trả lời
+      {n} trả lời <Icon name="external-link" />
       <small>lần cuối {hm(replies![n - 1].ts)}</small>
     </button>
   );
@@ -256,9 +293,15 @@ export function startEdit(k: string, m: Msg) {
   setTimeout(() => document.getElementById("composer-input")?.focus());
 }
 
-function menuFor(tab: string, m: Msg, caps: Record<Cap, boolean>): MenuItem[] {
+function menuFor(k: string, tab: string, m: Msg, caps: Record<Cap, boolean>): MenuItem[] {
   const items: (MenuItem | false)[] = [
     { icon: "reply", label: "Trả lời", run: () => setReply(tab, m) },
+    caps.reactions && { icon: "smile", label: "Thả reaction", run: () => {
+      const el = document.getElementById(`m-${m.id}`);
+      useApp.setState({ pop: { kind: "emoji", ...(el ? anchor(el.querySelector('.bubble') ?? el) : {x: 40, y: 80, top: 80}), onPick: (emoji) => void toggleReaction(k, m, emoji) } });
+    } },
+    caps.threads && !!m.threadId && { icon: "message-circle-reply", label: "Mở thread trong tab", run: () => openThread(k, m) },
+    !!m.text && { icon: "languages", label: useApp.getState().tr[trKey(k, m.id)] ? "Ẩn bản dịch" : "Dịch", run: () => void translateMsg(k, m) },
     {
       icon: "copy",
       label: "Sao chép văn bản",

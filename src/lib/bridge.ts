@@ -2,7 +2,7 @@
 // goes to the in-memory demo backend, so the UI can be checked without real accounts.
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { Account, AppState, CoreEvent, Member, Msg } from "./types";
+import type { Account, AiView, AppState, CoreEvent, Member, Msg } from "./types";
 
 export const isTauri = "__TAURI_INTERNALS__" in window;
 
@@ -51,6 +51,10 @@ export const api = {
   setMuted: (accountId: string, chatId: string, muted: boolean) => call<void>("set_muted", { accountId, chatId, muted }),
   download: (accountId: string, fileRef: string, name: string) => call<string>("download", { accountId, fileRef, name }),
   search: (query: string, limit = 40, accountId?: string, chatId?: string) => call<Msg[]>("search", { query, limit, accountId, chatId }),
+  aiConfig: () => call<AiView>("ai_config"),
+  aiConfigSet: (a: Omit<AiView, "hasKey"> & { key?: string }) => call<void>("ai_config_set", a),
+  /** translate/translate_to/translate_many → string[]; suggest → Suggestion[] */
+  aiRun: <T = string>(task: string, texts: string[], me: string, to: string) => call<T[]>("ai_run", { task, texts, me, to }),
   setBadge: (count: number) => (isTauri ? call<void>("set_badge", { count }) : Promise.resolve()),
 };
 

@@ -1,3 +1,4 @@
+mod ai;
 mod gchat;
 mod model;
 mod store;
@@ -27,6 +28,7 @@ struct Config {
     tg_api_hash: String,
     gchat_client_id: String,
     gchat_client_secret: String,
+    ai: ai::AiConfig,
 }
 
 #[derive(Clone, Serialize)]
@@ -216,6 +218,30 @@ fn config_set(core: C, tg_api_id: Option<String>, tg_api_hash: Option<String>, g
         c.gchat_client_secret = inner["client_secret"].as_str().ok_or("Thiếu client_secret — tạo secret mới trong Cloud Console")?.into();
     }
     write_private(&core.data_dir.join("config.json"), &serde_json::to_string_pretty(&*c).unwrap()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn ai_config(core: C) -> ai::AiView {
+    core.config.lock().unwrap().ai.view()
+}
+/// `key: None` keeps the stored key; `Some("")` clears it.
+#[tauri::command]
+fn ai_config_set(core: C, format: String, endpoint: String, model: String, guide: String, key: Option<String>) -> Res<()> {
+    let mut c = core.config.lock().unwrap();
+    let a = &mut c.ai;
+    a.format = format;
+    a.endpoint = endpoint.trim().into();
+    a.model = model.trim().into();
+    a.guide = guide;
+    if let Some(k) = key {
+        a.key = k.trim().into();
+    }
+    write_private(&core.data_dir.join("config.json"), &serde_json::to_string_pretty(&*c).unwrap()).map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn ai_run(core: C<'_>, task: String, texts: Vec<String>, me: String, to: String) -> Res<Value> {
+    let cfg = core.config.lock().unwrap().ai.clone();
+    ai::run(&cfg, &task, &texts, &me, &to).await
 }
 
 fn write_private(path: &std::path::Path, data: &str) -> std::io::Result<()> {
@@ -498,6 +524,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app_state,
             config_set,
+            ai_config,
+            ai_config_set,
+            ai_run,
             tg_login_start,
             tg_phone,
             tg_code,

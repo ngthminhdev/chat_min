@@ -143,7 +143,7 @@ button.tab-close { padding: 0; border: 0; background: transparent; font-family: 
 .msg.first { margin-top: 20px; }
 .msg.me { grid-template-columns: minmax(0, 1fr); justify-items: end; }
 .msg .avatar-gap { width: 30px; }
-.msg-col { display: grid; gap: 4px; min-width: 0; max-width: min(600px, 88%); justify-items: start; }
+.msg-col { position: relative; display: grid; gap: 4px; width: fit-content; min-width: 0; max-width: min(600px, 88%); justify-items: start; }
 .msg.me .msg-col { justify-items: end; }
 .bubble {
   max-width: 100%; padding: 8px 12px; border: 0; border-radius: var(--radius-md);
@@ -217,12 +217,12 @@ button.tab-close { padding: 0; border: 0; background: transparent; font-family: 
 
 /* NEW: hover action bar (glass) */
 .msg-actions {
-  position: absolute; top: -14px; right: 8px; display: flex; gap: 2px; padding: 3px;
+  position: absolute; top: 0; left: 0; right: auto; transform: translateY(calc(-100% - 4px)); display: flex; gap: 2px; padding: 3px;
   background: var(--glass); backdrop-filter: blur(16px) saturate(160%); border: 1px solid var(--line-2);
   border-radius: var(--radius-md); box-shadow: var(--shadow); opacity: 0; pointer-events: none;
   transition: opacity var(--motion-fast) var(--ease-ui); z-index: var(--z-raised);
 }
-.msg.me .msg-actions { right: auto; left: 8px; }
+.msg.me .msg-actions { right: 0; left: auto; }
 .msg:hover .msg-actions, .msg:focus-within .msg-actions { opacity: 1; pointer-events: auto; }
 .msg-actions button { width: 26px; height: 26px; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-2); }
 .msg-actions button:hover { background: var(--pane-3); color: var(--text); }
@@ -883,3 +883,32 @@ body.left-collapsed.right-collapsed .main:not(.r2-page) { grid-template-columns:
   .conv-empty { padding: 20px; }
   .toast-stack { right: 16px; }
 }
+
+/* ── AI: inline translation, reply suggestions, draft translation ─────────── */
+.tx-tr { display: flex; gap: 6px; margin-top: 6px; padding-top: 6px; border-top: 1px dashed color-mix(in oklab, var(--text), transparent 80%); color: var(--text-2); font-size: var(--fs-md); line-height: 1.45; overflow: hidden; }
+.tx-tr > .tx { min-width: 0; color: inherit; font-size: inherit; }
+.tx-tr > .ic { --od-icon-size: 13px; flex: none; margin-top: 3px; color: var(--accent-secondary); }
+.tx-tr.err { color: var(--red); }
+.tr-loading { color: var(--text-3); animation: blink 1.2s infinite var(--ease-ui); }
+.msg-actions button[aria-pressed="true"] { color: var(--accent-secondary); }
+.conv-head .tool-btn.active { color: var(--accent-secondary); background: var(--accent-soft); }
+
+.ai-suggest { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px; }
+.ai-suggest > .ic { --od-icon-size: 15px; color: var(--accent-secondary); }
+.ai-note { color: var(--text-3); font-size: var(--fs-md); }
+.ai-note.err { color: var(--red); white-space: normal; }
+.ai-chip { display: grid; gap: 1px; max-width: 320px; padding: 5px 10px; border: 1px solid var(--bubble-line); border-radius: var(--radius-md); background: var(--bubble); color: var(--text); font: var(--fs-md)/1.35 var(--font-body); text-align: left; cursor: pointer; transition: border-color var(--motion-fast) var(--ease-ui), background var(--motion-fast) var(--ease-ui); }
+.ai-chip:hover { border-color: color-mix(in oklab, var(--accent), transparent 40%); background: var(--bubble-me); }
+.ai-chip small { color: var(--text-3); font-size: var(--fs-sm); }
+.ai-suggest-tools { display: inline-flex; margin-left: auto; }
+.ai-suggest-tools .tool-btn.icon-only { width: 26px; min-width: 26px; height: 26px; border-color: transparent; }
+
+.ai-translate { display: inline-flex; align-items: center; }
+.composer-tools .tool-btn.active { color: var(--accent-secondary); }
+.lang-tag { height: 20px; padding: 0 5px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: transparent; color: var(--text-2); font: 600 var(--fs-xs) var(--font-mono); cursor: pointer; }
+.lang-tag:hover { border-color: var(--line-2); color: var(--text); }
+.ai-undo { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: none; color: var(--accent-secondary); font: inherit; cursor: pointer; }
+.ai-undo .ic { --od-icon-size: 12px; }
+
+.ai-input { width: 260px; }
+.ai-guide { height: auto; padding-block: 6px; resize: vertical; font-family: var(--font-body); }

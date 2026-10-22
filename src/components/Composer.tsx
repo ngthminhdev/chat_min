@@ -6,6 +6,8 @@ import { CAP_OFF_NOTE, PLATFORMS } from "../lib/platforms";
 import { anchor, capsOf, fail, send, splitKey, toast, useApp } from "../store";
 import { Icon } from "../ui/Icon";
 import { startEdit } from "./Message";
+import { LANGS, langLabel, langTag, suggestReplies, translateDraft } from "../ai";
+import type { Suggestion } from "../lib/types";
 
 const BLOCKING = ["offline", "reconnecting", "expired", "rate"];
 
@@ -23,6 +25,11 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
   const ta = useRef<HTMLTextAreaElement>(null);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
+  const lang = useApp((s) => s.aiLang[chatKey] || s.prefs.aiTo);
+  const [sug, setSug] = useState<{ state: "loading" | "ok" | "err"; items: Suggestion[]; err?: string } | null>(null);
+  /** the draft before AI translated it, for one-click undo */
+  const [orig, setOrig] = useState<string | null>(null);
+  const [aiBusy, setAiBusy] = useState(false);
 
   useLayoutEffect(() => {
     const el = ta.current;
@@ -42,6 +49,50 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
       editing: { ...s.editing, [k]: "" },
       drafts: s.editing[k] ? { ...s.drafts, [k]: "" } : s.drafts,
     }));
+
+  const focus = () => requestAnimationFrame(() => ta.current?.focus());
+  const suggest = async () => {
+    if (sug?.state === "loading") return;
+    setSug({ state: "loading", items: [] });
+    try {
+      const items = await suggestReplies(chatKey, threadId);
+      if (!items.length) toast("Chưa có tin nào để gợi ý", "info");
+      setSug(items.length ? { state: "ok", items } : null);
+    } catch (e) {
+      setSug({ state: "err", items: [], err: String(e) });
+    }
+  };
+  const translate = async (to = lang) => {
+    if (aiBusy || !draft.trim()) return;
+    setAiBusy(true);
+    try {
+      const out = await translateDraft(chatKey, draft, to);
+      if (out) {
+        setOrig(orig ?? draft);
+        setDraft(out);
+      }
+    } catch (e) {
+      fail(e);
+    } finally {
+      setAiBusy(false);
+      focus();
+    }
+  };
+  const pickLang = (el: Element) =>
+    useApp.setState({
+      pop: {
+        kind: "menu",
+        ...anchor(el),
+        items: LANGS.map(([name, label, tag]) => ({
+          icon: name === lang ? "check" : "languages",
+          label: `${label} · ${tag}`,
+          run: () => {
+            useApp.setState((s) => ({ aiLang: { ...s.aiLang, [chatKey]: name } }));
+            if (draft.trim()) void translate(name);
+          },
+        })),
+      },
+    });
 
   const submit = async () => {
     const text = draft.trim();
@@ -66,6 +117,8 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
     } else {
       void send(chatKey, text, { replyTo: replyId || undefined, threadId });
     }
+    setOrig(null);
+    setSug(null);
     useApp.setState((s) => editId && (s.editing[k] !== editId || s.drafts[k] !== draft) ? {} : ({ drafts: { ...s.drafts, [k]: "" }, replyTo: { ...s.replyTo, [k]: "" }, editing: { ...s.editing, [k]: "" } }));
   };
 
@@ -114,6 +167,50 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
             </motion.div>
           )}
         </AnimatePresence>
+        <AnimatePresence initial={false}>
+          {sug && (
+            <motion.div
+              className="ai-suggest"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 6 }}
+            >
+              <Icon name="sparkles" />
+              {sug.state === "loading" ? (
+                <span className="ai-note">Đang nghĩ gợi ý…</span>
+              ) : sug.state === "err" ? (
+                <span className="ai-note err">{sug.err}</span>
+              ) : (
+                sug.items.map((it, i) => (
+                  <motion.button
+                    key={i}
+                    className="ai-chip"
+                    initial={{ opacity: 0, y: 4 }}
+                    animate={{ opacity: 1, y: 0, transition: { delay: i * 0.05 } }}
+                    onClick={() => {
+                      setDraft(it.reply);
+                      setSug(null);
+                      focus();
+                    }}
+                  >
+                    <span>{it.reply}</span>
+                    {it.meaning && <small>{it.meaning}</small>}
+                  </motion.button>
+                ))
+              )}
+              <span className="ai-suggest-tools">
+                {sug.state !== "loading" && (
+                  <button className="tool-btn icon-only" aria-label="Gợi ý khác" data-tip="Gợi ý khác" onClick={() => void suggest()}>
+                    <Icon name="refresh-cw" />
+                  </button>
+                )}
+                <button className="tool-btn icon-only" aria-label="Đóng gợi ý" onClick={() => setSug(null)}>
+                  <Icon name="x" />
+                </button>
+              </span>
+            </motion.div>
+          )}
+        </AnimatePresence>
         <div className="composer-box main-composer">
           <textarea
             id="composer-input"
@@ -125,7 +222,14 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
             disabled={blocked || saving}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+              const mod = e.metaKey || e.ctrlKey;
+              if (mod && e.key.toLowerCase() === "j") {
+                e.preventDefault();
+                void suggest();
+              } else if (mod && e.shiftKey && e.key.toLowerCase() === "l") {
+                e.preventDefault();
+                void translate();
+              } else if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 submit();
               } else if (e.key === "ArrowUp" && !draft && caps.edit) {
@@ -177,6 +281,32 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
             >
               <Icon name="smile" />
             </button>
+            <span className="composer-sep" aria-hidden="true" />
+            <button
+              className={`tool-btn icon-only${sug ? " active" : ""}`}
+              aria-label="Gợi ý trả lời"
+              data-tip="Gợi ý trả lời"
+              data-kbd="⌘J"
+              disabled={blocked || saving}
+              onClick={() => (sug ? setSug(null) : void suggest())}
+            >
+              <Icon name="sparkles" />
+            </button>
+            <span className="ai-translate">
+              <button
+                className="tool-btn icon-only"
+                aria-label={`Dịch nháp sang ${langLabel(lang)}`}
+                data-tip={draft.trim() ? `Dịch nháp sang ${langLabel(lang)}` : "Gõ nháp rồi dịch"}
+                data-kbd="⌘⇧L"
+                disabled={blocked || saving || !draft.trim() || aiBusy}
+                onClick={() => void translate()}
+              >
+                {aiBusy ? <span className="veil-spinner" /> : <Icon name="languages" />}
+              </button>
+              <button className="lang-tag" aria-label="Chọn ngôn ngữ dịch" aria-haspopup="menu" data-tip="Ngôn ngữ viết cho chat này" onClick={(e) => pickLang(e.currentTarget)}>
+                {langTag(lang)}
+              </button>
+            </span>
             <button className="tool-btn icon-only is-off" aria-disabled="true" aria-label="Sticker" data-tip={CAP_OFF_NOTE.stickers} onClick={() => toast(CAP_OFF_NOTE.stickers!, "info")}>
               <Icon name="sticker" />
             </button>
@@ -190,7 +320,20 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
           </div>
         </div>
         <div className="composer-hint">
-          <span>{ref ? "Esc để huỷ trả lời / sửa" : ""}</span>
+          <span>
+            {orig !== null ? (
+              <button
+                className="ai-undo"
+                onClick={() => {
+                  setDraft(orig);
+                  setOrig(null);
+                  focus();
+                }}
+              >
+                <Icon name="undo-2" /> Khôi phục bản gốc
+              </button>
+            ) : ref ? "Esc để huỷ trả lời / sửa" : ""}
+          </span>
           <span className="draft-saved">{draft.trim() && !editId ? "Nháp đã lưu cho tab này" : ""}</span>
         </div>
       </div>

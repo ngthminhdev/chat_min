@@ -514,6 +514,7 @@ impl GChat {
         let me = self.me(account_id);
         let mut msgs: Vec<Msg> = v["messages"].as_array().cloned().unwrap_or_default().iter().map(|m| to_msg(account_id, &me, m)).collect();
         msgs.reverse();
+        self.fill_quotes(core, account_id, space, &mut msgs).await;
         self.fill_photos(core, account_id, &mut msgs).await;
         core.store_mut().put_msgs(&msgs)?;
         if before == 0 {
@@ -530,9 +531,41 @@ impl GChat {
         let v = self.api(core, account_id, Method::GET, &url, None).await?;
         let me = self.me(account_id);
         let mut msgs: Vec<Msg> = v["messages"].as_array().cloned().unwrap_or_default().iter().map(|m| to_msg(account_id, &me, m)).collect();
+        self.fill_quotes(core, account_id, space, &mut msgs).await;
         self.fill_photos(core, account_id, &mut msgs).await;
         core.store_mut().put_msgs(&msgs)?;
         Ok(msgs)
+    }
+
+    async fn fill_quotes(&self, core: &Arc<Core>, account_id: &str, space: &str, msgs: &mut [Msg]) {
+        let mut originals: HashMap<String, Msg> = msgs.iter().map(|m| (m.id.clone(), m.clone())).collect();
+        let mut missing = HashSet::new();
+        for m in msgs.iter().filter(|m| !m.reply_to.is_empty() && (m.reply_name.is_empty() || m.reply_text.is_empty())) {
+            if originals.contains_key(&m.reply_to) { continue; }
+            if let Ok(Some(q)) = core.store().msg(account_id, space, &m.reply_to) {
+                originals.insert(q.id.clone(), q);
+            } else if m.reply_to.starts_with(&format!("{space}/messages/")) {
+                missing.insert(m.reply_to.clone());
+            }
+        }
+        // Bound extra requests for old quotes and don't fail the conversation if a quoted message was deleted.
+        let missing: Vec<_> = missing.into_iter().take(8).collect();
+        for chunk in missing.chunks(4) {
+            let results = futures::future::join_all(chunk.iter().map(|id| async move {
+                self.api(core, account_id, Method::GET, &format!("{API}/{id}"), None).await.ok()
+            })).await;
+            for v in results.into_iter().flatten() {
+                let q = to_msg(account_id, &self.me(account_id), &v);
+                let _ = core.store().put_msg(&q);
+                originals.insert(q.id.clone(), q);
+            }
+        }
+        for m in msgs.iter_mut() {
+            if let Some(q) = originals.get(&m.reply_to) {
+                if m.reply_name.is_empty() { m.reply_name = if q.outgoing { "Bạn".into() } else { q.sender_name.clone() }; }
+                if m.reply_text.is_empty() { m.reply_text = if q.text.is_empty() { q.media.as_ref().map(|a| a.name.clone()).unwrap_or_default() } else { q.text.clone() }; }
+            }
+        }
     }
 
     pub async fn members(&self, core: &Arc<Core>, account_id: &str, space: &str) -> Result<Vec<Member>, String> {
@@ -600,22 +633,21 @@ impl GChat {
         thread: Option<String>,
         file: Option<String>,
     ) -> Result<Msg, String> {
-        let mut body = json!({ "text": text });
-        if let Some(t) = thread.filter(|t| !t.is_empty()) {
-            body["thread"] = json!({ "name": t });
-        }
-        if let Some(r) = reply_to.filter(|r| !r.is_empty()) {
-            let quoted = core.store().msg(account_id, space, &r)?;
-            if let Some(q) = quoted {
-                body["quotedMessageMetadata"] = json!({ "name": q.id, "lastUpdateTime": q.rev });
-            }
-        }
+        let quoted = match reply_to.filter(|r| !r.is_empty()) {
+            Some(r) => Some(core.store().msg(account_id, space, &r)?.ok_or("Tin được trả lời chưa có trong cache. Mở lại hội thoại và thử lại.")?),
+            None => None,
+        };
+        let (url, mut body) = create_message_request(space, &text, thread.as_deref(), quoted.as_ref());
         if let Some(path) = file {
             body["attachment"] = json!([{ "attachmentDataRef": self.upload(core, account_id, space, &path).await? }]);
         }
-        let url = format!("{API}/{space}/messages?messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD");
         let v = self.api(core, account_id, Method::POST, &url, Some(body)).await?;
-        let msg = to_msg(account_id, &self.me(account_id), &v);
+        let mut msg = to_msg(account_id, &self.me(account_id), &v);
+        if let Some(q) = quoted {
+            msg.reply_to = q.id;
+            msg.reply_name = if q.outgoing { "Bạn".into() } else { q.sender_name };
+            msg.reply_text = if q.text.is_empty() { q.media.map(|m| m.name).unwrap_or_default() } else { q.text };
+        }
         core.store().put_msg(&msg)?;
         Ok(msg)
     }
@@ -808,7 +840,9 @@ fn space_chat(account_id: &str, s: &Value, existing: Option<&Chat>) -> Chat {
     c.last_ts = c.last_ts.max(active);
     c.order = c.last_ts;
     c.can_send = true;
-    c.threaded = kind == "space" && s["spaceThreadingState"].as_str() != Some("UNTHREADED_MESSAGES");
+    let threading = s["spaceThreadingState"].as_str();
+    c.threaded = threading == Some("THREADED_MESSAGES")
+        || (threading != Some("UNTHREADED_MESSAGES") && (kind == "space" || (kind == "dm" && s["singleUserBotDm"].as_bool() != Some(true))));
     let created = s["createTime"].as_str().unwrap_or("");
     if created.len() >= 7 {
         c.created = format!("{}/{}", &created[5..7], &created[..4]);
@@ -867,6 +901,8 @@ fn to_msg(account_id: &str, me: &str, m: &Value) -> Msg {
         text,
         media,
         reply_to: m["quotedMessageMetadata"]["name"].as_str().unwrap_or_default().into(),
+        reply_name: m["quotedMessageMetadata"]["quotedMessageSnapshot"]["sender"]["displayName"].as_str().unwrap_or_default().into(),
+        reply_text: m["quotedMessageMetadata"]["quotedMessageSnapshot"]["text"].as_str().unwrap_or_default().into(),
         reactions: m["emojiReactionSummaries"]
             .as_array()
             .into_iter()
@@ -885,6 +921,15 @@ fn to_msg(account_id: &str, me: &str, m: &Value) -> Msg {
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
+fn create_message_request(space: &str, text: &str, thread: Option<&str>, quoted: Option<&Msg>) -> (String, Value) {
+    let mut body = json!({ "text": text });
+    let thread = thread.filter(|t| !t.is_empty());
+    if let Some(t) = thread { body["thread"] = json!({ "name": t }); }
+    if let Some(q) = quoted { body["quotedMessageMetadata"] = json!({ "name": q.id, "lastUpdateTime": q.rev }); }
+    let option = if thread.is_some() { "?messageReplyOption=REPLY_MESSAGE_OR_FAIL" } else { "" };
+    (format!("{API}/{space}/messages{option}"), body)
+}
+
 fn token_path(core: &Core, account_id: &str) -> std::path::PathBuf {
     core.data_dir.join("secrets").join(format!("{account_id}.json"))
 }
@@ -982,6 +1027,37 @@ pub fn ms_rfc3339(ms: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ordinary_message_does_not_request_a_thread_reply() {
+        for thread in [None, Some("")] {
+            let (url, body) = create_message_request("spaces/A", "hello", thread, None);
+            assert_eq!(url, format!("{API}/spaces/A/messages"));
+            assert!(body.get("thread").is_none());
+        }
+    }
+
+    #[test]
+    fn thread_reply_keeps_its_destination_and_never_falls_back() {
+        let (url, body) = create_message_request("spaces/A", "reply", Some("spaces/A/threads/T"), None);
+        assert!(url.ends_with("messageReplyOption=REPLY_MESSAGE_OR_FAIL"));
+        assert_eq!(body["thread"]["name"], "spaces/A/threads/T");
+    }
+
+    #[test]
+    fn dm_supports_inline_threading_when_google_advertises_it() {
+        let chat = space_chat("gc", &json!({"name":"spaces/DM", "spaceType":"DIRECT_MESSAGE", "spaceThreadingState":"THREADED_MESSAGES"}), None);
+        assert!(chat.threaded);
+    }
+
+    #[test]
+    fn quote_snapshot_keeps_sender_and_text() {
+        let msg = to_msg("gc", "users/me", &json!({"name":"spaces/A/messages/R", "quotedMessageMetadata": {
+            "name":"spaces/A/messages/Q", "quotedMessageSnapshot":{"sender":{"name":"users/2","displayName":"Lan"},"text":"original message"}
+        }}));
+        assert_eq!(msg.reply_name, "Lan");
+        assert_eq!(msg.reply_text, "original message");
+    }
 
     #[test]
     fn rfc3339_round_trips() {
