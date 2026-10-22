@@ -121,6 +121,15 @@ impl Store {
         write_msg(&self.db, m)
     }
 
+    pub fn put_msg_if_new(&self, m: &Msg) -> R<bool> {
+        let existed: bool = self.db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM messages WHERE account_id = ?1 AND chat_id = ?2 AND id = ?3)",
+            [&m.account_id, &m.chat_id, &m.id], |row| row.get(0),
+        ).map_err(e)?;
+        self.put_msg(m)?;
+        Ok(!existed)
+    }
+
     pub fn put_msgs(&mut self, msgs: &[Msg]) -> R<()> {
         let tx = self.db.transaction().map_err(e)?;
         for m in msgs {
@@ -282,5 +291,27 @@ mod tests {
         let ids = |v: Vec<Msg>| v.into_iter().map(|m| m.id).collect::<Vec<_>>();
         assert_eq!(ids(s.msgs("a", "c", 0, 2).unwrap()), vec!["4", "5"]);
         assert_eq!(ids(s.msgs("a", "c", 4, 2).unwrap()), vec!["2", "3"]);
+    }
+
+    #[test]
+    fn replayed_messages_are_updates_not_new_deliveries() {
+        let s = Store::memory();
+        let mut m = msg("last", 123, "last message");
+        assert!(s.put_msg_if_new(&m).unwrap());
+        for _ in 0..20 { assert!(!s.put_msg_if_new(&m).unwrap()); }
+        m.text = "edited".into();
+        assert!(!s.put_msg_if_new(&m).unwrap());
+        assert_eq!(s.msg("a", "c", "last").unwrap().unwrap().text, "edited");
+        m.account_id = "other".into();
+        assert!(s.put_msg_if_new(&m).unwrap());
+    }
+
+    #[test]
+    fn cached_history_must_not_be_announced_when_polled_again() {
+        let s = Store::memory();
+        let m = msg("cached", 123, "already read");
+        s.put_msg(&m).unwrap();
+        assert!(!s.put_msg_if_new(&m).unwrap());
+        assert!(s.put_msg_if_new(&msg("new-id", 123, "new message at same millisecond")).unwrap());
     }
 }

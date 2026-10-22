@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { api, notify, onEvent } from "./lib/bridge";
 import { plain } from "./lib/format";
 import { PLATFORMS, type Cap } from "./lib/platforms";
+import { createNotificationDeduper } from "./lib/notification-deduper";
 import type { Account, Chat, CoreEvent, Health, Msg } from "./lib/types";
 import type { IconName } from "./ui/Icon";
 
@@ -206,7 +207,14 @@ export const promptDialog = (title: string, value: string, onOk: (v: string) => 
 export const fail = (e: unknown) => toast(String(e), "circle-alert");
 
 // ── boot & events ───────────────────────────────────────────────────────────
-export async function boot() {
+let eventOff: (() => void) | null = null;
+let bootPending: Promise<void> | null = null;
+export function boot(): Promise<void> {
+  return bootPending ??= bootOnce().finally(() => { bootPending = null; });
+}
+if (import.meta.hot) import.meta.hot.dispose(() => { eventOff?.(); eventOff = null; });
+
+async function bootOnce() {
   const st = await api.appState();
   const chats: Record<string, Chat> = {};
   for (const c of st.chats) chats[key(c.accountId, c.id)] = c;
@@ -223,7 +231,7 @@ export async function boot() {
     gchatConfigured: st.gchatConfigured,
     route: st.accounts.length ? "shell" : "welcome",
   });
-  onEvent(applyEvent);
+  eventOff ??= onEvent(applyEvent);
   if (active) void openChat(active);
 }
 
@@ -239,6 +247,7 @@ function upsert(list: Msg[], m: Msg): Msg[] {
   return next;
 }
 
+const claimNotification = createNotificationDeduper();
 export function applyEvent(e: CoreEvent) {
   switch (e.type) {
     case "accounts": {
@@ -289,6 +298,8 @@ export function applyEvent(e: CoreEvent) {
     }
     case "message": {
       const k = key(e.msg.accountId, e.msg.chatId);
+      const known = get().msgs[k]?.some((m) => m.id === e.msg.id) ?? false;
+      const firstDelivery = claimNotification(e.msg.accountId, e.msg.chatId, e.msg.id);
       if (get().msgs[k]) {
         set((s) => ({
           msgs: { ...s.msgs, [k]: upsert(s.msgs[k], e.msg) },
@@ -297,7 +308,7 @@ export function applyEvent(e: CoreEvent) {
         }));
       }
       if (e.isNew) {
-        maybeNotify(k, e.msg);
+        if (firstDelivery && !known) maybeNotify(k, e.msg);
         if (isWatching(k)) void markRead(k);
       }
       return;
@@ -336,7 +347,7 @@ export function applyEvent(e: CoreEvent) {
 }
 
 /** The user is looking at this chat right now: new messages count as read. */
-const isWatching = (k: string) => get().active === k && get().route === "shell" && document.hasFocus() && !document.hidden;
+const isWatching = (k: string) => chatKeyOf(get().active) === k && get().route === "shell" && document.hasFocus() && !document.hidden;
 
 function quiet(p: NotifyPrefs) {
   if (!p.quiet) return false;

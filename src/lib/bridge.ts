@@ -17,9 +17,10 @@ function call<T>(cmd: string, args: Record<string, unknown> = {}): Promise<T> {
 
 export function onEvent(cb: (e: CoreEvent) => void): () => void {
   let off = () => {};
-  if (isTauri) listen<CoreEvent>("chatmin", (e) => cb(e.payload)).then((u) => (off = u));
-  else demoMod().then((d) => (off = d.onEvent(cb)));
-  return () => off();
+  let disposed = false;
+  if (isTauri) listen<CoreEvent>("chatmin", (e) => { if (!disposed) cb(e.payload); }).then((u) => { if (disposed) u(); else off = u; });
+  else demoMod().then((d) => { if (!disposed) off = d.onEvent(cb); });
+  return () => { disposed = true; off(); };
 }
 
 export const api = {

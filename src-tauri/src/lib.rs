@@ -89,7 +89,10 @@ impl Core {
         self.emit(Event::ChatRemoved { account_id: account_id.into(), chat_id: chat_id.into() });
     }
     pub fn put_msg(&self, msg: Msg, is_new: bool) {
-        let _ = self.store().put_msg(&msg);
+        // Hold the store mutex across existence check + upsert: concurrent pollers
+        // and history loads must agree on whether this ID is a first delivery.
+        let first_delivery = self.store().put_msg_if_new(&msg).unwrap_or(false);
+        let is_new = is_new && first_delivery && !msg.deleted;
         self.emit(Event::Message { msg, is_new });
     }
     pub fn replace_msg(&self, old_id: &str, msg: Msg) {
