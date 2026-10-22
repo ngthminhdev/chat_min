@@ -1,0 +1,13 @@
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+.worktrees/
+.superpowers/
+.claude/settings.local.json
+.DS_Store
+*.log
+spike/.secrets/
+spike/.env
+spike/client_secret_*.json
+.codegraph/

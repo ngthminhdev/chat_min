@@ -1,0 +1,247 @@
+/* `:root, body`, not just `:root`: alias vars (--accent: var(--blue), …) substitute at
+   computed-value time on the element that declares them. Declared only on :root they freeze
+   to the dark base palette, and body-level theme overrides (body.light, body[data-theme])
+   never reach them. Re-declaring on body recomputes every alias with the themed values. */
+/* Font vars stay :root-only: apps set --font-body/--font-mono inline on documentElement
+   (App.tsx setProperty). Declared also on body, the body stylesheet value would shadow
+   that inherited inline value for the whole subtree — the Interface-font setting goes dead.
+   No theme overrides the -default stacks, so they don't need body-level recomputation. */
+:root {
+  --font-body-default: "Exo 2", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono-default: "Google Sans Code", "Berkeley Mono", ui-monospace, Menlo, Consolas, monospace;
+  --font-body: var(--font-body-default);
+  --font-mono: var(--font-mono-default);
+
+  /* Motion — Corporate archetype: compact, calm, decisive, keyboard-first. No overshoot.
+     fast = hover/press, standard = selection/expand/palette entry, slow = the rare big move.
+     Theme-independent, so :root-only like the fonts. */
+  --motion-fast: 120ms;
+  --motion-standard: 180ms;
+  --motion-slow: 260ms;
+  --ease-ui: cubic-bezier(.2, 0, 0, 1);
+  --ease-enter: cubic-bezier(.05, .7, .1, 1);
+  --ease-exit: cubic-bezier(.3, 0, 1, 1);
+
+  /* Connection colors — the user-assignable palette for connections/repos/collections,
+     rendered as the dot on each tab so "which environment am I in" reads at a glance.
+     Deliberately :root-only and theme-independent: a connection's color is an identity
+     the user picked, not a themed surface — it must look the same in every theme, and
+     re-tinting it per theme across 20+ themes would break that recognition. Values are
+     Radix scale-9 solids, the tier engineered to hold contrast on both light and dark
+     backgrounds, so one set covers all themes.
+
+     Eight, so the picker plus its "none" cell is a square 3×3. Picked to spread around
+     the wheel — teal and indigo were dropped as the two least separable (teal sits on
+     green, indigo on blue), since a palette whose colors get confused defeats the point.
+     Order = swatch order in the picker, reading left to right. */
+  --conn-red: #E5484D;
+  --conn-orange: #F76B15;
+  --conn-amber: #FFB224;
+  --conn-green: #30A46C;
+  --conn-blue: #0090FF;
+  --conn-purple: #8E4EC6;
+  --conn-pink: #D6409F;
+  --conn-slate: #7C8698;
+}
+
+:root, body {
+  /* Default dark = Bearded Arc (shared with elastic_min); light theme carries the #7A3EED purple */
+  --accent: var(--blue);
+
+  --app-bg: #1c2433;
+  --window: #181f2c;
+  --pane: #1c2433;
+  --pane-2: #253043;
+  --pane-3: #2a364d;
+  --line: rgba(17, 22, 31, 0.55);
+  --line-2: rgba(17, 22, 31, 0.9);
+  /* Three-step text ramp. Every tier clears WCAG AA 4.5:1 against --pane, --text-3
+     included: it carries form labels, placeholders, table date cells and 10px kbd pills,
+     which are content, not decoration. Same rule applied across all 27 palettes in
+     themes.css — hue and saturation held, lightness walked until the tier passes, with a
+     1.15x minimum contrast step between tiers so the ramp stays three distinct tones. */
+  --text: #d0d7e4;
+  --text-2: #afbbd2;
+  --text-3: #778cb3;
+  /* brand purple: #7a3eed for filled surfaces (buttons), lighter tint where it's text on dark */
+  --blue: #8196b5;
+  --blue-2: #69C3FF;
+  --green: #3CEC85;
+  --orange: #FF955C;
+  --red: #E35535;
+  --purple: #F38CEC;
+  --row: rgba(255, 255, 255, 0.025);
+  --row-alt: rgba(255, 255, 255, 0.04);
+  --row-hover: rgba(255, 255, 255, 0.05);
+  --glass: rgba(24, 31, 44, 0.82);
+  --shadow: 0 18px 60px color-mix(in oklab, var(--surface-app), transparent 45%);
+  --left-w: 322px;
+  --right-w: 410px;
+  --query-top: 48vh;
+  --request-top: 48%;
+  --editor-bg: #1c2433;
+  --editor-fg: #d0d7e4;
+  --surface-app: var(--app-bg);
+  --surface-window: var(--window);
+  --surface-panel: var(--pane);
+  --surface-raised: var(--pane-2);
+  --surface-hover: var(--pane-3);
+  --surface-editor: var(--editor-bg);
+  --surface-overlay: var(--glass);
+  --text-primary: var(--text);
+  --text-secondary: var(--text-2);
+  --text-muted: var(--text-3);
+  --text-on-accent: var(--editor-bg);
+  --border-default: var(--line);
+  --border-strong: var(--line-2);
+  --accent-primary: var(--blue);
+  --accent-secondary: var(--blue-2);
+  --accent-focus: var(--blue);
+  --status-success: var(--green);
+  --status-warning: var(--orange);
+  --status-danger: var(--red);
+  --status-info: var(--blue-2);
+  /* Syntax colors stay distinct at diagram scale and clear AA contrast on #1c2433. */
+  --syntax-key: #c9a7ff;
+  --syntax-string: #5ff59a;
+  --syntax-number: #79d0ff;
+  --syntax-boolean: #f6a6ee;
+  --syntax-null: #ff8066;
+  --syntax-punctuation: #95a5c0;
+  --syntax-operator: #c5cee0;
+  --syntax-type: #ffb27a;
+  --syntax-function: #79d0ff;
+  --syntax-property: #a8c5ee;
+  --syntax-variable: #dce5f4;
+  --syntax-comment: #8fa4c8;
+  --syntax-parameter: #c5cee0;
+  --syntax-constant: #f6a6ee;
+  --syntax-tag: #ffb27a;
+
+  /* One accent-based highlight system — rails, focused paths, selected fields, active
+     titles all draw from these instead of hardcoding color-mix() per component. */
+  --accent-line: var(--accent);
+  --accent-soft: color-mix(in oklab, var(--accent), transparent 86%);
+  --accent-soft-strong: color-mix(in oklab, var(--accent), transparent 74%);
+
+  --surface-selected: color-mix(in oklab, var(--accent-primary), transparent 86%);
+  --focus-ring: color-mix(in oklab, var(--accent-focus), transparent 84%);
+  --modal-backdrop: color-mix(in oklab, var(--surface-app), transparent 28%);
+
+  /* Stacking order. Nothing in the app shell creates a stacking context — .app-frame and
+     .main are `position: relative` with no z-index — so every layer below competes in the
+     root context and raw numbers had drifted into an order that was simply wrong: the
+     modal and command-palette scrims sat at 24 and 20, underneath resize handles (30),
+     context menus (40) and suggestion popovers (50), which stayed painted and clickable
+     on top of the backdrop. Named layers so the order is reviewable instead of inferred.
+     A component that must sit one step above its own layer uses calc() on that layer,
+     never a fresh number. */
+  /* Geometry. Color got an alias layer, a tint rule and a doc; geometry was 21 radii,
+     21 font sizes and every integer from 2 to 16 as padding. These codify the values
+     already dominant in the shared CSS rather than inventing a new scale — the outliers
+     stay literal so they read as the exceptions they are. New code uses the tokens;
+     existing one-offs migrate when the block is touched anyway. */
+  --radius-sm: 6px;      /* chips, kbd pills, small inputs */
+  --radius-md: 8px;      /* the default: buttons, rows, cards */
+  --radius-lg: 10px;     /* panels, modals, floating surfaces */
+  --radius-pill: 999px;  /* fully rounded */
+  --radius-circle: 50%;  /* dots, avatars */
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+
+  /* Type scale — rem is --ui-font-size (13px default), so every step follows the
+     user's UI-scale setting. px comments are at the default scale. */
+  --fs-xs: 0.7692rem;    /* 10px — kbd, badges */
+  --fs-sm: 0.8462rem;    /* 11px — metric labels, captions */
+  --fs-md: 0.9231rem;    /* 12px — default UI text */
+  --fs-base: 1rem;       /* 13px — editors, primary rows */
+  --fs-lg: 1.0769rem;    /* 14px — card titles */
+  --fs-xl: 1.3846rem;    /* 18px — page/section headings */
+
+  --z-raised: 2;     /* lifted above in-flow siblings */
+  --z-veil: 5;       /* section veils, loading strips */
+  --z-chrome: 30;    /* app-shell furniture: resize handles, corner toggles */
+  --z-menu: 40;      /* combobox lists, suggestion popovers, context menus */
+  --z-suggest: 50;   /* input-attached suggestions, above their own menu layer */
+  --z-overlay: 60;   /* modal + command palette scrims — above all shell chrome */
+  --z-toast: 70;     /* deliberately above modals: a toast must survive a dialog */
+}
+
+body.light {
+  color-scheme: light;
+
+  /* App surfaces */
+  --app-bg: #F6F7F9;
+  --window: #FFFFFF;
+  --pane: #FFFFFF;
+  --pane-2: #F9FAFB;
+  --pane-3: #ECEFF4;
+
+  /* Borders */
+  --line: #E0E4EB;
+  --line-2: #D4DAE4;
+
+  /* Typography — purple ink, not neutral black: Yaak hue carries into the text
+     scale while staying AAA on white (12.8:1 / 7.4:1). --text-3 was #9B85CF at 3.2:1,
+     below AA while carrying labels and placeholders; darkened on the same hue to 4.65:1. */
+  --text: #3B1D7A;
+  --text-2: #6533C7;
+  --text-3: #8064c2;
+
+  /* --blue drives --accent (see :root); Yaak primary is purple */
+  --blue: #8B33FF;
+  --blue-2: #0074CC;
+  --purple: #A855F7;
+
+  /* Semantic colors */
+  --green: #1D9042;
+  --yellow: #AD8200;
+  --orange: #B85C00;
+  --red: #D61F6B;
+
+  /* Rows and interaction */
+  --row: rgba(19, 24, 32, 0.018);
+  --row-alt: rgba(19, 24, 32, 0.035);
+  --row-hover: #F0F2F6;
+
+  --selection: rgba(139, 51, 255, 0.16);
+  --focus: rgba(0, 116, 204, 0.36);
+  --control-bg: #FFFFFF;
+  --control-border: #DADFE7;
+  --control-hover-bg: #F3F5F8;
+  --control-focus-border: #8B33FF;
+  --control-focus-ring: rgba(139, 51, 255, 0.12);
+
+  /* Overlay */
+  --glass: rgba(255, 255, 255, 0.92);
+  --modal-backdrop: rgba(36, 26, 62, 0.25);
+  /* full box-shadow value — a bare color makes `box-shadow: var(--shadow)` invalid,
+     so every floating glass pill silently lost its elevation in light themes */
+  --shadow: 0 18px 48px rgba(59, 26, 110, 0.12), 0 2px 8px rgba(59, 26, 110, 0.08);
+
+  /* Editor */
+  --editor-bg: #FFFFFF;
+  --editor-fg: #3B1D7A;
+
+  /* Syntax colors tuned for contrast on white editor-bg (WCAG AA ~4.5:1+),
+     not the accent palette above which is too light on white. */
+  --syntax-key: #7c3aed;
+  --syntax-string: #047857;
+  --syntax-number: #1d4ed8;
+  --syntax-boolean: #be185d;
+  --syntax-null: #be123c;
+  --syntax-punctuation: #6b5f79;
+  --syntax-operator: #5b4a6e;
+  --syntax-type: #b45309;
+  --syntax-function: #1d4ed8;
+  --syntax-property: #7c3aed;
+  --syntax-variable: #3B1D7A;
+  --syntax-comment: #8b7fa0;
+  --syntax-parameter: #6533C7;
+  --syntax-constant: #be185d;
+  --syntax-tag: #b45309;
+}

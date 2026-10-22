@@ -1,0 +1,33 @@
+[package]
+name = "chatmin"
+version = "0.1.0"
+description = "All-in-One Messenger: Telegram + Google Chat"
+edition = "2021"
+
+[lib]
+name = "chatmin_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+# Prebuilt TDLib 1.8.61, linked statically, so the .app carries no extra dylib.
+tdlib-rs = { version = "1.4", features = ["download-tdlib", "static"] }
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api", "protocol-asset"] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-notification = "2"
+tdlib-rs = { version = "1.4", features = ["download-tdlib", "static"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "fs"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+base64 = "0.22"
+futures = "0.3"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+
+[profile.release]
+lto = true
+codegen-units = 1

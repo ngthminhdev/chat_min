@@ -1,0 +1,537 @@
+.app-frame {
+  position: relative;
+  height: 100vh;
+  min-width: 1080px;
+  display: grid;
+  grid-template-rows: 42px 1fr 28px;
+  overflow: hidden;
+  background: var(--window);
+}
+
+.titlebar {
+  display: grid;
+  grid-template-columns: 270px minmax(280px, 1fr) max-content;
+  align-items: center;
+  min-height: 42px;
+  background: color-mix(in oklab, var(--window), var(--app-bg) 10%);
+  border-bottom: 1px solid var(--line);
+}
+
+.traffic { display: flex; align-items: center; gap: 8px; padding-left: 84px; pointer-events: none; }
+
+.toolbar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding-right: 10px;
+  min-width: max-content;
+}
+
+.panel-corner.left { left: 8px; }
+
+.panel-corner.right { right: 8px; }
+
+.main {
+  min-height: 0;
+  display: grid;
+  position: relative;
+  grid-template-columns: var(--left-w) minmax(520px, 1fr) var(--right-w);
+  transition: grid-template-columns var(--motion-standard) var(--ease-ui);
+}
+
+/* live resize drags set --left-w/--right-w every pointermove — a transition here would lag the cursor */
+body.resizing .main { transition: none; }
+
+.sidebar { grid-column: 1; }
+
+.workspace { grid-column: 2; }
+
+.inspector { grid-column: 3; }
+
+body.left-collapsed .main { grid-template-columns: 48px minmax(620px, 1fr) var(--right-w); }
+
+body.right-collapsed .main { grid-template-columns: var(--left-w) minmax(620px, 1fr) 0; }
+
+body.inspector-unavailable .main { grid-template-columns: var(--left-w) minmax(620px, 1fr) 0; }
+
+body.left-collapsed.inspector-unavailable .main { grid-template-columns: 48px minmax(760px, 1fr) 0; }
+
+body.left-collapsed.right-collapsed .main { grid-template-columns: 48px minmax(760px, 1fr) 0; }
+
+body.right-collapsed .inspector,
+body.inspector-unavailable .inspector {
+  display: none;
+}
+
+/* scoped to .sidebar — .nav-item/.empty-note are reused by non-sidebar views
+   (e.g. TemplatesView's template list, ClusterView's connect-prompt); an unscoped
+   rule here hid their text/search controls too whenever the dock collapsed. */
+body.left-collapsed .sidebar .sidebar-top,
+body.left-collapsed .sidebar .group-title,
+body.left-collapsed .sidebar .nav-item > span:not(:first-child),
+body.left-collapsed .sidebar .index-item > span:not(:first-child),
+body.left-collapsed .sidebar .nav-item > .badge,
+body.left-collapsed .sidebar .empty-note,
+body.left-collapsed .sidebar .collection-requests {
+  display: none;
+}
+
+/* ponytail: collapse all collections visually while the dock is collapsed;
+   per-collection state stays intact so re-expanding restores it. */
+body.left-collapsed .sidebar .collection-tree .collection-chevron { transform: rotate(-90deg); }
+
+body.left-collapsed .sidebar .side-scroll { height: 100%; padding: 6px; }
+body.left-collapsed .sidebar .group { margin-bottom: 8px; }
+body.left-collapsed .sidebar .nav-item,
+body.left-collapsed .sidebar .index-item {
+  display: flex;
+  justify-content: center;
+  padding: 0;
+}
+
+.resize-handle {
+  position: absolute;
+  z-index: var(--z-chrome);
+  background: transparent;
+  touch-action: none;
+}
+
+.resize-handle::after {
+  content: "";
+  position: absolute;
+  opacity: 0;
+  background: var(--blue);
+  box-shadow: 0 0 18px color-mix(in oklab, var(--blue), transparent 45%);
+  transition: opacity var(--motion-fast) ease;
+}
+
+.resize-handle:hover::after,
+body.resizing .resize-handle::after {
+  opacity: 1;
+}
+
+.resize-handle.vertical {
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  cursor: col-resize;
+}
+
+.resize-handle.vertical::after {
+  top: 8px;
+  bottom: 8px;
+  left: 4px;
+  width: 2px;
+  border-radius: var(--radius-pill);
+}
+
+.resize-handle.left {
+  left: var(--left-w);
+  transform: translateX(-5px);
+}
+
+.resize-handle.right {
+  right: var(--right-w);
+  transform: translateX(5px);
+}
+
+body.left-collapsed .resize-handle.left,
+body.right-collapsed .resize-handle.right,
+body.inspector-unavailable .resize-handle.right {
+  display: none;
+}
+
+body.resizing, body.resizing-y { user-select: none; }
+
+body.resizing { cursor: col-resize; }
+
+body.resizing-y { cursor: row-resize; }
+
+.sidebar, .inspector {
+  min-width: 0;
+  background: var(--pane);
+  border-right: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.inspector {
+  border-right: 0;
+  border-left: 1px solid var(--line);
+}
+
+.sidebar-top { padding: 12px; border-bottom: 1px solid var(--line); }
+
+.side-search {
+  width: 100%;
+  height: 30px;
+  color: var(--text);
+  background: var(--pane-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 0 10px;
+}
+
+.side-scroll, .inspector-scroll { height: calc(100% - 55px); overflow: auto; padding: 10px; }
+
+.group { margin-bottom: 14px; }
+.group-title.group-toggle { width: calc(100% - 12px); padding: 0; border: 0; background: transparent; text-align: left; cursor: default; }
+.group-title.group-toggle svg { transition: transform var(--motion-standard) var(--ease-ui); }
+.collapsible-group.collapsed .group-title.group-toggle svg { transform: rotate(-90deg); }
+/* max-height, not grid-template-rows: 1fr — group-content holds several nav-item children, and a
+   1fr/0fr track only collapses a single grid item; extras spill into their own auto-sized implicit
+   rows and ignore it. The cap just needs to clear real content (a nav list, never anywhere near
+   2000px) so the transition reads as a height animation instead of an abrupt cutoff. */
+.collapsible-group .group-content { display: grid; overflow: hidden; max-height: 2000px; transition: max-height var(--motion-standard) var(--ease-ui); }
+.collapsible-group.collapsed .group-content { max-height: 0; }
+.collection-tree { margin-bottom: 2px; border-radius: var(--radius-sm); }
+/* divide adjacent collections so the list doesn't read as one flat blob */
+.collection-tree:not(:last-child) { padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px solid var(--line); }
+.collection-tree.drop-target { outline: 1px dashed var(--accent, #6ea8fe); outline-offset: -1px; background: color-mix(in srgb, var(--accent, #6ea8fe) 12%, transparent); }
+.request-node, .collection-node { cursor: grab; touch-action: none; }
+/* .collection-requests clips overflow, so pull the drop line inside the row instead of -2px outside it */
+.request-node.drop-before::before { top: 0; }
+.request-node.drop-after::after { bottom: 0; }
+/* WKWebView won't start element drags under global `user-select:none` without this — same fix as .tab.
+   Child svg icons carry their own native drag gesture, so neutralize them or the row never drags. */
+.collection-node, .request-node { -webkit-user-drag: element; }
+.collection-node svg, .request-node svg { -webkit-user-drag: none; }
+.collection-node { width: 100%; border: 0; background: transparent; font: inherit; text-align: left; }
+.collection-chevron { transition: transform var(--motion-standard) var(--ease-ui); }
+.collection-tree.collapsed .collection-chevron { transform: rotate(-90deg); }
+.collection-requests { display: grid; padding-left: 14px; overflow: hidden; max-height: 2000px; transition: max-height var(--motion-standard) var(--ease-ui); }
+/* same max-height reasoning as .group-content above — multiple request-node children per collection */
+.collection-tree.collapsed .collection-requests { max-height: 0; }
+.nav-item.request-node { width: 100%; grid-template-columns: 38px minmax(0, 1fr) auto; border: 0; background: transparent; font: inherit; text-align: left; }
+.collection-node > span:nth-child(2), .request-node > span:nth-child(2) { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.request-node.selected:not(.active) { box-shadow: inset 2px 0 0 var(--accent, #6ea8fe); background: color-mix(in srgb, var(--accent, #6ea8fe) 8%, transparent); }
+.collection-empty { padding-left: 12px; }
+
+.group-title {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  margin: 10px 6px 6px;
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  transition: color var(--motion-fast) var(--ease-ui);
+}
+
+/* section rail — only when the group is focused or holds the active item, so the
+   sidebar shows one accent at a time instead of a wall of them */
+.group-title::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: 50%;
+  width: 2px;
+  height: 12px;
+  margin-top: -6px;
+  border-radius: 1px;
+  background: var(--accent-line);
+  transform: scaleY(0);
+  transform-origin: center;
+  transition: transform var(--motion-standard) var(--ease-ui);
+}
+
+.group:has(.nav-item.active, .index-item.active, .request-node.selected) > .group-title::before,
+.group:focus-within > .group-title::before,
+.group-title:focus-visible::before { transform: scaleY(1); }
+
+.group:has(.nav-item.active, .index-item.active, .request-node.selected) > .group-title,
+.group:focus-within > .group-title { color: var(--text-2); }
+
+.workspace {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 42px 1fr;
+  background: var(--window);
+}
+
+/* Scrolls rather than squeezing. Tabs used to shrink to their 96px min and then get
+   clipped by `overflow: hidden` — past a certain count the last tabs were unreachable,
+   and the ones still visible were too narrow to read. */
+.tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 7px;
+  padding: 6px 8px 0;
+  background: color-mix(in oklab, var(--window), var(--app-bg) 5%);
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* no room for a scrollbar in a 31px strip — scroll with trackpad / shift-wheel,
+     and activating a tab scrolls it into view (see TabsBar) */
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar { display: none; }
+
+.tab {
+  height: 31px;
+  /* floor keeps a short-titled tab a comfortable click target instead of a stub;
+     cap lets "title · connection-name" survive without ellipsis. Tabs keep their
+     natural width between the two — the bar scrolls instead of squeezing them. */
+  min-width: 132px;
+  max-width: 500px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 11px;
+  color: var(--text-2);
+  border: 1px solid var(--line);
+  border-bottom-color: var(--line);
+  border-radius: 10px 10px 0 0;
+  background: color-mix(in oklab, var(--pane), transparent 20%);
+  cursor: default;
+  position: relative;
+  transition: background var(--motion-fast) var(--ease-ui), color var(--motion-fast) var(--ease-ui), border-color var(--motion-fast) var(--ease-ui);
+  -webkit-user-drag: element;
+}
+
+/* active-tab accent underline — scaleX so it grows in place, never nudges layout.
+   Takes the connection's color when the tab has one: `--conn` is set inline on the .tab
+   itself, so the underline, the active wash and the dot all read from one declaration and
+   a tab with no owner (or an owner with no color picked) falls back to the theme accent. */
+.tab::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--conn, var(--accent-line));
+  transform: scaleX(0);
+  transform-origin: center;
+  transition: transform var(--motion-standard) var(--ease-ui);
+  pointer-events: none;
+}
+
+.tab.active::after { transform: scaleX(1); }
+
+/* svg icons default to their own native drag gesture in WebKit — let it bubble to .tab instead */
+.tab svg, .tab img { -webkit-user-drag: none; }
+
+/* title label: single line, ellipsis on the right when the tab is narrow.
+   NB: don't use `direction: rtl` for left-side truncation — it reorders bidi-neutral
+   characters, so a title like "[VOR] Live History" renders as "Live History [VOR]". */
+.tab-title, .tab > span:not([class]) {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tab-method { flex: none; font-size: var(--fs-xs); }
+
+.tab:hover { color: var(--text); background: var(--pane-2); }
+
+/* Only the active tab is washed. Tinting every tab would turn a busy tab bar into stripes
+   and the dot already carries identity on the inactive ones. */
+.tab.active {
+  color: var(--text);
+  background:
+    linear-gradient(180deg, color-mix(in oklab, var(--conn, var(--blue)), transparent 88%), transparent 70%),
+    var(--window);
+  border-color: color-mix(in oklab, var(--conn, var(--blue)), transparent 62%);
+  border-bottom-color: transparent;
+  box-shadow: inset 0 1px 0 color-mix(in oklab, var(--text), transparent 96%);
+}
+
+.tab.active .tab-title,
+.tab.active > span:not([class]) { font-weight: 600; }
+
+.tab-close {
+  margin-left: auto;
+  width: 17px;
+  height: 17px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  color: var(--text-3);
+  font-size: var(--fs-base);
+  line-height: 1;
+  /* quiet until the tab is hovered/focused — fades and scales, keeps its box so nothing reflows */
+  opacity: 0.35;
+  transform: scale(0.86);
+  transition: opacity var(--motion-fast) var(--ease-ui), transform var(--motion-fast) var(--ease-ui),
+    color var(--motion-fast) var(--ease-ui), background var(--motion-fast) var(--ease-ui);
+}
+
+.tab:hover .tab-close,
+.tab:focus-within .tab-close,
+.tab.active .tab-close,
+.tab-close:focus-visible { opacity: 1; transform: none; }
+
+.tab-close:hover { color: var(--text); background: var(--pane-3); }
+
+.tab.dragging { opacity: 0.4; transition: opacity var(--motion-fast) var(--ease-ui); }
+
+/* insertion-point bar: always present, opacity-toggled so it fades rather than pops */
+.tab::before {
+  content: "";
+  position: absolute;
+  left: -3px;
+  top: 2px;
+  bottom: 2px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--blue);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-fast) var(--ease-ui);
+}
+
+.tab.drag-over::before { opacity: 1; }
+
+.tab-add {
+  height: 31px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  color: var(--text-2);
+  border: 1px dashed var(--line-2);
+  border-radius: 9px 9px 0 0;
+  background: transparent;
+  cursor: default;
+  white-space: nowrap;
+}
+
+.tab-add:hover {
+  color: var(--text);
+  border-color: color-mix(in oklab, var(--blue), transparent 42%);
+  background: color-mix(in oklab, var(--blue), transparent 90%);
+}
+
+.inspector-head { height: 55px; }
+
+.statusbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid var(--line);
+  background: color-mix(in oklab, var(--window), var(--app-bg) 8%);
+  color: var(--text-3);
+  font: 0.8462rem/1 var(--font-mono);
+}
+
+.statusbar > div { height: 100%; padding: 0 10px; display: flex; align-items: center; gap: 14px; min-width: 0; white-space: nowrap; }
+
+.statusbar > div:first-child { padding-left: 44px; }
+
+.statusbar .right-status { padding-right: 44px; }
+
+body.inspector-unavailable .panel-toggle.panel-corner.right {
+  opacity: 0.38;
+  pointer-events: none;
+}
+
+body.compact { --left-w: 298px; --right-w: 406px; }
+
+body.compact .main { grid-template-columns: var(--left-w) minmax(520px, 1fr) var(--right-w); }
+
+body.compact.left-collapsed .main { grid-template-columns: 48px minmax(620px, 1fr) var(--right-w); }
+
+body.compact.right-collapsed .main { grid-template-columns: var(--left-w) minmax(620px, 1fr) 0; }
+
+body.compact.inspector-unavailable .main { grid-template-columns: var(--left-w) minmax(620px, 1fr) 0; }
+
+body.compact.left-collapsed.right-collapsed .main { grid-template-columns: 48px minmax(760px, 1fr) 0; }
+
+body.compact th, body.compact td { height: 28px; }
+body.compact .nav-item { min-height: 27px; }
+body.compact .side-scroll { padding-top: 6px; }
+
+.inspector {
+  display: grid;
+  /* 3 rows: head / MiniTabs / scroll — kafka_ui_min + redis_min need the middle auto row.
+     requests_min overrides .inspector to flex in requestsmin.css. */
+  grid-template-rows: 55px auto minmax(0, 1fr);
+}
+.inspector .inspector-scroll { height: auto; min-height: 0; }
+.inspector-text {
+  margin: 12px;
+  padding: 10px 12px;
+  background: var(--pane-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--editor-fg);
+  font: 0.9231rem/1.6 var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+.inspector-edit {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) 34px;
+}
+.inspector-editor-host {
+  min-height: 0;
+  overflow: hidden;
+  background: var(--editor-bg);
+}
+body.light .inspector-editor-host { background: var(--editor-bg); }
+.inspector-edit-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 8px;
+  border-top: 1px solid var(--line);
+  font: 0.8462rem/1 var(--font-mono);
+  color: var(--text-3);
+}
+.inspector-edit-foot .dirty { color: var(--orange); }
+.inspector-edit-foot .saved { color: var(--green); }
+.inspector-edit-foot .tool-btn { height: 24px; padding: 0 8px; }
+
+.app-logo {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  border-radius: 4px;
+}
+
+/* never wrap statusbar segments — clip with ellipsis instead */
+.statusbar > div { overflow: hidden; }
+.statusbar span, .statusbar a {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.statusbar .credit { color: var(--accent-primary); opacity: 0.85; font-weight: 600; }
+.statusbar a { text-decoration: none; }
+
+@media (max-width: 1180px) {
+  body:not(.left-collapsed) .main { grid-template-columns: 220px minmax(520px, 1fr) 0; }
+  body:not(.left-collapsed) .inspector, body:not(.left-collapsed) .resize-handle.right { display: none; }
+  .titlebar { grid-template-columns: 230px minmax(220px, 1fr) max-content; }
+}
+
+@media (max-width: 900px) {
+  .titlebar { grid-template-columns: 190px 1fr; }
+  .titlebar .search { display: none; }
+  .toolbar { grid-column: 2; }
+}
+
+.tab-title-input {
+  width: 110px;
+  height: 20px;
+  padding: 0 4px;
+  color: var(--text);
+  background: var(--pane-2);
+  border: 1px solid color-mix(in oklab, var(--blue), transparent 45%);
+  border-radius: 5px;
+  outline: none;
+  font: 0.9231rem/1 var(--font-body);
+}
