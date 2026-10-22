@@ -1,20 +1,19 @@
 import { HEALTH_LABELS } from "../lib/platforms";
-import { chatKeyOf, totalUnread, useApp } from "../store";
+import { totalUnread, useApp } from "../store";
 import { Icon } from "../ui/Icon";
 
 export function Statusbar() {
   const accounts = useApp((s) => s.accounts);
   const health = useApp((s) => s.health);
   const route = useApp((s) => s.route);
-  const chat = useApp((s) => (s.route === "shell" ? s.chats[chatKeyOf(s.active) ?? ""] : undefined));
   const unread = useApp((s) => totalUnread(s.chats));
   const drafts = useApp((s) => Object.values(s.drafts).filter((d) => d.trim()).length);
 
   if (route === "welcome") {
     return (
       <div className="statusbar">
-        <div><span>Chưa có account</span></div>
-        <div className="right-status"><span>⌘N Add account</span></div>
+        <div><span>Chưa có tài khoản</span></div>
+        <div className="right-status"><span>⌘N Thêm tài khoản</span></div>
       </div>
     );
   }
@@ -28,7 +27,7 @@ export function Statusbar() {
               <span className="conn-dot" />
               {a.name}
               {h === "ok" ? (
-                <span className="ok"><Icon name="check" /> synced</span>
+                <span className="ok"><Icon name="check" /> Đã đồng bộ</span>
               ) : h === "syncing" || h === "reconnecting" ? (
                 <span className="warn"><Icon name="refresh-cw" className="spin" /> {HEALTH_LABELS[h]}</span>
               ) : (
@@ -39,7 +38,6 @@ export function Statusbar() {
         })}
       </div>
       <div className="right-status">
-        {chat && <span>{chat.id}</span>}
         <span>{unread} chưa đọc</span>
         <span>{drafts} nháp</span>
         <span><kbd className="kbd">⌘K</kbd> lệnh</span>

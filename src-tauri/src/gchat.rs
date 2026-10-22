@@ -356,7 +356,7 @@ impl GChat {
         let v = self.api(core, account_id, Method::GET, &url, None).await?;
         let me = self.me(account_id);
         let mut msgs: Vec<Msg> = v["messages"].as_array().cloned().unwrap_or_default().iter().map(|m| to_msg(account_id, &me, m)).collect();
-        self.fill_photos(core, account_id, &mut msgs).await;
+        self.fill_photos(core, account_id, &mut msgs, true).await;
         if !msgs.is_empty() {
             let fresh = newest.is_some() && notify;
             for m in &msgs {
@@ -371,7 +371,7 @@ impl GChat {
         let v = self.api(core, account_id, Method::GET, &url, None).await?;
         let me = self.me(account_id);
         let mut msgs: Vec<Msg> = v["messages"].as_array().cloned().unwrap_or_default().iter().map(|m| to_msg(account_id, &me, m)).collect();
-        self.fill_photos(core, account_id, &mut msgs).await;
+        self.fill_photos(core, account_id, &mut msgs, true).await;
         for msg in msgs {
             let old = core.store().msg(account_id, space, &msg.id).ok().flatten();
             if old.as_ref() != Some(&msg) {
@@ -457,7 +457,7 @@ impl GChat {
     }
 
     /// Avatars from the People API (directory of the user's Workspace), cached per user.
-    async fn fill_photos(&self, core: &Arc<Core>, account_id: &str, msgs: &mut [Msg]) {
+    async fn fill_photos(&self, core: &Arc<Core>, account_id: &str, msgs: &mut [Msg], net: bool) {
         let (off, missing): (bool, Vec<String>) = {
             let accs = self.accs.lock().unwrap();
             let Some(a) = accs.get(account_id) else { return };
@@ -466,7 +466,7 @@ impl GChat {
             ids.dedup();
             (a.people_off, ids)
         };
-        if !off && !missing.is_empty() {
+        if net && !off && !missing.is_empty() {
             let mut url = "https://people.googleapis.com/v1/people:batchGet?personFields=photos".to_string();
             for id in missing.iter().take(200) {
                 url.push_str(&format!("&resourceNames=people/{}", &id[6..]));
@@ -514,13 +514,33 @@ impl GChat {
         let me = self.me(account_id);
         let mut msgs: Vec<Msg> = v["messages"].as_array().cloned().unwrap_or_default().iter().map(|m| to_msg(account_id, &me, m)).collect();
         msgs.reverse();
-        self.fill_quotes(core, account_id, space, &mut msgs).await;
-        self.fill_photos(core, account_id, &mut msgs).await;
+        self.fill_quotes(core, account_id, space, &mut msgs, false).await;
+        self.fill_photos(core, account_id, &mut msgs, false).await;
         core.store_mut().put_msgs(&msgs)?;
-        if before == 0 {
-            let _ = self.refresh_chat(core, account_id, space).await;
-        }
+        self.enrich_later(core, account_id, space, msgs.clone(), before == 0);
         Ok(msgs)
+    }
+
+    /// Quotes of messages outside the cache, avatars and the read state each cost another
+    /// request: the page goes back first, these land afterwards as message updates.
+    fn enrich_later(&self, core: &Arc<Core>, account_id: &str, space: &str, msgs: Vec<Msg>, refresh: bool) {
+        let (core, account_id, space) = (core.clone(), account_id.to_string(), space.to_string());
+        tauri::async_runtime::spawn(async move {
+            let g = &core.gchat;
+            let mut full = msgs.clone();
+            g.fill_quotes(&core, &account_id, &space, &mut full, true).await;
+            g.fill_photos(&core, &account_id, &mut full, true).await;
+            let changed: Vec<Msg> = full.into_iter().zip(&msgs).filter(|(a, b)| a != *b).map(|(a, _)| a).collect();
+            if !changed.is_empty() {
+                let _ = core.store_mut().put_msgs(&changed);
+                for msg in changed {
+                    core.emit(Event::Message { msg, is_new: false });
+                }
+            }
+            if refresh {
+                let _ = g.refresh_chat(&core, &account_id, &space).await;
+            }
+        });
     }
 
     pub async fn thread(&self, core: &Arc<Core>, account_id: &str, space: &str, thread: &str) -> Result<Vec<Msg>, String> {
@@ -531,13 +551,14 @@ impl GChat {
         let v = self.api(core, account_id, Method::GET, &url, None).await?;
         let me = self.me(account_id);
         let mut msgs: Vec<Msg> = v["messages"].as_array().cloned().unwrap_or_default().iter().map(|m| to_msg(account_id, &me, m)).collect();
-        self.fill_quotes(core, account_id, space, &mut msgs).await;
-        self.fill_photos(core, account_id, &mut msgs).await;
+        self.fill_quotes(core, account_id, space, &mut msgs, false).await;
+        self.fill_photos(core, account_id, &mut msgs, false).await;
         core.store_mut().put_msgs(&msgs)?;
+        self.enrich_later(core, account_id, space, msgs.clone(), false);
         Ok(msgs)
     }
 
-    async fn fill_quotes(&self, core: &Arc<Core>, account_id: &str, space: &str, msgs: &mut [Msg]) {
+    async fn fill_quotes(&self, core: &Arc<Core>, account_id: &str, space: &str, msgs: &mut [Msg], net: bool) {
         let mut originals: HashMap<String, Msg> = msgs.iter().map(|m| (m.id.clone(), m.clone())).collect();
         let mut missing = HashSet::new();
         for m in msgs.iter().filter(|m| !m.reply_to.is_empty() && (m.reply_name.is_empty() || m.reply_text.is_empty())) {
@@ -549,7 +570,7 @@ impl GChat {
             }
         }
         // Bound extra requests for old quotes and don't fail the conversation if a quoted message was deleted.
-        let missing: Vec<_> = missing.into_iter().take(8).collect();
+        let missing: Vec<_> = if net { missing.into_iter().take(8).collect() } else { vec![] };
         for chunk in missing.chunks(4) {
             let results = futures::future::join_all(chunk.iter().map(|id| async move {
                 self.api(core, account_id, Method::GET, &format!("{API}/{id}"), None).await.ok()
@@ -858,6 +879,8 @@ fn to_msg(account_id: &str, me: &str, m: &Value) -> Msg {
     let sender_id = m["sender"]["name"].as_str().unwrap_or_default().to_string();
     let ts = rfc3339_ms(created);
     let mut text = m["text"].as_str().unwrap_or_default().to_string();
+    let formatted = m["formattedText"].as_str().unwrap_or_default();
+    let mut names: HashMap<String, String> = HashMap::new();
     let mut mentions_me = false;
     // wrap @mentions so the frontend renders pills; walk annotations from the end so
     // earlier indices stay valid
@@ -871,8 +894,13 @@ fn to_msg(account_id: &str, me: &str, m: &Value) -> Msg {
         let chars: Vec<char> = text.chars().collect();
         if s + l <= chars.len() && chars.get(s) == Some(&'@') {
             let inner: String = chars[s + 1..s + l].iter().collect();
+            names.insert(a["userMention"]["user"]["name"].as_str().unwrap_or_default().into(), inner.clone());
             text = format!("{}@{{{inner}}}{}", chars[..s].iter().collect::<String>(), chars[s + l..].iter().collect::<String>());
         }
+    }
+    // formattedText keeps lists, bold, code blocks… that `text` flattens
+    if !formatted.is_empty() {
+        text = chat_markup(formatted, &names);
     }
     let media = m["attachment"].as_array().and_then(|a| a.first()).map(|a| {
         let mime = a["contentType"].as_str().unwrap_or_default();
@@ -1030,9 +1058,84 @@ pub fn ms_rfc3339(ms: i64) -> String {
     format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{milli:03}Z", rem / 3600, rem % 3600 / 60, rem % 60)
 }
 
+/// Google Chat's `formattedText` → ChatMin markup. Chat's own syntax (*bold*, _italic_,
+/// ~strike~, `code`, ``` blocks, "* " bullets) is what format.ts renders already; only the
+/// <…> tokens change: <url|label> → [label](url), <users/123> → @{Name}.
+fn chat_markup(ft: &str, names: &HashMap<String, String>) -> String {
+    let mut out = String::new();
+    let mut rest = ft;
+    while let Some(i) = rest.find('<') {
+        out.push_str(&rest[..i]);
+        let tail = &rest[i..];
+        let Some(j) = tail.find('>') else {
+            out.push_str(tail);
+            return out;
+        };
+        let tok = &tail[1..j];
+        let rendered = if tok.contains('<') || tok.starts_with(char::is_whitespace) {
+            None // a literal "<", not a token
+        } else if tok == "users/all" {
+            Some("@{all}".to_string())
+        } else if tok.starts_with("users/") {
+            Some(format!("@{{{}}}", names.get(tok).map(String::as_str).unwrap_or("?")))
+        } else if tok.starts_with("http://") || tok.starts_with("https://") {
+            Some(match tok.split_once('|') {
+                Some((url, label)) => format!("[{}]({url})", label.replace(['[', ']'], "")),
+                None => tok.to_string(),
+            })
+        } else if let Some((_, label)) = tok.split_once('|') {
+            Some(label.to_string()) // mailto: and friends: the label reads fine on its own
+        } else if tok.starts_with("customEmojis/") {
+            Some(String::new())
+        } else {
+            None
+        };
+        match rendered {
+            Some(r) => {
+                out.push_str(&r);
+                rest = &tail[j + 1..];
+            }
+            None => {
+                out.push('<');
+                rest = &tail[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    unescape(&out)
+}
+
+/// formattedText backslash-escapes punctuation that would otherwise read as markup
+/// ("4\." so it isn't a numbered list, "v7\_3"); a real backslash comes as "\\".
+fn unescape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        match chars.peek() {
+            Some(&n) if c == '\\' && n.is_ascii_punctuation() => {
+                out.push(n);
+                chars.next();
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn formatted_text_to_markup() {
+        let names = HashMap::from([("users/7".to_string(), "Minh".to_string())]);
+        assert_eq!(
+            chat_markup("Hi <users/7>, see <https://x.dev/a|the doc> & <https://y.dev>:\n* *one*\n* two <users/all> <customEmojis/abc>", &names),
+            "Hi @{Minh}, see [the doc](https://x.dev/a) & https://y.dev:\n* *one*\n* two @{all} "
+        );
+        assert_eq!(chat_markup("a < b and <mailto:a@b.c|mail> <unclosed", &names), "a < b and mail <unclosed");
+        assert_eq!(chat_markup("4\\. /var/www/wallet-services-v7\\_3 C:\\\\tmp \\n", &names), "4. /var/www/wallet-services-v7_3 C:\\tmp \\n");
+    }
 
     #[test]
     fn ordinary_message_does_not_request_a_thread_reply() {

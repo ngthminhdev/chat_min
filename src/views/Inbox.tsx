@@ -27,16 +27,16 @@ export function Inbox() {
     <>
       <header className="r2-header">
         <div className="od-field">
-          <h1>All inboxes</h1>
-          <p>Hội thoại gần đây từ mọi account</p>
+          <h1>Tất cả hội thoại</h1>
+          <p>Hội thoại gần đây từ mọi tài khoản</p>
         </div>
       </header>
       <div className="inbox-shell">
         <div className="inbox-filters">
           <label>
-            Account
+            Tài khoản
             <select className="settings-select" value={account} onChange={(e) => setAccount(e.target.value)}>
-              <option value="">Mọi account</option>
+              <option value="">Mọi tài khoản</option>
               {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
           </label>
@@ -45,7 +45,7 @@ export function Inbox() {
             <select className="settings-select" value={filter} onChange={(e) => setFilter(e.target.value)}>
               <option value="all">Tất cả</option>
               <option value="unread">Chưa đọc</option>
-              <option value="mention">Được mention</option>
+              <option value="mention">Được nhắc tên</option>
             </select>
           </label>
           <label className="inbox-search">
@@ -84,7 +84,7 @@ export function Inbox() {
           ) : (
             <div className="r2-empty">
               <h2>{Object.keys(chats).length ? "Không có hội thoại phù hợp" : "Chưa có hội thoại"}</h2>
-              <p>{Object.keys(chats).length ? "Thử đổi account, bỏ lọc hoặc tìm bằng tên khác." : "Hội thoại sẽ xuất hiện khi account đồng bộ xong."}</p>
+              <p>{Object.keys(chats).length ? "Thử đổi tài khoản, bỏ lọc hoặc tìm bằng tên khác." : "Hội thoại sẽ xuất hiện khi tài khoản đồng bộ xong."}</p>
               {(account || filter !== "all" || q) && <button className="tool-btn" onClick={() => (setAccount(""), setFilter("all"), setQ(""))}>Xoá bộ lọc</button>}
             </div>
           )}

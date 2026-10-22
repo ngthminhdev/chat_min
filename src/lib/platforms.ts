@@ -19,13 +19,13 @@ export const PLATFORMS: Record<Platform, { name: string; caps: Record<Cap, boole
 };
 
 export const CAP_LABELS: Record<Cap, string> = {
-  reply: "Trả lời / trích dẫn", reactions: "Reaction", edit: "Sửa tin đã gửi", delete: "Xoá với mọi người",
-  pin: "Ghim tin", threads: "Thread trong space", stickers: "Sticker", voice: "Tin nhắn thoại",
+  reply: "Trả lời / trích dẫn", reactions: "Biểu cảm", edit: "Sửa tin đã gửi", delete: "Xoá với mọi người",
+  pin: "Ghim tin", threads: "Luồng trả lời trong không gian chung", stickers: "Sticker", voice: "Tin nhắn thoại",
   readReceipts: "Trạng thái đã xem", typing: "Đang gõ…",
 };
 
 export const CAP_OFF_NOTE: Partial<Record<Cap, string>> = {
-  threads: "Telegram không có thread — dùng Trả lời",
+  threads: "Dùng Trả lời để trích dẫn tin nhắn trên Telegram",
   stickers: "Google Chat không có sticker",
   readReceipts: "Google Chat không trả “đã xem” cho space/nhóm",
   pin: "Google Chat API không hỗ trợ ghim tin",
@@ -37,5 +37,5 @@ export const COLOR_LABELS: Record<string, string> = {
   blue: "Xanh dương", purple: "Tím", green: "Xanh lá", orange: "Cam", red: "Đỏ", amber: "Vàng", pink: "Hồng", slate: "Slate",
 };
 export const HEALTH_LABELS: Record<string, string> = {
-  ok: "Đã đồng bộ", syncing: "Đang đồng bộ", offline: "Offline", reconnecting: "Đang kết nối lại", expired: "Phiên hết hạn", rate: "Rate limit",
+  ok: "Đã đồng bộ", syncing: "Đang đồng bộ", offline: "Mất kết nối", reconnecting: "Đang kết nối lại", expired: "Phiên hết hạn", rate: "Tạm giới hạn yêu cầu",
 };

@@ -527,6 +527,8 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "futures",
+ "objc2",
+ "objc2-app-kit",
  "qrcode",
  "reqwest 0.12.28",
  "rusqlite",

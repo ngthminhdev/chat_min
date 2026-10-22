@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { api, fileSrc } from "../lib/bridge";
 import { dayLabel, fileSize, fmtCount, hm, listTime, norm, plain } from "../lib/format";
 import { CAP_LABELS, CAP_OFF_NOTE, PLATFORMS, type Cap } from "../lib/platforms";
 import type { Member, Msg } from "../lib/types";
+import { fileActionLabel, mediaSection } from "../lib/micro-ux";
 import { capsOf, chatKeyOf, fail, loadTopics, openThreadTab, openTopicTab, saveMedia, threadTabKey, toast, useApp, type InspTab } from "../store";
 import { ChatAvatar, PersonAvatar } from "../ui/Avatar";
 import { Glyph, Icon } from "../ui/Icon";
@@ -13,8 +14,10 @@ export function Inspector() {
   const active = useApp((s) => chatKeyOf(s.active));
   const chat = useApp((s) => s.chats[chatKeyOf(s.active) ?? ""]);
   const account = useApp((s) => s.accounts.find((a) => a.id === chat?.accountId));
-  const tab = useApp((s) => s.inspTab);
+  const requestedTab = useApp((s) => s.inspTab);
   const list = useApp((s) => s.msgs[chatKeyOf(s.active) ?? ""]);
+  const panelId = useId();
+  const reduceMotion = useReducedMotion();
 
   if (!active || !chat || !account) return <aside className="inspector" aria-label="Thông tin chat" />;
   const conn = { "--conn": `var(--conn-${account.color})` } as React.CSSProperties;
@@ -30,7 +33,7 @@ export function Inspector() {
           </em>
         </span>
       </div>
-      <button className="tool-btn icon-only lg" aria-label="Đóng inspector" data-tip="Đóng inspector" data-kbd="⌘I" onClick={() => useApp.setState({ rightCollapsed: true })}>
+      <button className="tool-btn icon-only lg" aria-label="Đóng chi tiết hội thoại" data-tip="Đóng chi tiết hội thoại" data-kbd="⌘R" onClick={() => useApp.setState({ rightCollapsed: true })}>
         <Icon name="x" />
       </button>
     </div>
@@ -43,7 +46,7 @@ export function Inspector() {
         <div className="inspector-scroll">
           <div className="insp-empty">
             <Icon name="external-link" />
-            {account.name} chạy bằng chính trang web của {PLATFORMS[account.platform].name}, đăng nhập riêng cho account này.
+            {account.name} chạy bằng chính trang web của {PLATFORMS[account.platform].name}, đăng nhập riêng cho tài khoản này.
             Tin nhắn không đi qua ChatMin nên không có tìm kiếm, dịch hay tóm tắt.
           </div>
         </div>
@@ -51,47 +54,90 @@ export function Inspector() {
     );
   }
   const msgs = (list ?? []).filter((m) => !m.deleted);
-  const files = msgs.filter((m) => m.media && (m.media.kind === "file" || m.media.kind === "voice" || (m.media.kind === "video" && !m.media.thumb)));
-  const imgs = msgs.filter((m) => m.media && (m.media.kind === "image" || (m.media.kind === "video" && m.media.thumb)));
+  const files = msgs.filter((m) => mediaSection(m.media) === "files");
+  const imgs = msgs.filter((m) => mediaSection(m.media) === "media");
   const caps = capsOf(active);
   const tabs: [InspTab, string, number?][] = [
-    ["info", "Info"],
-    ["members", "Người", chat.kind === "dm" ? undefined : chat.memberCount || undefined],
-    ["files", "File", files.length || undefined],
-    ["media", "Ảnh", imgs.length || undefined],
+    ["info", "Thông tin"],
+    ["members", "Thành viên", chat.kind === "dm" ? undefined : chat.memberCount || undefined],
+    ["files", "Tệp", files.length || undefined],
+    ["media", "Ảnh & video", imgs.length || undefined],
     ...(caps.pin ? [["pinned", "Ghim"] as [InspTab, string]] : []),
-    ...(chat.threaded || chat.forum ? [["threads", chat.forum ? "Topics" : "Threads"] as [InspTab, string]] : []),
+    ...(chat.threaded || chat.forum ? [["threads", chat.forum ? "Chủ đề" : "Luồng trả lời"] as [InspTab, string]] : []),
   ];
+  const tab = tabs.some(([k]) => k === requestedTab) ? requestedTab : "info";
 
   return (
     <aside className="inspector" aria-label="Thông tin chat">
       {head}
-      <div className="mini-tabs" role="tablist" aria-label="Thông tin chat">
-        {tabs.map(([k, l, n]) => (
-          <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? "active" : ""} onClick={() => useApp.setState({ inspTab: k })}>
-            {l}
-            {n ? <small>{n > 999 ? `${Math.round(n / 100) / 10}k` : n}</small> : null}
-          </button>
-        ))}
-      </div>
+      <InspectorTabs tabs={tabs} selected={tab} panelId={panelId} />
       <AnimatePresence mode="wait" initial={false}>
         <motion.div
           key={`${active}:${tab}`}
           className="inspector-scroll"
-          initial={{ opacity: 0, x: 6 }}
+          id={panelId}
+          role="tabpanel"
+          aria-labelledby={`${panelId}-${tab}`}
+          tabIndex={0}
+          initial={reduceMotion ? false : { opacity: 0, x: 6 }}
           animate={{ opacity: 1, x: 0 }}
-          exit={{ opacity: 0, transition: { duration: 0.08 } }}
-          transition={{ duration: 0.16 }}
+          exit={{ opacity: 0, transition: { duration: reduceMotion ? 0 : 0.08 } }}
+          transition={{ duration: reduceMotion ? 0 : 0.16 }}
         >
           {tab === "info" && <InfoTab k={active} files={files} />}
           {tab === "members" && <MembersTab k={active} />}
-          {tab === "files" && <FilesTab files={files} />}
-          {tab === "media" && <MediaTab imgs={imgs} />}
+          {tab === "files" && <><p className="history-scope">{files.length} tệp và tin nhắn thoại trong lịch sử đã tải</p><FilesTab files={files} /></>}
+          {tab === "media" && <><p className="history-scope">{imgs.length} ảnh và video trong lịch sử đã tải</p><MediaTab imgs={imgs} /></>}
           {tab === "pinned" && <PinnedTab k={active} />}
           {tab === "threads" && (chat.forum ? <TopicsTab k={active} /> : chat.threaded ? <ThreadsTab k={active} /> : null)}
         </motion.div>
       </AnimatePresence>
     </aside>
+  );
+}
+
+function InspectorTabs({ tabs, selected, panelId }: { tabs: [InspTab, string, number?][]; selected: InspTab; panelId: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [overflow, setOverflow] = useState(false);
+  const index = tabs.findIndex(([k]) => k === selected);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const reveal = () => {
+      const button = el.querySelector<HTMLElement>('[aria-selected="true"]');
+      if (!button) return;
+      const bounds = el.getBoundingClientRect(), item = button.getBoundingClientRect();
+      const inset = el.scrollWidth > el.clientWidth + 1 ? 16 : 4;
+      if (item.left < bounds.left + inset) el.scrollLeft -= bounds.left + inset - item.left;
+      else if (item.right > bounds.right - inset) el.scrollLeft += item.right - bounds.right + inset;
+    };
+    const resize = () => { setOverflow(el.scrollWidth > el.clientWidth + 1); reveal(); };
+    const observer = new ResizeObserver(resize);
+    observer.observe(el);
+    resize();
+    return () => observer.disconnect();
+  }, [selected, tabs.map(([k, , n]) => `${k}:${n}`).join(",")]);
+  const choose = (i: number) => {
+    useApp.setState({ inspTab: tabs[i][0] });
+    ref.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[i]?.focus();
+  };
+  return (
+    <div className="inspector-tabbar">
+      {overflow && <button className="tool-btn icon-only insp-tab-step prev" aria-label="Mục thông tin trước" data-tip="Mục thông tin trước" disabled={index === 0} onClick={() => choose(index - 1)}><Icon name="chevron-right" /></button>}
+      <div ref={ref} className="mini-tabs" role="tablist" aria-label="Thông tin chat" onKeyDown={(e) => {
+        const target = e.key === "ArrowRight" ? (index + 1) % tabs.length : e.key === "ArrowLeft" ? (index - 1 + tabs.length) % tabs.length : e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : -1;
+        if (target < 0) return;
+        e.preventDefault();
+        choose(target);
+      }}>
+        {tabs.map(([k, label, count]) => (
+          <button key={k} id={`${panelId}-${k}`} role="tab" aria-controls={panelId} aria-selected={selected === k} tabIndex={selected === k ? 0 : -1} aria-label={`${label}${count ? ` · ${count}${k === "files" || k === "media" ? " trong lịch sử đã tải" : ""}` : ""}`} className={selected === k ? "active" : ""} onClick={() => useApp.setState({ inspTab: k })}>
+            {label}{count ? <small>{fmtCount(count)}</small> : null}
+          </button>
+        ))}
+      </div>
+      {overflow && <button className="tool-btn icon-only insp-tab-step" aria-label="Mục thông tin tiếp theo" data-tip="Mục thông tin tiếp theo" disabled={index === tabs.length - 1} onClick={() => choose(index + 1)}><Icon name="chevron-right" /></button>}
+    </div>
   );
 }
 
@@ -113,7 +159,7 @@ function InfoTab({ k, files }: { k: string; files: Msg[] }) {
       {chat.description && <p className="insp-desc">{chat.description}</p>}
       <div className="insp-section">Chi tiết</div>
       <div className="kv">
-        <span>Account</span>
+        <span>Tài khoản</span>
         <span className="seg" style={{ minWidth: 0 }}>
           <span className="conn-dot" style={{ "--conn": `var(--conn-${account.color})` } as React.CSSProperties} />
           <span className="od-truncate">
@@ -122,8 +168,8 @@ function InfoTab({ k, files }: { k: string; files: Msg[] }) {
         </span>
       </div>
       <div className="kv">
-        <span>Chat ID</span>
-        <code>{chat.id}</code>
+        <span>ID hội thoại</span>
+        <span className="chat-id-value"><code>{chat.id}</code><button className="tool-btn icon-only" aria-label="Sao chép ID hội thoại" data-tip="Sao chép ID hội thoại" onClick={() => void navigator.clipboard.writeText(chat.id).then(() => toast("Đã sao chép ID hội thoại")).catch(fail)}><Icon name="copy" /></button></span>
       </div>
       {chat.created && (
         <div className="kv">
@@ -150,26 +196,16 @@ function InfoTab({ k, files }: { k: string; files: Msg[] }) {
       {files.length > 0 && (
         <>
           <div className="insp-section">
-            <span>File gần đây</span>
+            <span>Tệp gần đây</span>
             <button className="inspector-link" onClick={() => useApp.setState({ inspTab: "files" })}>
-              {files.length} file
+              Xem danh sách
             </button>
           </div>
+          <p className="history-scope">{files.length} tệp và tin nhắn thoại trong lịch sử đã tải</p>
           {files
             .slice(-2)
             .reverse()
-            .map((m) => (
-              <button key={m.id} className="recent-file" onClick={() => useApp.setState({ inspTab: "files" })}>
-                <Icon name="file-text" />
-                <span className="od-field">
-                  <b>{m.media!.name}</b>
-                  <small>
-                    {[fileSize(m.media!.size), hm(m.ts)].filter(Boolean).join(" · ")}
-                  </small>
-                </span>
-                <Icon name="chevron-right" />
-              </button>
-            ))}
+            .map((m) => <FileRow key={m.id} m={m} recent />)}
         </>
       )}
       <details className="capabilities">
@@ -224,7 +260,7 @@ function MembersTab({ k }: { k: string }) {
 }
 
 function FilesTab({ files }: { files: Msg[] }) {
-  if (!files.length) return <div className="insp-empty"><Icon name="file-text" />Chưa có file nào trong phần lịch sử đã tải</div>;
+  if (!files.length) return <div className="insp-empty"><Icon name="file-text" />Chưa có tệp nào trong phần lịch sử đã tải</div>;
   return (
     <>
       {[...files].reverse().map((m) => (
@@ -234,13 +270,18 @@ function FilesTab({ files }: { files: Msg[] }) {
   );
 }
 
-function FileRow({ m }: { m: Msg }) {
+function FileRow({ m, recent = false }: { m: Msg; recent?: boolean }) {
   const dl = useDownload(m.accountId, m.media, false);
+  const [playing, setPlaying] = useState(false);
+  const label = fileActionLabel(m.media!, !!dl.path);
   const open = async () => {
     const { openPath, openUrl } = await import("../lib/bridge");
     if (m.media!.url) return void openUrl(m.media!.url);
     const p = dl.path || (await dl.get());
-    if (p) openPath(p).catch(fail);
+    if (p) {
+      if (m.media!.kind === "voice") setPlaying(true);
+      else openPath(p).catch(fail);
+    } else toast("Chưa tải được tệp. Hãy thử lại.", "circle-alert");
   };
   const menu = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -258,22 +299,35 @@ function FileRow({ m }: { m: Msg }) {
       },
     });
   };
+  const icon = m.media!.kind === "voice" ? "audio-lines" : "file-text";
+  const actionIcon = m.media!.url ? "external-link" : m.media!.kind === "voice" ? "play" : dl.path ? "folder-open" : "download";
   return (
+    <>
+    {recent ? (
+      <button className="recent-file" aria-label={label} data-tip={label} disabled={dl.state === "loading"} onClick={() => void open()} onContextMenu={menu}>
+        <Icon name={icon} />
+        <span className="od-field"><b>{m.media!.name}</b><small>{[fileSize(m.media!.size), hm(m.ts)].filter(Boolean).join(" · ")}</small></span>
+        {dl.state === "loading" ? <span className="veil-spinner" /> : <Icon name={actionIcon} />}
+      </button>
+    ) : (
     <div className="file-row" onContextMenu={menu}>
-      <span className="file-ic"><Icon name={m.media!.kind === "voice" ? "audio-lines" : "file-text"} /></span>
+      <span className="file-ic"><Icon name={icon} /></span>
       <span style={{ minWidth: 0 }}>
         <b>{m.media!.name}</b>
         <small>{[fileSize(m.media!.size), m.outgoing ? "Bạn" : m.senderName, hm(m.ts)].filter(Boolean).join(" · ")}</small>
       </span>
-      <button className="tool-btn icon-only" aria-label={`Tải ${m.media!.name}`} data-tip={dl.path ? "Mở" : "Tải về"} onClick={open}>
-        {dl.state === "loading" ? <span className="veil-spinner" /> : <Icon name={dl.path ? "folder-open" : "download"} />}
+      <button className="tool-btn icon-only" aria-label={label} data-tip={label} disabled={dl.state === "loading"} onClick={() => void open()}>
+        {dl.state === "loading" ? <span className="veil-spinner" /> : <Icon name={actionIcon} />}
       </button>
     </div>
+    )}
+    {playing && dl.path && <audio className="voice-audio" src={fileSrc(dl.path)} controls autoPlay />}
+    </>
   );
 }
 
 function MediaTab({ imgs }: { imgs: Msg[] }) {
-  if (!imgs.length) return <div className="insp-empty"><Icon name="image" />Chưa có ảnh trong phần lịch sử đã tải</div>;
+  if (!imgs.length) return <div className="insp-empty"><Icon name="image" />Chưa có ảnh hoặc video trong phần lịch sử đã tải</div>;
   return (
     <div className="media-grid">
       {[...imgs].reverse().map((m) => (
@@ -289,10 +343,14 @@ function MediaCell({ m }: { m: Msg }) {
   const view = async () => {
     const p = dl.path || (await dl.get());
     if (p) useApp.setState({ viewer: { media: m.media!, path: p } });
-    else toast("Tải file không được", "circle-alert");
+    else toast("Chưa tải được tệp. Hãy thử lại.", "circle-alert");
   };
   return (
     <figure
+      role="button"
+      tabIndex={0}
+      aria-label={`Xem ${m.media!.kind === "video" ? "video" : "ảnh"} ${m.media!.name}`}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void view(); } }}
       onClick={() => void view()}
       onContextMenu={(e) => {
         e.preventDefault();
@@ -307,7 +365,8 @@ function MediaCell({ m }: { m: Msg }) {
         });
       }}
     >
-      {src ? <img className="od-media" src={src} alt="" /> : <div className="media-ph" />}
+      {src ? <img className="od-media" src={src} alt="" /> : <div className="media-ph"><Icon name={m.media!.kind === "video" ? "film" : "image"} /></div>}
+      {m.media!.kind === "video" && <span className="media-video-mark" aria-hidden="true"><Icon name="play" /></span>}
       <figcaption>
         {(m.outgoing ? "Bạn" : m.senderName).split(" ").pop()} · {hm(m.ts)}
       </figcaption>
@@ -364,7 +423,7 @@ function ThreadsTab({ k }: { k: string }) {
       .sort((a, b) => b.last - a.last);
   }, [list]);
   if (!list) return <div className="insp-empty"><span className="veil-spinner" /></div>;
-  if (!rows.length) return <div className="insp-empty"><Icon name="message-circle-reply" />Chưa có thread nào trong phần đã tải</div>;
+  if (!rows.length) return <div className="insp-empty"><Icon name="message-circle-reply" />Chưa có luồng trả lời nào trong phần đã tải</div>;
   return (
     <div className="side-threads">
       {rows.map(({ root, replies, last }) => {
@@ -395,7 +454,7 @@ function TopicsTab({ k }: { k: string }) {
     void loadTopics(k);
   }, [k]);
   if (!topics) return <div className="insp-empty"><span className="veil-spinner" /></div>;
-  if (!topics.length) return <div className="insp-empty"><Icon name="hash" />Nhóm chưa có topic</div>;
+  if (!topics.length) return <div className="insp-empty"><Icon name="hash" />Nhóm chưa có chủ đề</div>;
   return (
     <div className="side-threads">
       {topics.map((t) => (

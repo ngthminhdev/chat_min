@@ -60,7 +60,7 @@ export function MessageSearch() {
       <div className="message-search-controls">
         <div className="message-search-input">
           <Icon name="search" />
-          <input ref={input} aria-label="Nội dung cần tìm" placeholder="Nhập từ khóa, nội dung hoặc tên file…" value={query} autoComplete="off"
+          <input ref={input} aria-label="Nội dung cần tìm" placeholder="Nhập từ khóa, nội dung hoặc tên tệp…" value={query} autoComplete="off"
             onChange={(e) => useApp.setState({ searchQuery: e.target.value })}
             onKeyDown={(e) => { if (e.key === "ArrowDown") { e.preventDefault(); results.current?.querySelector<HTMLButtonElement>(".message-search-hit")?.focus(); } }} />
           {query && <button className="tool-btn icon-only" aria-label="Xóa từ khóa" onClick={() => { useApp.setState({ searchQuery: "" }); input.current?.focus(); }}><Icon name="x" /></button>}
@@ -87,7 +87,7 @@ export function MessageSearch() {
         }}>
         <p className="message-search-count" role="status">{loading ? "Đang tìm tin nhắn…" : q.length < 2 ? "Nhập ít nhất 2 ký tự để bắt đầu" : error ? "Không thể tìm tin nhắn" : `${hits.length === 100 ? "100 kết quả đầu tiên" : `${hits.length} kết quả`}${scope ? ` trong ${chats[scope]?.title ?? "hội thoại"}` : ""}`}</p>
         {error ? <div className="message-search-empty" role="alert"><Icon name="circle-alert" /><h2>Chưa tìm được tin nhắn</h2><p>Thử lại hoặc kiểm tra kết nối tài khoản.</p><button className="tool-btn" onClick={() => setAttempt((n) => n + 1)}>Thử lại</button></div>
-          : !loading && !hits.length ? <div className="message-search-empty"><Icon name="message-square-text" /><h2>{q.length < 2 ? "Tìm lại điều bạn cần" : "Không tìm thấy tin nhắn"}</h2><p>{q.length < 2 ? "Ví dụ: tên dự án, đường link, nội dung đã trao đổi hoặc tên file." : "Thử từ khóa ngắn hơn hoặc mở rộng bộ lọc tài khoản và hội thoại."}</p></div> : null}
+          : !loading && !hits.length ? <div className="message-search-empty"><Icon name="message-square-text" /><h2>{q.length < 2 ? "Tìm lại điều bạn cần" : "Không tìm thấy tin nhắn"}</h2><p>{q.length < 2 ? "Ví dụ: tên dự án, đường link, nội dung đã trao đổi hoặc tên tệp." : "Thử từ khóa ngắn hơn hoặc mở rộng bộ lọc tài khoản và hội thoại."}</p></div> : null}
         {!loading && !error && hits.map((m) => {
           const chat = chats[key(m.accountId, m.chatId)];
           const a = accounts.find((x) => x.id === m.accountId);

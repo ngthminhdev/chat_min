@@ -17,12 +17,12 @@ export function Welcome() {
         Một nơi làm việc.
       </motion.h1>
       <motion.p {...item(3)}>
-        Thêm account đầu tiên để bắt đầu.
+        Thêm tài khoản đầu tiên để bắt đầu.
         <br />
         Chuyển giữa công việc và cá nhân bằng một phím tắt.
       </motion.p>
       <motion.button type="button" className="tool-btn primary" onClick={() => startWizard()} {...item(4)}>
-        Add account <kbd className="kbd">⌘N</kbd>
+        Thêm tài khoản <kbd className="kbd">⌘N</kbd>
       </motion.button>
       <motion.div className="welcome-platforms" {...item(5)}>
         <span><Glyph platform="telegram" /> Telegram</span>

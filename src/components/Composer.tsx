@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
-import { api, pickFile } from "../lib/bridge";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { api, isTauri, pickFile } from "../lib/bridge";
 import { plain } from "../lib/format";
 import { CAP_OFF_NOTE, PLATFORMS } from "../lib/platforms";
 import { addMsg, anchor, capsOf, fail, send, splitKey, toast, useApp } from "../store";
@@ -9,6 +9,8 @@ import { startEdit } from "./Message";
 import { clock, StickerPanel, useRecorder } from "./ComposerExtras";
 import { LANGS, langLabel, langTag, suggestReplies, translateDraft } from "../ai";
 import type { Suggestion } from "../lib/types";
+import { ReplySuggestions, type ReplySuggestionsState } from "./ReplySuggestions";
+import { EASE } from "../lib/motion";
 
 const BLOCKING = ["offline", "reconnecting", "expired", "rate"];
 
@@ -27,12 +29,23 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const lang = useApp((s) => s.aiLang[chatKey] || s.prefs.aiTo);
-  const [sug, setSug] = useState<{ state: "loading" | "ok" | "err"; items: Suggestion[]; err?: string } | null>(null);
+  const [sug, setSug] = useState<ReplySuggestionsState | null>(null);
+  const suggestionId = useId();
+  const stickerId = useId();
+  const suggestionButton = useRef<HTMLButtonElement>(null);
+  const stickerButton = useRef<HTMLButtonElement>(null);
+  const suggestionRun = useRef(0);
+  const suggestionPending = useRef(false);
+  const translationRun = useRef(0);
+  const translationPending = useRef(false);
+  const reduceMotion = useReducedMotion();
   /** the draft before AI translated it, for one-click undo */
   const [orig, setOrig] = useState<string | null>(null);
   const [aiBusy, setAiBusy] = useState(false);
   const [stickers, setStickers] = useState(false);
   const recorder = useRecorder();
+  // A response from a previous composer must not update a newly opened chat.
+  useEffect(() => () => { suggestionRun.current++; translationRun.current++; }, []);
   const sendVoice = async () => {
     const r = await recorder.stop(true);
     if (!r) return;
@@ -65,31 +78,70 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
     }));
 
   const focus = () => requestAnimationFrame(() => ta.current?.focus());
+  const dismissSuggestions = () => {
+    suggestionRun.current++;
+    suggestionPending.current = false;
+    setSug(null);
+  };
+  const closeSuggestions = () => { dismissSuggestions(); suggestionButton.current?.focus(); };
+  const chooseSuggestion = (item: Suggestion) => {
+    if (draft.trim()) setOrig(orig ?? draft);
+    setDraft(item.reply);
+    dismissSuggestions();
+    focus();
+  };
+  useEffect(() => {
+    if (!sug && !stickers) return;
+    const onKey = (e: KeyboardEvent) => {
+      const state = useApp.getState();
+      if (e.key !== "Escape" || state.pop || state.dialog || state.palette || state.viewer) return;
+      e.preventDefault(); e.stopPropagation();
+      if (stickers) { setStickers(false); stickerButton.current?.focus(); }
+      else closeSuggestions();
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [!!sug, stickers]);
+
   const suggest = async () => {
-    if (sug?.state === "loading") return;
-    setSug({ state: "loading", items: [] });
+    if (suggestionPending.current || blocked || saving) return;
+    suggestionPending.current = true;
+    const run = ++suggestionRun.current;
+    setSug((current) => ({ state: "loading", items: current?.items ?? [] }));
     try {
       const items = await suggestReplies(chatKey, threadId);
-      if (!items.length) toast("Chưa có tin nào để gợi ý", "info");
-      setSug(items.length ? { state: "ok", items } : null);
+      if (run !== suggestionRun.current) return;
+      setSug({ state: "ok", items });
     } catch (e) {
-      setSug({ state: "err", items: [], err: String(e) });
+      if (run === suggestionRun.current) setSug((current) => ({ state: "err", items: current?.items ?? [], err: String(e) }));
+    } finally {
+      if (run === suggestionRun.current) suggestionPending.current = false;
     }
   };
   const translate = async (to = lang) => {
-    if (aiBusy || !draft.trim()) return;
+    if (translationPending.current || !draft.trim() || blocked || saving) return;
+    translationPending.current = true;
+    const run = ++translationRun.current;
     setAiBusy(true);
     try {
       const out = await translateDraft(chatKey, draft, to);
+      if (run !== translationRun.current) return;
+      if ((useApp.getState().drafts[k] ?? "") !== draft) {
+        toast("Nháp đã thay đổi. Nội dung mới của bạn được giữ nguyên.", "info");
+        return;
+      }
       if (out) {
         setOrig(orig ?? draft);
         setDraft(out);
       }
     } catch (e) {
-      fail(e);
+      if (run === translationRun.current) fail(e);
     } finally {
-      setAiBusy(false);
-      focus();
+      if (run === translationRun.current) {
+        translationPending.current = false;
+        setAiBusy(false);
+        if (ta.current?.closest(".composer")?.contains(document.activeElement)) focus();
+      }
     }
   };
   const pickLang = (el: Element) =>
@@ -132,7 +184,7 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
       void send(chatKey, text, { replyTo: replyId || undefined, threadId });
     }
     setOrig(null);
-    setSug(null);
+    dismissSuggestions();
     useApp.setState((s) => editId && (s.editing[k] !== editId || s.drafts[k] !== draft) ? {} : ({ drafts: { ...s.drafts, [k]: "" }, replyTo: { ...s.replyTo, [k]: "" }, editing: { ...s.editing, [k]: "" } }));
   };
 
@@ -183,50 +235,17 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
         </AnimatePresence>
         <AnimatePresence initial={false}>
           {sug && (
-            <motion.div
-              className="ai-suggest"
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 6 }}
-            >
-              <Icon name="sparkles" />
-              {sug.state === "loading" ? (
-                <span className="ai-note">Đang nghĩ gợi ý…</span>
-              ) : sug.state === "err" ? (
-                <span className="ai-note err">{sug.err}</span>
-              ) : (
-                sug.items.map((it, i) => (
-                  <motion.button
-                    key={i}
-                    className="ai-chip"
-                    initial={{ opacity: 0, y: 4 }}
-                    animate={{ opacity: 1, y: 0, transition: { delay: i * 0.05 } }}
-                    onClick={() => {
-                      setDraft(it.reply);
-                      setSug(null);
-                      focus();
-                    }}
-                  >
-                    <span>{it.reply}</span>
-                    {it.meaning && <small>{it.meaning}</small>}
-                  </motion.button>
-                ))
-              )}
-              <span className="ai-suggest-tools">
-                {sug.state !== "loading" && (
-                  <button className="tool-btn icon-only" aria-label="Gợi ý khác" data-tip="Gợi ý khác" onClick={() => void suggest()}>
-                    <Icon name="refresh-cw" />
-                  </button>
-                )}
-                <button className="tool-btn icon-only" aria-label="Đóng gợi ý" onClick={() => setSug(null)}>
-                  <Icon name="x" />
-                </button>
-              </span>
+            <motion.div className="ai-suggest-reveal"
+              initial={reduceMotion ? false : { opacity: 0, height: 0, y: 4 }}
+              animate={{ opacity: 1, height: "auto", y: 0 }}
+              exit={{ opacity: 0, height: 0, y: reduceMotion ? 0 : 4 }}
+              transition={{ duration: reduceMotion ? 0 : 0.16, ease: EASE }}>
+              <ReplySuggestions id={suggestionId} value={sug} language={langLabel(lang)} onRetry={() => void suggest()} onClose={closeSuggestions} onChoose={chooseSuggestion} />
             </motion.div>
           )}
         </AnimatePresence>
         <AnimatePresence>
-          {stickers && caps.stickers && <StickerPanel accountId={accountId} onPick={sendSticker} onClose={() => setStickers(false)} />}
+          {stickers && caps.stickers && <StickerPanel id={stickerId} accountId={accountId} onPick={sendSticker} onClose={(restoreFocus) => { setStickers(false); if (restoreFocus) stickerButton.current?.focus(); }} />}
         </AnimatePresence>
         <div className="composer-box main-composer">
           {recorder.recording && (
@@ -251,7 +270,8 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
               if (mod && e.key.toLowerCase() === "j") {
                 e.preventDefault();
                 void suggest();
-              } else if (mod && e.shiftKey && e.key.toLowerCase() === "l") {
+              } else if (e.altKey && !mod && e.code === "KeyR") {
+                // ⌥R (what ReplyMin used); e.code because Option+R types "®"
                 e.preventDefault();
                 void translate();
               } else if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -278,7 +298,7 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
               <span className="composer-platform">{PLATFORMS[account?.platform ?? "telegram"].name}</span>
             </label>
             <span className="composer-sep" aria-hidden="true" />
-            <button className="tool-btn icon-only" aria-label="Đính kèm file" data-tip={editId ? "Chỉ sửa nội dung tin nhắn" : "Đính kèm file"} disabled={blocked || saving || !!editId} onClick={attach}>
+            <button className="tool-btn icon-only" aria-label="Đính kèm tệp" data-tip={editId ? "Chỉ sửa nội dung tin nhắn" : "Đính kèm tệp"} disabled={blocked || saving || !!editId} onClick={attach}>
               <Icon name="paperclip" />
             </button>
             <button
@@ -287,6 +307,11 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
               data-tip="Emoji"
               disabled={blocked || saving}
               onClick={(e) => {
+                // the app: macOS's full emoji picker types into the focused textarea; demo: quick set
+                if (isTauri) {
+                  ta.current?.focus();
+                  return void api.emojiPalette().catch(fail);
+                }
                 useApp.setState({
                   pop: {
                     kind: "emoji",
@@ -308,32 +333,36 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
             </button>
             <span className="composer-sep" aria-hidden="true" />
             <button
+              ref={suggestionButton}
               className={`tool-btn icon-only${sug ? " active" : ""}`}
               aria-label="Gợi ý trả lời"
-              data-tip="Gợi ý trả lời"
+              aria-expanded={!!sug}
+              aria-controls={sug ? suggestionId : undefined}
+              data-tip={sug ? "Đóng gợi ý trả lời" : "Gợi ý trả lời"}
               data-kbd="⌘J"
               disabled={blocked || saving}
-              onClick={() => (sug ? setSug(null) : void suggest())}
+              onClick={() => (sug ? closeSuggestions() : void suggest())}
             >
-              <Icon name="sparkles" />
+              {sug?.state === "loading" ? <span className="veil-spinner" /> : <Icon name="sparkles" />}
             </button>
             <span className="ai-translate">
               <button
                 className="tool-btn icon-only"
                 aria-label={`Dịch nháp sang ${langLabel(lang)}`}
                 data-tip={draft.trim() ? `Dịch nháp sang ${langLabel(lang)}` : "Gõ nháp rồi dịch"}
-                data-kbd="⌘⇧L"
+                data-kbd="⌥R"
+                aria-busy={aiBusy}
                 disabled={blocked || saving || !draft.trim() || aiBusy}
                 onClick={() => void translate()}
               >
                 {aiBusy ? <span className="veil-spinner" /> : <Icon name="languages" />}
               </button>
-              <button className="lang-tag" aria-label="Chọn ngôn ngữ dịch" aria-haspopup="menu" data-tip="Ngôn ngữ viết cho chat này" onClick={(e) => pickLang(e.currentTarget)}>
+              <button className="lang-tag" aria-label={`Ngôn ngữ viết: ${langLabel(lang)}. Bấm để đổi`} aria-haspopup="menu" data-tip={`Ngôn ngữ viết: ${langLabel(lang)} · Bấm để đổi`} disabled={blocked || saving || aiBusy} onClick={(e) => pickLang(e.currentTarget)}>
                 {langTag(lang)}
               </button>
             </span>
             {caps.stickers ? (
-              <button className={`tool-btn icon-only${stickers ? " active" : ""}`} aria-label="Sticker" data-tip="Sticker" disabled={blocked || saving || !!editId} onClick={() => setStickers((v) => !v)}>
+              <button ref={stickerButton} className={`tool-btn icon-only${stickers ? " active" : ""}`} aria-label="Sticker" aria-expanded={stickers} aria-controls={stickers ? stickerId : undefined} data-tip={stickers ? "Đóng sticker" : "Sticker"} disabled={blocked || saving || !!editId} onClick={() => setStickers((v) => !v)}>
                 <Icon name="sticker" />
               </button>
             ) : (
@@ -350,16 +379,15 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
             >
               <Icon name={recorder.recording ? "x" : "mic"} />
             </button>
-            <span className="composer-key">↵ gửi · ⇧↵ xuống dòng</span>
             <button
-              className="tool-btn primary"
+              className="tool-btn primary icon-only"
               aria-label={editId ? "Lưu chỉnh sửa" : "Gửi"}
               data-tip={recorder.recording ? "Gửi tin thoại" : editId ? "Lưu chỉnh sửa" : "Gửi"}
               data-kbd="↵"
               disabled={blocked || saving || (!draft.trim() && !recorder.recording)}
               onClick={() => (recorder.recording ? void sendVoice() : void submit())}
             >
-              {saving ? "Đang lưu…" : editId ? "Lưu" : "Gửi"} <Icon name={editId ? "check" : "send"} />
+              <Icon name={editId ? "check" : "send"} />
             </button>
           </div>
         </div>

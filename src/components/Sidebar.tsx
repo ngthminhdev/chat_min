@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion, Reorder, useDragControls } from "motion/react";
 import { api } from "../lib/bridge";
 import { hm, listTime, norm, plain } from "../lib/format";
@@ -12,6 +12,16 @@ import {
 import { ChatAvatar } from "../ui/Avatar";
 import { Glyph, Icon } from "../ui/Icon";
 
+/** Rows slide only while the user drags. Otherwise collapsing a section makes every
+ *  Reorder.Item around it run a layout animation: scale-squished text, siblings jumping. */
+function useDragAnim() {
+  const [on, setOn] = useState(false);
+  return { transition: { duration: 0.18, ease: EASE, layout: { duration: on ? 0.18 : 0 } }, onDragStart: () => setOn(true), onDragEnd: () => setOn(false) };
+}
+
+/** Each section shows its most recent chats; the rest on demand. */
+const SECTION_LIMIT = 10;
+
 const FILTERS = [["all", "Tất cả"], ["unread", "Chưa đọc"], ["mention", "@ Nhắc tên"]] as const;
 
 /** Sidebar tree: Ghim (cross-account, drag to reorder) → accounts (drag by handle) → kinds → chats → recent threads. */
@@ -24,6 +34,7 @@ export function Sidebar() {
   const route = useApp((s) => s.route);
   const total = totalUnread(chats);
   const ordered = orderedAccounts(accounts, order);
+  const accDrag = useDragAnim();
 
   return (
     <aside className="sidebar" aria-label="Hội thoại">
@@ -43,25 +54,25 @@ export function Sidebar() {
       <div className="side-scroll">
         <button
           className={`nav-item all-inbox${route === "inbox" ? " active" : ""}`}
-          aria-label="All inboxes"
+          aria-label="Tất cả hội thoại"
           aria-current={route === "inbox" ? "page" : undefined}
-          data-tip="Unified inbox — gộp mọi account theo thời gian"
+          data-tip="Hội thoại từ tất cả tài khoản, mới nhất trước"
           onClick={() => useApp.setState({ route: "inbox" })}
         >
           <Icon name="inbox" />
-          <span>All inboxes</span>
+          <span>Tất cả hội thoại</span>
           {total > 0 && <span className="badge unread">{total > 999 ? "999+" : total}</span>}
         </button>
         <Favorites />
         {accounts.length ? (
           <Reorder.Group axis="y" as="div" values={ordered.map((a) => a.id)} onReorder={(ids) => useApp.setState({ accountOrder: ids })}>
             {ordered.map((a, i) => (
-              <AccountGroup key={a.id} account={a} index={i} chats={chats} filter={filter} query={query} />
+              <AccountGroup key={a.id} account={a} index={i} chats={chats} filter={filter} query={query} drag={accDrag} />
             ))}
           </Reorder.Group>
         ) : (
           <div className="side-empty">
-            Chưa có account nào.
+            Chưa có tài khoản nào.
             <br />
             Bấm <Icon name="user-plus" /> để thêm.
           </div>
@@ -88,6 +99,7 @@ function Favorites() {
   const filter = useApp((s) => s.filter);
   const q = norm(useApp((s) => s.query));
   const rs = useRowState();
+  const dragAnim = useDragAnim();
   const live = favorites.filter((k) => chats[k]);
   if (!live.length) return null;
   const shown = live.filter((k) => {
@@ -105,7 +117,7 @@ function Favorites() {
       >
         <Icon name="chevron-down" className="chev" />
         <Icon name="pin" className="fav-ic" />
-        <span className="acc-name">Ghim<small>kéo để đổi thứ tự · mọi account</small></span>
+        <span className="acc-name">Ghim</span>
         {unread > 0 && <span className="badge">{unread}</span>}
       </button>
       {!collapsed && (
@@ -120,7 +132,7 @@ function Favorites() {
                 as="div"
                 className="reorder-row"
                 whileDrag={{ scale: 1.02, boxShadow: "var(--shadow)", zIndex: 5 }}
-                transition={{ duration: 0.18, ease: EASE }}
+                {...dragAnim}
                 style={{ "--conn": `var(--conn-${a?.color ?? "blue"})` } as React.CSSProperties}
               >
                 <ChatRow chat={c} k={k} platform={a?.platform} {...rowProps(k, c, a, rs)} />
@@ -144,12 +156,14 @@ function rowProps(k: string, c: Chat, a: Account | undefined, rs: ReturnType<typ
   };
 }
 
-function AccountGroup({ account: a, index, chats, filter, query }: { account: Account; index: number; chats: Record<string, Chat>; filter: string; query: string }) {
+function AccountGroup({ account: a, index, chats, filter, query, drag: accDrag }: { account: Account; index: number; chats: Record<string, Chat>; filter: string; query: string; drag: ReturnType<typeof useDragAnim> }) {
   const collapsed = useApp((s) => !!s.collapsed[a.id]);
   const health = useApp((s) => s.health[a.id]?.health ?? "ok");
   const favorites = useApp((s) => s.favorites);
   const rs = useRowState();
   const drag = useDragControls();
+  const rowDrag = useDragAnim();
+  const [all, setAll] = useState<Record<string, boolean>>({});
   const q = norm(query);
   const list = useMemo(
     () =>
@@ -173,6 +187,7 @@ function AccountGroup({ account: a, index, chats, filter, query }: { account: Ac
       className={`acc-group${collapsed ? " collapsed" : ""}`}
       style={{ "--conn": `var(--conn-${a.color})` } as React.CSSProperties}
       whileDrag={{ scale: 1.01, boxShadow: "var(--shadow)", zIndex: 5 }}
+      {...accDrag}
     >
       <button
         className="acc-head"
@@ -199,7 +214,7 @@ function AccountGroup({ account: a, index, chats, filter, query }: { account: Ac
         ) : null}
         <span
           className="grip"
-          aria-label="Kéo để đổi chỗ account"
+          aria-label="Kéo để đổi chỗ tài khoản"
           data-tip="Kéo để đổi chỗ"
           onPointerDown={(e) => {
             e.preventDefault();
@@ -210,7 +225,9 @@ function AccountGroup({ account: a, index, chats, filter, query }: { account: Ac
           ⋮⋮
         </span>
       </button>
-      <div className="acc-chats">
+      <AnimatePresence initial={false}>
+        {!collapsed && (
+          <motion.div className="acc-chats" initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.18, ease: EASE }}>
         {loading ? (
           <div className="side-empty"><span className="veil-spinner" /> Đang tải danh sách…</div>
         ) : list.length ? (
@@ -218,27 +235,39 @@ function AccountGroup({ account: a, index, chats, filter, query }: { account: Ac
             const id = `${a.id}:${sec}`;
             const byKey = Object.fromEntries(items.map((c) => [key(c.accountId, c.id), c]));
             const natural = Object.keys(byKey);
-            const shown = applyOrder(natural, rs.chatOrder[id]);
+            const ordered = applyOrder(natural, rs.chatOrder[id]);
+            const full = all[id] || !!q || filter !== "all";
+            const shown = full ? ordered : ordered.slice(0, SECTION_LIMIT);
+            const more = ordered.length - SECTION_LIMIT;
             return (
               <Section key={sec} id={id} label={label} chats={items} forceOpen={!!q || filter !== "all"}>
-                <Reorder.Group axis="y" as="div" values={shown} onReorder={(v) => setOrder(id, v, natural)}>
+                <Reorder.Group axis="y" as="div" values={shown} onReorder={(v) => setOrder(id, full ? v : [...v, ...ordered.slice(SECTION_LIMIT)], natural)}>
                   {shown.map((k) => {
                     const c = byKey[k];
                     return (
-                      <Reorder.Item key={k} value={k} as="div" className="reorder-row" whileDrag={{ scale: 1.02, boxShadow: "var(--shadow)", zIndex: 5 }} transition={{ duration: 0.18, ease: EASE }}>
+                      <Reorder.Item key={k} value={k} as="div" className="reorder-row" whileDrag={{ scale: 1.02, boxShadow: "var(--shadow)", zIndex: 5 }} {...rowDrag}>
                         <ChatRow chat={c} k={k} {...rowProps(k, c, a, rs)} />
                         {rs.expanded[k] && (c.threaded || c.forum) && <ThreadPeek k={k} />}
                       </Reorder.Item>
                     );
                   })}
                 </Reorder.Group>
+                {more > 0 && !q && filter === "all" && (
+                  <button className="sec-more" aria-label={all[id] ? `Thu gọn ${label}` : `Xem thêm ${more} hội thoại trong ${label}`} aria-expanded={!!all[id]} data-tip={all[id] ? `Thu gọn ${label}` : `Xem thêm ${more} hội thoại trong ${label}`} onClick={() => setAll((s) => ({ ...s, [id]: !s[id] }))}>
+                    <span className="sec-more-label">{all[id] ? "Thu gọn" : `Xem thêm ${more}`}</span>
+                    {!all[id] && <span className="sec-more-count" aria-hidden="true">{more > 99 ? "99+" : `+${more}`}</span>}
+                    <Icon name="chevron-down" className={all[id] ? "up" : ""} />
+                  </button>
+                )}
               </Section>
             );
           })
         ) : (
           <div className="side-empty">{q || filter !== "all" ? "Không có hội thoại khớp bộ lọc" : "Chưa có hội thoại"}</div>
         )}
-      </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </Reorder.Item>
   );
 }
@@ -311,7 +340,7 @@ function chatMenu(k: string, c: Chat): MenuItem[] {
     { icon: fav ? "pin-off" : "pin", label: fav ? "Bỏ ghim khỏi đầu danh sách" : "Ghim lên đầu danh sách", run: () => toggleFavorite(k) },
     (c.threaded || !!c.forum) && {
       icon: "message-circle-reply",
-      label: useApp.getState().expanded[k] ? "Ẩn" : c.forum ? "Xem nhanh topic" : "Xem nhanh thread",
+      label: useApp.getState().expanded[k] ? "Ẩn" : c.forum ? "Xem nhanh chủ đề" : "Xem nhanh luồng trả lời",
       run: () => useApp.setState((s) => ({ expanded: { ...s.expanded, [k]: !s.expanded[k] } })),
     },
     c.unread > 0 && { icon: "check-check", label: "Đánh dấu đã đọc", run: () => markRead(k) },
@@ -486,9 +515,9 @@ const ChatRow = memo(function ChatRow({ chat: c, k, active, draft, typing, expan
       {(c.threaded || c.forum) && (
         <button
           className={`row-expand${expanded ? " on" : ""}`}
-          aria-label={expanded ? "Ẩn" : c.forum ? "Xem nhanh topic" : "Xem nhanh thread"}
+          aria-label={expanded ? "Ẩn" : c.forum ? "Xem nhanh chủ đề" : "Xem nhanh luồng trả lời"}
           aria-expanded={expanded}
-          data-tip={expanded ? "Ẩn" : c.forum ? "Xem nhanh topic" : "Xem nhanh thread"}
+          data-tip={expanded ? "Ẩn" : c.forum ? "Xem nhanh chủ đề" : "Xem nhanh luồng trả lời"}
           onClick={() => useApp.setState((s) => ({ expanded: { ...s.expanded, [k]: !expanded } }))}
         >
           <Icon name="message-circle-reply" />
@@ -524,7 +553,7 @@ function TopicPeek({ k }: { k: string }) {
           </button>
         ))
       ) : (
-        <div className="peek-row muted">Nhóm chưa có topic</div>
+        <div className="peek-row muted">Nhóm chưa có chủ đề</div>
       )}
     </motion.div>
   );
@@ -570,7 +599,7 @@ function GchatThreadPeek({ k }: { k: string }) {
           </button>
         ))
       ) : (
-        <div className="peek-row muted">Chưa có thread trong phần đã tải</div>
+        <div className="peek-row muted">Chưa có luồng trả lời trong phần đã tải</div>
       )}
     </motion.div>
   );

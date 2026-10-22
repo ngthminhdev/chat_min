@@ -49,6 +49,8 @@ export interface Media {
   fileRef: string;
   localPath: string;
   thumb: string;
+  /** sharper preview: TDLib file id, or a local path once downloaded */
+  thumbFile?: string;
   url: string;
 }
 
@@ -96,6 +98,7 @@ export type CoreEvent =
   | { type: "message"; msg: Msg; isNew: boolean }
   | { type: "messageIdChanged"; oldId: string; msg: Msg }
   | { type: "messagesDeleted"; accountId: string; chatId: string; ids: string[] }
+  | { type: "fileProgress"; accountId: string; fileRef: string; pct: number }
   | { type: "readOutbox"; accountId: string; chatId: string; upTo: number }
   | { type: "typing"; accountId: string; chatId: string; who: string; on: boolean }
   | { type: "sync"; accountId: string; step: number; state: "run" | "ok" | "err"; log: string };

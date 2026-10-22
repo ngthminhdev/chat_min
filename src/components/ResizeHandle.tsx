@@ -5,7 +5,7 @@ export function ResizeHandle({ side }: { side: "left" | "right" }) {
       className={`resize-handle vertical ${side}`}
       role="separator"
       aria-orientation="vertical"
-      aria-label={side === "left" ? "Kéo để đổi độ rộng sidebar" : "Kéo để đổi độ rộng inspector"}
+      aria-label={side === "left" ? "Kéo để đổi độ rộng danh sách hội thoại" : "Kéo để đổi độ rộng chi tiết hội thoại"}
       onPointerDown={(e) => {
         const h = e.currentTarget;
         h.setPointerCapture(e.pointerId);

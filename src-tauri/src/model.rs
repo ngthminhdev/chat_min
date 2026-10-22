@@ -84,6 +84,9 @@ pub struct Media {
     pub local_path: String,
     /// tiny inline preview (data: URL) shown until the real file arrives
     pub thumb: String,
+    /// sharper preview than `thumb`: TDLib file id, or a local path once downloaded
+    #[serde(default)]
+    pub thumb_file: String,
     /// gchat Drive attachments open in the browser instead of downloading
     pub url: String,
 }
@@ -171,6 +174,9 @@ pub enum Event {
     MessageIdChanged { old_id: String, msg: Msg },
     #[serde(rename_all = "camelCase")]
     MessagesDeleted { account_id: String, chat_id: String, ids: Vec<String> },
+    /// a big download in progress, in whole percent
+    #[serde(rename_all = "camelCase")]
+    FileProgress { account_id: String, file_ref: String, pct: i64 },
     #[serde(rename_all = "camelCase")]
     ReadOutbox { account_id: String, chat_id: String, up_to: i64 },
     #[serde(rename_all = "camelCase")]

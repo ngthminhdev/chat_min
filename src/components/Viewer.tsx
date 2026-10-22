@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { EASE } from "../lib/motion";
-import { fileSrc, openPath, revealPath } from "../lib/bridge";
+import { api, fileSrc, openPath, revealPath } from "../lib/bridge";
 import { fileSize } from "../lib/format";
 import { fail, saveMedia, useApp } from "../store";
 import { Icon } from "../ui/Icon";
@@ -10,13 +10,20 @@ import { Icon } from "../ui/Icon";
 export function Viewer() {
   const v = useApp((s) => s.viewer);
   const [zoom, setZoom] = useState(false);
+  // a streaming video has no local file yet: saving/opening it downloads the whole thing first
+  const local = async () => {
+    if (!v) return "";
+    if (v.path || !v.accountId) return v.path;
+    return api.download(v.accountId, v.media.fileRef, v.media.name).catch((e) => (fail(e), ""));
+  };
+  const keep = (ask: boolean) => void local().then((p) => { if (p) void saveMedia(p, v!.media.name, ask); });
   // ⌘S saves to Downloads, ⌘⇧S asks where
   useEffect(() => {
     if (!v) return;
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
         e.preventDefault();
-        void saveMedia(v.path, v.media.name, e.shiftKey);
+        keep(e.shiftKey);
       }
     };
     document.addEventListener("keydown", onKey);
@@ -44,16 +51,16 @@ export function Viewer() {
               <strong>{v.media.name}</strong>
               {v.media.size > 0 && <small>{fileSize(v.media.size)}</small>}
             </span>
-            <button className="tool-btn icon-only" aria-label="Lưu vào Downloads" data-tip="Lưu vào Downloads" data-kbd="⌘S" onClick={() => void saveMedia(v.path, v.media.name, false)}>
+            <button className="tool-btn icon-only" aria-label="Lưu vào Downloads" data-tip="Lưu vào Downloads" data-kbd="⌘S" onClick={() => keep(false)}>
               <Icon name="download" />
             </button>
-            <button className="tool-btn icon-only" aria-label="Lưu thành" data-tip="Lưu thành…" data-kbd="⌘⇧S" onClick={() => void saveMedia(v.path, v.media.name, true)}>
+            <button className="tool-btn icon-only" aria-label="Lưu thành" data-tip="Lưu thành…" data-kbd="⌘⇧S" onClick={() => keep(true)}>
               <Icon name="folder-open" />
             </button>
-            <button className="tool-btn icon-only" aria-label="Mở bằng app mặc định" data-tip="Mở bằng app mặc định" onClick={() => openPath(v.path).catch(fail)}>
+            <button className="tool-btn icon-only" aria-label="Mở bằng app mặc định" data-tip="Mở bằng app mặc định" onClick={() => void local().then((p) => { if (p) openPath(p).catch(fail); })}>
               <Icon name="external-link" />
             </button>
-            <button className="tool-btn icon-only" aria-label="Hiện trong Finder" data-tip="Hiện trong Finder" onClick={() => revealPath(v.path).catch(fail)}>
+            <button className="tool-btn icon-only" aria-label="Hiện trong Finder" data-tip="Hiện trong Finder" onClick={() => void local().then((p) => { if (p) revealPath(p).catch(fail); })}>
               <Icon name="search" />
             </button>
             <button className="tool-btn icon-only" aria-label="Đóng" data-tip="Đóng" data-kbd="Esc" onClick={close}>
@@ -68,7 +75,7 @@ export function Viewer() {
             transition={{ duration: 0.2, ease: EASE }}
           >
             {v.media.kind === "video" ? (
-              <video src={fileSrc(v.path)} controls autoPlay playsInline onClick={(e) => e.stopPropagation()} />
+              <video src={v.src ?? fileSrc(v.path)} controls autoPlay playsInline onClick={(e) => e.stopPropagation()} />
             ) : (
               <img
                 src={fileSrc(v.path)}

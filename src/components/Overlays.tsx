@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { api } from "../lib/bridge";
 import { esc, hm, norm, plain } from "../lib/format";
+import { EMOJI, nextEmojiIndex, searchEmoji } from "../lib/micro-ux";
 import { COLORS, COLOR_LABELS } from "../lib/platforms";
 import type { Msg } from "../lib/types";
 import { forwardMsg, key, openChat, splitKey, useApp, openSearch, type Pop } from "../store";
@@ -61,14 +62,14 @@ export function Overlays() {
 
 // ── command palette: ⌘K chats & commands, ⌘⇧F message search ────────────────
 const COMMANDS: [IconName, string, string, () => void][] = [
-  ["user-plus", "Thêm account", "⌘N", () => startWizard()],
+  ["user-plus", "Thêm tài khoản", "⌘N", () => startWizard()],
   ["message-square-text", "Tìm trong tin nhắn", "⌘⇧F", () => openSearch()],
-  ["inbox", "All inboxes", "", () => useApp.setState({ route: "inbox" })],
-  ["settings", "Settings", "⌘,", () => useApp.setState({ route: "settings" })],
-  ["pencil", "Đổi tên account hiện tại", "⌘E", () => renameAccount()],
-  ["panel-right", "Ẩn/hiện inspector", "⌘I", () => useApp.setState((s) => ({ rightCollapsed: !s.rightCollapsed }))],
-  ["panel-left", "Ẩn/hiện sidebar", "⌘B", () => useApp.setState((s) => ({ leftCollapsed: !s.leftCollapsed }))],
-  ["trash-2", "Xoá account hiện tại…", "⌘⌫", () => removeAccount()],
+  ["inbox", "Tất cả hội thoại", "", () => useApp.setState({ route: "inbox" })],
+  ["settings", "Cài đặt", "⌘,", () => useApp.setState({ route: "settings" })],
+  ["pencil", "Đổi tên tài khoản hiện tại", "⌘E", () => renameAccount()],
+  ["panel-right", "Ẩn/hiện chi tiết hội thoại", "⌘R", () => useApp.setState((s) => ({ rightCollapsed: !s.rightCollapsed }))],
+  ["panel-left", "Ẩn/hiện danh sách hội thoại", "⌘B", () => useApp.setState((s) => ({ leftCollapsed: !s.leftCollapsed }))],
+  ["trash-2", "Xoá tài khoản hiện tại…", "⌘⌫", () => removeAccount()],
 ];
 
 function Palette() {
@@ -91,7 +92,7 @@ function Palette() {
             ref={ref}
             role="dialog"
             aria-modal="true"
-            aria-label="Command palette"
+            aria-label="Bảng lệnh"
             initial={{ opacity: 0, scale: 0.98, y: -6 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.98, y: -6, transition: { duration: 0.1 } }}
@@ -240,7 +241,7 @@ function PaletteBody({ mode, scope, forward }: { mode: "chats" | "msgs"; scope?:
 
   const placeholder =
     forward ? `Chuyển tiếp “${(plain(forward.text) || forward.media?.name || "tin nhắn").slice(0, 40)}” tới…`
-    : mode === "msgs" ? (scopeChat ? `Tìm trong ${scopeChat.title}…` : "Tìm nội dung tin nhắn trong mọi account…") : "Nhảy tới chat, người, hoặc gõ lệnh…";
+    : mode === "msgs" ? (scopeChat ? `Tìm trong ${scopeChat.title}…` : "Tìm nội dung tin nhắn trong mọi tài khoản…") : "Nhảy tới chat, người, hoặc gõ lệnh…";
   return (
     <>
       <input
@@ -289,7 +290,7 @@ function PaletteBody({ mode, scope, forward }: { mode: "chats" | "msgs"; scope?:
         ))}
         {mode === "chats" && !rows.length && <div className="empty-note">Không có chat nào khớp “{q}”</div>}
         {mode === "msgs" && q.trim().length < 2 && (
-          <div className="empty-note">Gõ ít nhất 2 ký tự — tìm xuyên {accounts.length} account, không dấu cũng được</div>
+          <div className="empty-note">Gõ ít nhất 2 ký tự — tìm xuyên {accounts.length} tài khoản, không dấu cũng được</div>
         )}
         {mode === "msgs" && searching && <div className="empty-note" role="status">Đang tìm tin nhắn…</div>}
         {mode === "msgs" && searchError && <div className="empty-note search-feedback" role="alert">Chưa tìm được tin nhắn. Kiểm tra kết nối và thử lại.<button className="tool-btn" onClick={() => { setAttempt((n) => n + 1); input.current?.focus(); }}>Thử lại</button></div>}
@@ -305,38 +306,57 @@ function PaletteBody({ mode, scope, forward }: { mode: "chats" | "msgs"; scope?:
 }
 
 // ── popovers: emoji, message menu, account color ────────────────────────────
-const EMOJI = ["👍", "❤️", "😂", "😮", "😢", "🙏", "🔥", "👀", "✅", "💯", "🫡", "🎉", "🤔", "😅", "🚀", "👏"];
-
 function Popover() {
   const pop = useApp((s) => s.pop);
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   const close = () => useApp.setState({ pop: null });
+  const restoreFocus = useOverlayFocus(ref, !!pop);
 
   useLayoutEffect(() => {
     if (!pop || !ref.current) return setPos(null);
-    const w = ref.current.offsetWidth, h = ref.current.offsetHeight;
-    let top = pop.y + 6;
-    if (top + h > innerHeight - 36) top = pop.top - h - 6;
-    setPos({ left: Math.max(12, Math.min(pop.x, innerWidth - w - 12)), top: Math.max(48, top) });
+    const place = () => {
+      if (!ref.current) return;
+      const w = ref.current.offsetWidth, h = ref.current.offsetHeight;
+      let top = pop.y + 6;
+      if (top + h > innerHeight - 36) top = pop.top - h - 6;
+      setPos({ left: Math.max(12, Math.min(pop.x, innerWidth - w - 12)), top: Math.max(48, top) });
+    };
+    place();
     ref.current.querySelector("button")?.focus();
+    const observer = new ResizeObserver(place);
+    observer.observe(ref.current);
+    window.addEventListener("resize", place);
+    return () => { observer.disconnect(); window.removeEventListener("resize", place); };
   }, [pop]);
 
   useEffect(() => {
     if (!pop) return;
     const down = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && close();
-    setTimeout(() => document.addEventListener("mousedown", down));
+    document.addEventListener("mousedown", down);
     return () => document.removeEventListener("mousedown", down);
   }, [pop]);
 
   return (
-    <AnimatePresence>
+    <AnimatePresence onExitComplete={restoreFocus}>
       {pop && (
         <motion.div
           key={`${pop.kind}${pop.x}${pop.y}`}
           ref={ref}
           className={pop.kind === "emoji" ? "emoji-pop" : "index-context-menu account-pop"}
-          role={pop.kind === "color" ? "dialog" : "menu"}
+          role={pop.kind === "menu" ? "menu" : "dialog"}
+          aria-label={pop.kind === "emoji" ? "Chọn biểu cảm" : pop.kind === "color" ? "Màu tài khoản" : "Thao tác"}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); return; }
+            if ((e.target as HTMLElement).matches("input, textarea")) return;
+            if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key)) return;
+            const items = [...(ref.current?.querySelectorAll<HTMLButtonElement>(pop.kind === "emoji" ? "[data-emoji]" : "button:not(:disabled)") ?? [])];
+            const index = items.indexOf(document.activeElement as HTMLButtonElement);
+            if (index < 0) return;
+            e.preventDefault(); e.stopPropagation();
+            const columns = pop.kind === "menu" ? 1 : items.filter((item) => item.offsetTop === items[0]?.offsetTop).length || 1;
+            items[nextEmojiIndex(index, e.key, items.length, columns)]?.focus();
+          }}
           style={{ position: "fixed", left: pos?.left ?? -9999, top: pos?.top ?? -9999 }}
           initial={{ opacity: 0, scale: 0.96, y: -4 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -352,15 +372,7 @@ function Popover() {
 
 function PopBody({ pop, close }: { pop: Pop; close: () => void }) {
   if (pop.kind === "emoji") {
-    return (
-      <>
-        {EMOJI.map((e) => (
-          <button key={e} role="menuitem" aria-label={e} onClick={() => (close(), pop.onPick(e))}>
-            {e}
-          </button>
-        ))}
-      </>
-    );
+    return <EmojiPicker onPick={(emoji) => { close(); pop.onPick(emoji); }} />;
   }
   if (pop.kind === "menu") {
     return (
@@ -378,12 +390,37 @@ function PopBody({ pop, close }: { pop: Pop; close: () => void }) {
   return <ColorPicker accountId={pop.accountId} close={close} />;
 }
 
+function EmojiPicker({ onPick }: { onPick: (emoji: string) => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const [query, setQuery] = useState("");
+  const input = useRef<HTMLInputElement>(null);
+  const grid = useRef<HTMLDivElement>(null);
+  const items = expanded ? searchEmoji(query) : EMOJI.slice(0, 16);
+  useEffect(() => { if (expanded) input.current?.focus(); }, [expanded]);
+  return (
+    <>
+      <div className="emoji-heading">{expanded ? "Biểu cảm" : "Biểu cảm nhanh"}</div>
+      {expanded && <input ref={input} className="emoji-search" aria-label="Tìm biểu cảm" placeholder="Tìm biểu cảm…" value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "ArrowDown") { e.preventDefault(); e.stopPropagation(); grid.current?.querySelector<HTMLButtonElement>("button")?.focus(); } }} />}
+      <div className="emoji-grid" ref={grid} role="group" aria-label="Các biểu cảm">
+        {items.map(([emoji, label]) => <button key={emoji} data-emoji={emoji} aria-label={label} title={label} onClick={() => onPick(emoji)}>{emoji}</button>)}
+      </div>
+      {expanded && <span className="emoji-result-count" role="status">{items.length ? `${items.length} biểu cảm` : "Không có biểu cảm phù hợp"}</span>}
+      <button className="emoji-more" aria-expanded={expanded} onClick={() => {
+        setExpanded(!expanded); setQuery("");
+        if (expanded) requestAnimationFrame(() => grid.current?.querySelector<HTMLButtonElement>("button")?.focus());
+      }}>{expanded ? "Thu gọn" : "Thêm biểu cảm…"}</button>
+    </>
+  );
+}
+
 export function ColorPicker({ accountId, close, value, onPick }: { accountId?: string; close?: () => void; value?: string; onPick?: (c: string) => void }) {
   const current = useApp((s) => value ?? s.accounts.find((a) => a.id === accountId)?.color);
   return (
     <>
       {accountId && <div className="account-pop-head">Màu nhận diện</div>}
-      <div className="account-colors" role="group" aria-label="Màu account">
+      <div className="account-colors" role="group" aria-label="Màu tài khoản">
         {COLORS.map((c) => (
           <button
             key={c}
@@ -503,9 +540,13 @@ function Tooltip() {
     const hide = () => {
       clearTimeout(timer);
       tip.current?.classList.remove("on");
+      if (tip.current) { tip.current.hidden = true; tip.current.setAttribute("aria-hidden", "true"); }
     };
     const show = (el: HTMLElement) => {
-      const t = tip.current!;
+      const t = tip.current;
+      if (!t || !el.isConnected || !el.matches(":hover, :focus-visible")) return;
+      t.hidden = false;
+      t.setAttribute("aria-hidden", "false");
       t.innerHTML = `<span>${esc(el.dataset.tip)}</span>${el.dataset.kbd ? `<kbd class="kbd">${esc(el.dataset.kbd)}</kbd>` : ""}`;
       const r = el.getBoundingClientRect();
       const w = t.offsetWidth, h = t.offsetHeight;
@@ -526,16 +567,35 @@ function Tooltip() {
       if (el.matches?.("[data-tip]:focus-visible")) show(el);
       else hide();
     };
+    const out = (e: MouseEvent) => {
+      const target = (e.target as HTMLElement).closest?.("[data-tip]");
+      if (target && !target.contains(e.relatedTarget as Node | null)) hide();
+    };
+    // Closing a popover can synchronously restore focus while it is exiting.
+    const key = () => { hide(); requestAnimationFrame(hide); };
     document.addEventListener("mouseover", over);
+    document.addEventListener("mouseout", out);
     document.addEventListener("focusin", focus);
+    document.addEventListener("focusout", hide);
     document.addEventListener("scroll", hide, true);
     document.addEventListener("mousedown", hide);
+    document.addEventListener("click", hide);
+    document.addEventListener("keydown", key, true);
+    window.addEventListener("blur", hide);
+    window.addEventListener("resize", hide);
     return () => {
+      clearTimeout(timer);
       document.removeEventListener("mouseover", over);
+      document.removeEventListener("mouseout", out);
       document.removeEventListener("focusin", focus);
+      document.removeEventListener("focusout", hide);
       document.removeEventListener("scroll", hide, true);
       document.removeEventListener("mousedown", hide);
+      document.removeEventListener("click", hide);
+      document.removeEventListener("keydown", key, true);
+      window.removeEventListener("blur", hide);
+      window.removeEventListener("resize", hide);
     };
   }, []);
-  return <div className="tip" ref={tip} role="tooltip" />;
+  return <div className="tip" ref={tip} role="tooltip" hidden aria-hidden="true" />;
 }

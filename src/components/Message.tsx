@@ -1,16 +1,17 @@
 import { memo, useState } from "react";
 import { motion } from "motion/react";
 import { EASE } from "../lib/motion";
-import { fileSrc, openPath, openUrl, revealPath } from "../lib/bridge";
+import { fileSrc, isTauri, openPath, openUrl, revealPath, streamSrc } from "../lib/bridge";
 import { fileSize, fmt, hm, plain } from "../lib/format";
 import { CAP_OFF_NOTE, type Cap } from "../lib/platforms";
 import type { Chat, Media, Msg } from "../lib/types";
 import { anchor, confirmDialog, fail, openThreadTab, retry, saveMedia, toast, toggleReaction, useApp, type MenuItem } from "../store";
 import { api } from "../lib/bridge";
-import { PersonAvatar } from "../ui/Avatar";
+import { PersonAvatar, useAvatar } from "../ui/Avatar";
 import { Icon, type IconName } from "../ui/Icon";
 import { useDownload } from "./Conversation";
 import { translateMsg, trKey } from "../ai";
+import { fileActionLabel } from "../lib/micro-ux";
 
 interface Props {
   k: string;
@@ -152,8 +153,8 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
         )}
         {caps.reactions && (
           <button
-            aria-label="Thả reaction"
-            data-tip="Reaction"
+            aria-label="Thả biểu cảm"
+            data-tip="Biểu cảm"
             onClick={(e) => {
               useApp.setState({ pop: { kind: "emoji", ...anchor(e.currentTarget), onPick: (emoji) => void toggleReaction(k, m, emoji) } });
             }}
@@ -167,7 +168,7 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
           </button>
         )}
         {caps.threads && chat.threaded && (
-          <button aria-label={replies?.length ? "Trả lời trong thread" : "Mở thread"} data-tip={replies?.length ? "Trả lời trong thread" : "Mở thread"} onClick={() => openThread(k, m)}>
+          <button aria-label={replies?.length ? "Trả lời trong luồng" : "Mở luồng trả lời"} data-tip={replies?.length ? "Trả lời trong luồng" : "Mở luồng trả lời"} onClick={() => openThread(k, m)}>
             <Icon name="message-circle-reply" />
           </button>
         )}
@@ -195,7 +196,7 @@ function Meta({ m, caps }: { m: Msg; caps: Record<Cap, boolean> }) {
     else status = <span data-tip={caps.readReceipts ? "Đã gửi" : `Đã gửi · ${CAP_OFF_NOTE.readReceipts}`}><Icon name="check" /></span>;
   }
   return (
-    <span className="msg-meta">
+    <span className={`msg-meta${m.status === "sending" || m.status === "failed" ? " pending" : ""}`}>
       {m.edited && <span className="edited">đã sửa</span>}
       <time>{hm(m.ts)}</time>
       {status}
@@ -214,13 +215,19 @@ function MediaView({ accountId, media }: { accountId: string; media: Media }) {
   const dl = useDownload(accountId, media, (isImage && (media.size === 0 || media.size < 15e6)) || inline);
   const [playing, setPlaying] = useState(false);
   const ratio = media.width && media.height ? `${media.width}/${media.height}` : undefined;
+  // Telegram's ~320px thumbnail once it is here, the 40px blur until then
+  const poster = useAvatar(accountId, media.thumbFile ?? "") || media.thumb;
+  // Telegram videos (numeric TDLib file ids) stream: playback starts while the rest downloads
+  const stream = isTauri && isVideo && !dl.path && /^\d+$/.test(media.fileRef);
+  const busy = dl.state === "loading" ? (dl.pct != null ? <span className="dl-pct">{dl.pct}%</span> : <span className="veil-spinner" />) : null;
 
   const ensure = async () => {
     const p = dl.path || (await dl.get());
-    if (!p) toast("Tải file không được", "circle-alert");
+    if (!p) toast("Chưa tải được tệp. Hãy thử lại.", "circle-alert");
     return p;
   };
   const view = async () => {
+    if (stream) return useApp.setState({ viewer: { media, path: "", src: streamSrc(accountId, media.fileRef, media.mime), accountId } });
     const p = await ensure();
     if (p) useApp.setState({ viewer: { media, path: p } });
   };
@@ -235,13 +242,13 @@ function MediaView({ accountId, media }: { accountId: string; media: Media }) {
           { icon: "folder-open", label: "Hiện trong Finder", run: () => void ensure().then((p) => { if (p) revealPath(p).catch(fail); }) },
           { icon: "download", label: "Lưu vào Downloads", run: () => void ensure().then((p) => { if (p) void saveMedia(p, media.name, false); }) },
           { icon: "download", label: "Lưu thành…", run: () => void ensure().then((p) => { if (p) void saveMedia(p, media.name, true); }) },
-          { icon: "copy", label: "Sao chép tên file", run: () => void navigator.clipboard.writeText(media.name).then(() => toast("Đã sao chép")) },
+          { icon: "copy", label: "Sao chép tên tệp", run: () => void navigator.clipboard.writeText(media.name).then(() => toast("Đã sao chép")) },
         ];
     useApp.setState({ pop: { kind: "menu", x: e.clientX, y: e.clientY, top: e.clientY, items } });
   };
 
   if (isImage) {
-    const src = dl.path ? fileSrc(dl.path) : media.thumb;
+    const src = dl.path ? fileSrc(dl.path) : poster;
     return (
       <figure
         className={`img-msg${media.kind === "sticker" ? " sticker" : ""}${dl.path ? "" : " pending"}`}
@@ -263,11 +270,11 @@ function MediaView({ accountId, media }: { accountId: string; media: Media }) {
         onContextMenu={(e) => menu(e, true)}
       >
         {live ? (
-          <video className="od-media" src={fileSrc(dl.path)} poster={media.thumb || undefined} muted loop autoPlay playsInline />
-        ) : media.thumb ? (
-          <img className="od-media" src={media.thumb} alt={media.name} />
+          <video className="od-media" src={fileSrc(dl.path)} poster={poster || undefined} muted loop autoPlay playsInline />
+        ) : poster ? (
+          <img className="od-media" src={poster} alt={media.name} />
         ) : null}
-        {!live && <span className="play">{dl.state === "loading" ? <span className="veil-spinner" /> : <Icon name="play" />}</span>}
+        {!live && <span className="play">{busy ?? <Icon name="play" />}</span>}
         <span className="media-badge">{media.name === "GIF" ? "GIF" : media.size > 0 ? fileSize(media.size) : "Video"}</span>
       </figure>
     );
@@ -291,13 +298,12 @@ function MediaView({ accountId, media }: { accountId: string; media: Media }) {
         </span>
         <button
           className="tool-btn icon-only"
-          aria-label={voice ? "Phát" : `Mở ${media.name}`}
-          data-tip={voice ? "Phát" : media.url ? "Mở trên Drive" : dl.path ? "Mở" : "Tải về"}
+          aria-label={fileActionLabel(media, !!dl.path)}
+          data-tip={fileActionLabel(media, !!dl.path)}
+          disabled={dl.state === "loading"}
           onClick={act}
         >
-          {dl.state === "loading" ? (
-            <span className="veil-spinner" />
-          ) : (
+          {busy ?? (
             <Icon name={voice ? "play" : media.url ? "external-link" : dl.path ? "folder-open" : "download"} />
           )}
         </button>
@@ -345,11 +351,11 @@ export function startEdit(k: string, m: Msg) {
 function menuFor(k: string, tab: string, m: Msg, caps: Record<Cap, boolean>): MenuItem[] {
   const items: (MenuItem | false)[] = [
     { icon: "reply", label: "Trả lời", run: () => setReply(tab, m) },
-    caps.reactions && { icon: "smile", label: "Thả reaction", run: () => {
+    caps.reactions && { icon: "smile", label: "Thả biểu cảm", run: () => {
       const el = document.getElementById(`m-${m.id}`);
       useApp.setState({ pop: { kind: "emoji", ...(el ? anchor(el.querySelector('.bubble') ?? el) : {x: 40, y: 80, top: 80}), onPick: (emoji) => void toggleReaction(k, m, emoji) } });
     } },
-    caps.threads && !!m.threadId && { icon: "message-circle-reply", label: "Mở thread trong tab", run: () => openThread(k, m) },
+    caps.threads && !!m.threadId && { icon: "message-circle-reply", label: "Mở luồng trả lời trong tab", run: () => openThread(k, m) },
     !!m.text && { icon: "languages", label: useApp.getState().tr[trKey(k, m.id)] ? "Ẩn bản dịch" : "Dịch", run: () => void translateMsg(k, m) },
     {
       icon: "copy",

@@ -9,7 +9,7 @@ const downloads = new Map<string, Promise<string>>();
 
 /** photo = local path | https URL | TDLib file id (digits). Returns an <img> src or "". */
 export function useAvatar(accountId: string, photo: string): string {
-  const direct = !photo ? "" : /^https?:/.test(photo) ? photo : photo.startsWith("/") ? fileSrc(photo) : "";
+  const direct = !photo ? "" : /^(https?|data):/.test(photo) ? photo : photo.startsWith("/") ? fileSrc(photo) : "";
   const [src, setSrc] = useState(direct);
   useEffect(() => {
     setSrc(direct);

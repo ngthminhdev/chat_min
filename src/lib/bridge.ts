@@ -38,6 +38,7 @@ export const api = {
   accountRemove: (id: string) => call<void>("account_remove", { id }),
   messages: (accountId: string, chatId: string, before: number, limit: number) =>
     call<Msg[]>("messages", { accountId, chatId, before, limit }),
+  cachedMessages: (accountId: string, chatId: string, limit: number) => call<Msg[]>("cached_messages", { accountId, chatId, limit }),
   thread: (accountId: string, chatId: string, threadId: string) => call<Msg[]>("thread", { accountId, chatId, threadId }),
   pinned: (accountId: string, chatId: string) => call<Msg[]>("pinned", { accountId, chatId }),
   members: (accountId: string, chatId: string) => call<Member[]>("members", { accountId, chatId }),
@@ -69,10 +70,14 @@ export const api = {
   aiConfigSet: (a: Omit<AiView, "hasKey"> & { key?: string }) => call<void>("ai_config_set", a),
   /** translate/translate_to/translate_many → string[]; suggest → Suggestion[] */
   aiRun: <T = string>(task: string, texts: string[], me: string, to: string) => call<T[]>("ai_run", { task, texts, me, to }),
+  emojiPalette: () => call<void>("emoji_palette"),
   setBadge: (count: number) => (isTauri ? call<void>("set_badge", { count }) : Promise.resolve()),
 };
 
 export const fileSrc = (path: string) => (isTauri && path && !path.startsWith("data:") ? convertFileSrc(path) : path);
+
+/** Telegram video played while it downloads (Range requests served by the tgstream protocol in lib.rs). */
+export const streamSrc = (accountId: string, fileRef: string, mime: string) => `tgstream://localhost/${accountId}/${fileRef}?${mime || "video/mp4"}`;
 
 export async function openUrl(url: string) {
   if (!isTauri) return void window.open(url, "_blank", "noopener");

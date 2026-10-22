@@ -30,7 +30,7 @@ export function Titlebar() {
         <button
           className="tool-btn icon-only lg"
           type="button"
-          aria-label="Mở command palette"
+          aria-label="Mở bảng lệnh"
           data-tip="Chuyển chat và chạy lệnh"
           data-kbd="⌘K"
           onClick={() => useApp.setState({ palette: { mode: "chats" } })}
@@ -73,14 +73,14 @@ export function Titlebar() {
             <span>Áp dụng cho toàn bộ cửa sổ</span>
           </div>
         </details>
-        <button className="tool-btn icon-only lg" type="button" aria-label="Thêm account" data-tip="Thêm account" data-kbd="⌘N" onClick={() => startWizard()}>
+        <button className="tool-btn icon-only lg" type="button" aria-label="Thêm tài khoản" data-tip="Thêm tài khoản" data-kbd="⌘N" onClick={() => startWizard()}>
           <Icon name="user-plus" />
         </button>
         <button
           className="tool-btn icon-only lg"
           type="button"
-          aria-label="Settings"
-          data-tip="Settings"
+          aria-label="Cài đặt"
+          data-tip="Cài đặt"
           data-kbd="⌘,"
           onClick={() => useApp.setState({ route: "settings" })}
         >

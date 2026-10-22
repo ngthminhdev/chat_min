@@ -132,9 +132,9 @@ export default function App() {
           <button
             className={`tool-btn panel-toggle${left ? "" : " active"}`}
             type="button"
-            aria-label="Ẩn/hiện sidebar"
+            aria-label="Ẩn/hiện danh sách hội thoại"
             aria-pressed={!left}
-            data-tip="Sidebar"
+            data-tip="Danh sách hội thoại"
             data-kbd="⌘B"
             disabled={page}
             onClick={() => useApp.setState({ leftCollapsed: !left })}
@@ -145,10 +145,10 @@ export default function App() {
           <button
             className={`tool-btn panel-toggle${right ? "" : " active"}`}
             type="button"
-            aria-label="Ẩn/hiện inspector"
+            aria-label="Ẩn/hiện chi tiết hội thoại"
             aria-pressed={!right}
-            data-tip="Inspector"
-            data-kbd="⌘I"
+            data-tip="Chi tiết hội thoại"
+            data-kbd="⌘R"
             disabled={page || tabPage}
             onClick={() => useApp.setState({ rightCollapsed: !right })}
           >
@@ -173,7 +173,7 @@ function activeAccount() {
 export function renameAccount(id = activeAccount()?.id) {
   const a = useApp.getState().accounts.find((x) => x.id === id);
   if (!a) return;
-  promptDialog("Đổi tên account", a.name, (name) => {
+  promptDialog("Đổi tên tài khoản", a.name, (name) => {
     api.accountUpdate(a.id, { name }).then(() => toast(`Đã đổi tên thành “${name}”`)).catch((e) => toast(String(e), "circle-alert"));
   });
 }
@@ -182,11 +182,11 @@ export function removeAccount(id = activeAccount()?.id) {
   const a = useApp.getState().accounts.find((x) => x.id === id);
   if (!a) return;
   confirmDialog(
-    `Xoá account “${a.name}”?`,
+    `Xoá tài khoản “${a.name}”?`,
     `ChatMin sẽ đăng xuất ${a.handle} và xoá cache tin nhắn trên máy này. Tài khoản ${PLATFORMS[a.platform].name} của bạn không bị ảnh hưởng.`,
-    "Xoá account",
+    "Xoá tài khoản",
     () => {
-      api.accountRemove(a.id).then(() => toast(`Đã xoá account ${a.name}`)).catch((e) => toast(String(e), "circle-alert"));
+      api.accountRemove(a.id).then(() => toast(`Đã xoá tài khoản ${a.name}`)).catch((e) => toast(String(e), "circle-alert"));
     },
   );
 }
@@ -274,7 +274,8 @@ function useGlobalHandlers() {
         if (s.active) closeTab(s.active);
         return;
       }
-      if (lower === "i") {
+      // ⌘B / ⌘R: left / right dock, like the other _min apps (⌘R would otherwise reload the webview)
+      if (lower === "r") {
         e.preventDefault();
         return st({ rightCollapsed: !s.rightCollapsed });
       }

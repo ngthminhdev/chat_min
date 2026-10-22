@@ -1,32 +1,74 @@
-// Text helpers shared by every view. Message markup from the backend is plain text plus
-// `code`, @{mention} and [label](url) — see render() in tg.rs / to_msg() in gchat.rs.
+// Text helpers shared by every view. Message markup from the backend is Google Chat's own
+// syntax — *bold*, _italic_, ~strike~, `code`, ``` blocks, "* " / "- " bullets — plus
+// @{mention} and [label](url). See render() in tg.rs and chat_markup() in gchat.rs.
 
 export const esc = (s: unknown) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 const INLINE = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<]+[^\s<.,:;!?)\]'"])|@\{([^}]+)\}/g;
 
+// *x* / _x_ / ~x~ only when they hug a word and aren't inside one: snake_case_names,
+// 2 * 3 * 4 and ~/paths stay as typed
+const EMPH: [RegExp, string][] = [
+  [/(^|[^\w*])\*(?=\S)([^*\n]*?\S)\*(?![\w*])/g, "strong"],
+  [/(^|[^\w_])_(?=\S)([^_\n]*?\S)_(?![\w_])/g, "em"],
+  [/(^|[^\w~])~(?=\S)([^~\n]*?\S)~(?![\w~])/g, "s"],
+];
+
 function inline(s: string, me: string[]): string {
   return s
     .split(/(`[^`\n]+`)/g)
     .map((part, i) => {
       if (i % 2) return `<code>${part.slice(1, -1)}</code>`;
-      return part
-        .replace(INLINE, (_m, label, href, url, mention) => {
-          if (label) return `<a class="msg-link" href="${href}">${label}</a>`;
-          if (url) return `<a class="msg-link" href="${url}">${url}</a>`;
-          return `<span class="mention${me.includes(mention) ? " me" : ""}">@${mention}</span>`;
-        })
-        .replace(/\n/g, "<br>");
+      // links and mentions become placeholders first so emphasis never reaches inside a URL
+      const kept: string[] = [];
+      const hold = (html: string) => `\u0000${kept.push(html) - 1}\u0000`;
+      let out = part.replace(INLINE, (_m, label, href, url, mention) => {
+        if (label) return hold(`<a class="msg-link" href="${href}">${label}</a>`);
+        if (url) return hold(`<a class="msg-link" href="${url}">${url}</a>`);
+        return hold(`<span class="mention${me.includes(mention) ? " me" : ""}">@${mention}</span>`);
+      });
+      for (const [re, tag] of EMPH) out = out.replace(re, `$1<${tag}>$2</${tag}>`);
+      return out.replace(/\u0000(\d+)\u0000/g, (_m, n) => kept[+n]).replace(/\n/g, "<br>");
     })
     .join("");
+}
+
+/** A paragraph: runs of "* " / "- " / "• " lines become a list, other lines stay lines. */
+function para(p: string, me: string[]): string {
+  let out = "";
+  let text: string[] = [];
+  let items: string[] = [];
+  const flush = () => {
+    if (text.length) out += `<p>${inline(text.join("\n"), me)}</p>`;
+    if (items.length) out += `<ul>${items.map((l) => `<li>${inline(l, me)}</li>`).join("")}</ul>`;
+    text = [];
+    items = [];
+  };
+  for (const line of p.split("\n")) {
+    const bullet = /^\s*[*\-•]\s+(.*)$/.exec(line);
+    if (bullet ? text.length : items.length) flush();
+    if (bullet) items.push(bullet[1]);
+    else text.push(line);
+  }
+  flush();
+  return out;
 }
 
 /** Escaped HTML for a message body. `me` = names that count as "mentions me". */
 export function fmt(text: string, me: string[] = []): string {
   return esc(text)
-    .split(/\n{2,}/)
-    .map((p) => `<p>${inline(p, me)}</p>`)
+    .split(/```\n?([\s\S]*?)\n?```/g)
+    .map((part, i) =>
+      i % 2
+        ? `<pre>${part}</pre>`
+        : part
+            .replace(/^\n+|\n+$/g, "")
+            .split(/\n{2,}/)
+            .filter((p) => p.trim())
+            .map((p) => para(p, me))
+            .join(""),
+    )
     .join("");
 }
 
@@ -36,6 +78,8 @@ export function plain(text: string): string {
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
     .replace(/@\{([^}]+)\}/g, "@$1")
     .replace(/`/g, "")
+    .replace(/(^|[^\w*_~])[*_~](?=\S)([^*_~\n]*?\S)[*_~](?![\w*_~])/g, "$1$2")
+    .replace(/^\s*[*-]\s+/gm, "• ")
     .replace(/\s+/g, " ")
     .trim();
 }

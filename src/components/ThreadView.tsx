@@ -39,7 +39,7 @@ export function ThreadView({ tab }: { tab: string }) {
       el.classList.remove("flash");
       void el.offsetWidth;
       el.classList.add("flash");
-    } else toast("Tin gốc không có trong thread đã tải", "info");
+    } else toast("Tin gốc không có trong luồng trả lời đã tải", "info");
     useApp.setState({ jumpTo: null });
   }, [jumpTo]);
 
@@ -48,7 +48,7 @@ export function ThreadView({ tab }: { tab: string }) {
       <div className="content empty">
         <div className="conv-empty">
           <span className="ring"><Icon name="message-circle-reply" /></span>
-          <strong>Thread không còn khả dụng</strong>
+          <strong>Luồng trả lời không còn khả dụng</strong>
         </div>
       </div>
     );
@@ -62,7 +62,7 @@ export function ThreadView({ tab }: { tab: string }) {
         </button>
         <ChatAvatar chat={chat} platform={platform} />
         <div className="title">
-          <strong>{meta.topic ? `# ${meta.title}` : root ? plain(root.text).slice(0, 90) || "Thread" : meta.title}</strong>
+          <strong>{meta.topic ? `# ${meta.title}` : root ? plain(root.text).slice(0, 90) || "Luồng trả lời" : meta.title}</strong>
           <span>
             {meta.topic ? `Topic · ${chat.title} · ${fmtCount(replies.length)} tin đã tải` : `Thread trong tab riêng · ${chat.title} · ${fmtCount(replies.length)} trả lời`}
           </span>
@@ -76,16 +76,16 @@ export function ThreadView({ tab }: { tab: string }) {
         onScroll={scroll.onScroll}
       >
         <div className="msgs-inner">
-          {meta.error && <div className="empty-note" role="alert">Chưa tải được thread: {meta.error} <button className="tool-btn" onClick={() => void openChat(tab)}>Thử lại</button></div>}
+          {meta.error && <div className="empty-note" role="alert">Chưa tải được luồng trả lời: {meta.error} <button className="tool-btn" onClick={() => void openChat(tab)}>Thử lại</button></div>}
           {meta.topic ? null : root ? (
             <div className="thread-root">
               <MessageItem k={meta.chatKey} tab={tab} m={root} chat={chat} caps={caps} first last fresh={false} threadOpen={false} />
             </div>
           ) : !meta.error ? (
-            <div className="section-veil on" role="status"><span className="veil-spinner" /><span>Đang tải thread…</span></div>
+            <div className="section-veil on" role="status"><span className="veil-spinner" /><span>Đang tải luồng trả lời…</span></div>
           ) : null}
           {!meta.topic && <div className="day-sep" role="separator"><span>{replies.length ? `${replies.length} trả lời` : "Chưa có trả lời"}</span></div>}
-          {meta.topic && !replies.length && !meta.error && <div className="section-veil on" role="status"><span className="veil-spinner" /><span>Đang tải topic…</span></div>}
+          {meta.topic && !replies.length && !meta.error && <div className="section-veil on" role="status"><span className="veil-spinner" /><span>Đang tải chủ đề…</span></div>}
           {replies.map((m, i) => {
             const prev = replies[i - 1];
             const next = replies[i + 1];
@@ -108,7 +108,7 @@ export function ThreadView({ tab }: { tab: string }) {
         </div>
         <JumpBottom away={scroll.away} fresh={scroll.fresh} onClick={scroll.toBottom} />
       </div>
-      <Composer k={tab} chatKey={meta.chatKey} threadId={meta.threadId} placeholder={meta.topic ? `Nhắn vào # ${meta.title}…` : "Trả lời trong thread…"} key={`c-${tab}`} />
+      <Composer k={tab} chatKey={meta.chatKey} threadId={meta.threadId} placeholder={meta.topic ? `Nhắn vào # ${meta.title}…` : "Trả lời trong luồng…"} key={`c-${tab}`} />
     </div>
   );
 }

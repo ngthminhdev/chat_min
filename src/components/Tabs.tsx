@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { closeTab, openChat, useApp } from "../store";
 import { Icon } from "../ui/Icon";
 
-const PAGE_TABS = { inbox: ["inbox", "All inboxes"], settings: ["settings", "Settings"], search: ["search", "Tìm tin nhắn"] } as const;
+const PAGE_TABS = { inbox: ["inbox", "Tất cả hội thoại"], settings: ["settings", "Cài đặt"], search: ["search", "Tìm tin nhắn"] } as const;
 
 export function Tabs() {
   const tabs = useApp((s) => s.tabs);

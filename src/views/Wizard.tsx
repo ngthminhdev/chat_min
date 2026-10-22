@@ -8,7 +8,7 @@ import { ColorPicker } from "../components/Overlays";
 import { Glyph, Icon } from "../ui/Icon";
 
 const STEPS = ["Nền tảng", "Xác thực", "Đồng bộ", "Tên & màu"];
-const SYNC = ["Xác thực account", "Tải danh sách chat", "Sync tin gần đây"];
+const SYNC = ["Xác thực tài khoản", "Tải danh sách hội thoại", "Đồng bộ tin gần đây"];
 
 /** Opens the add-account wizard, or the re-login flow for an existing account. */
 export function startWizard(accountId?: string) {
@@ -36,8 +36,8 @@ export function Wizard() {
     <>
       <header className="r2-header">
         <div className="od-field">
-          <h1>{existing ? "Đăng nhập lại" : "Add account"}</h1>
-          <p>{existing ? `${existing.name} · ${existing.handle}` : "Kết nối một account vào ChatMin"}</p>
+          <h1>{existing ? "Đăng nhập lại" : "Thêm tài khoản"}</h1>
+          <p>{existing ? `${existing.name} · ${existing.handle}` : "Kết nối một tài khoản vào ChatMin"}</p>
         </div>
         <div className="r2-actions">
           <button type="button" className="tool-btn" onClick={cancel}>Huỷ</button>
@@ -108,12 +108,12 @@ export function Wizard() {
                       }}
                     />
                   )}
-                  {step === 3 && accountId && <SyncStep accountId={accountId} next={() => (existing ? leave("Đã kết nối lại account") : setStep(4))} />}
+                  {step === 3 && accountId && <SyncStep accountId={accountId} next={() => (existing ? leave("Đã kết nối lại tài khoản") : setStep(4))} />}
                   {step === 4 && accountId && (
                     <NameStep
                       accountId={accountId}
                       finish={() => {
-                        leave("Đã thêm account");
+                        leave("Đã thêm tài khoản");
                         const s = useApp.getState();
                         const first = sortedChats(s.chats, accountId)[0];
                         if (first) void openChat(key(first.accountId, first.id));
@@ -126,16 +126,16 @@ export function Wizard() {
           </div>
           <aside className="create-col">
             <section className="create-card">
-              <div className="card-step"><h3>Account của bạn</h3></div>
+              <div className="card-step"><h3>Tài khoản của bạn</h3></div>
               <div className="conn-summary">
                 <div className="conn-summary-row"><span>Nền tảng</span><strong>{PLATFORMS[platform].name}</strong></div>
                 <div className="conn-summary-row"><span>Trạng thái</span><strong>{step > 2 ? "Đã xác thực" : "Chưa xác thực"}</strong></div>
-                <div className="conn-summary-row"><span>Phiên</span><strong>{existing ? "Đăng nhập lại" : "Account mới"}</strong></div>
+                <div className="conn-summary-row"><span>Phiên</span><strong>{existing ? "Đăng nhập lại" : "Tài khoản mới"}</strong></div>
               </div>
             </section>
             <p className="wizard-sim-note">
               {platform === "telegram"
-                ? "ChatMin đăng nhập như một thiết bị Telegram mới (TDLib). Phiên lưu trên máy này; xoá account sẽ đăng xuất thiết bị."
+                ? "ChatMin đăng nhập như một thiết bị Telegram mới (TDLib). Phiên lưu trên máy này; xoá tài khoản sẽ đăng xuất thiết bị."
                 : "ChatMin dùng Google Chat API bằng quyền của bạn (OAuth). Cần tài khoản Google Workspace; tin gửi từ ChatMin hiển thị như tin của bạn."}
             </p>
           </aside>
@@ -155,17 +155,18 @@ function PlatformStep({ platform, setPlatform, next }: { platform: Platform; set
             key={p}
             type="button"
             className={`engine-card${platform === p ? " active" : ""}`}
+            aria-pressed={platform === p}
             disabled={!on}
             onClick={() => setPlatform(p as Platform)}
             onDoubleClick={() => on && (setPlatform(p as Platform), next())}
           >
             {on ? <Glyph platform={p as Platform} /> : <Icon name="messages-square" />}
             <strong>{label}</strong>
-            <span>{p === "messenger" || p === "zalo" ? "Web app · đăng nhập trong app" : on ? "Kết nối account" : "Coming soon"}</span>
+            <span>{p === "messenger" || p === "zalo" ? "Web app · đăng nhập trong app" : on ? "Kết nối tài khoản" : "Coming soon"}</span>
           </button>
         ))}
       </div>
-      <p className="r2-muted">Mỗi account có tên, màu và phiên đăng nhập riêng.</p>
+      <p className="r2-muted">Mỗi tài khoản có tên, màu và phiên đăng nhập riêng.</p>
       <div className="wizard-actions">
         <button type="submit" className="tool-btn primary">Tiếp tục</button>
       </div>
@@ -529,16 +530,16 @@ function NameStep({ accountId, finish }: { accountId: string; finish: () => void
       className="wizard-form"
       onSubmit={(e) => {
         e.preventDefault();
-        if (!name.trim()) return setErr("Nhập tên để nhận biết account này.");
+        if (!name.trim()) return setErr("Nhập tên để nhận biết tài khoản này.");
         api.accountUpdate(accountId, { name: name.trim(), color }).then(finish).catch((x) => setErr(String(x)));
       }}
     >
-      <Field id="wizard-name" label="Tên account *" value={name} autoFocus hint="Tên hiển thị trong sidebar, tab và statusbar." error={err} onChange={(e) => setName(e.target.value)} />
+      <Field id="wizard-name" label="Tên tài khoản *" value={name} autoFocus hint="Tên hiển thị trong danh sách hội thoại, tab và thanh trạng thái." error={err} onChange={(e) => setName(e.target.value)} />
       <span className="field-label">Màu nhận diện</span>
       <ColorPicker value={color} onPick={setColor} />
-      <p className="r2-muted">Màu luôn đi cùng tên account.</p>
+      <p className="r2-muted">Màu luôn đi cùng tên tài khoản.</p>
       <Actions>
-        <button type="submit" className="tool-btn primary">Thêm account</button>
+        <button type="submit" className="tool-btn primary">Thêm tài khoản</button>
       </Actions>
     </form>
   );

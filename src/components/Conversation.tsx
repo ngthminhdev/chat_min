@@ -14,7 +14,7 @@ import { useStickyScroll } from "./useStickyScroll";
 import { langLabel, toggleAutoTranslate, translateMissing } from "../ai";
 
 const HEALTH_MSG: Record<string, string> = {
-  offline: "Account đang offline. Nháp vẫn được giữ trên máy.",
+  offline: "Tài khoản đang mất kết nối. Nháp vẫn được giữ trên máy.",
   reconnecting: "Đang kết nối lại. Tin nhắn sẽ khả dụng khi có kết nối.",
   expired: "Phiên đăng nhập đã hết hạn.",
   rate: "Gửi quá nhanh. Thử lại sau",
@@ -72,15 +72,17 @@ export function Conversation() {
           <strong>{chat.title}</strong>
           <span>{sub}</span>
         </div>
+        <div className="conv-actions" role="group" aria-label="Thao tác hội thoại">
         {(chat.threaded || chat.forum) && (
           <button
             className={`tool-btn conv-threads${insp === "threads" && !rightOff ? " active" : ""}`}
-            aria-label={chat.forum ? "Topics" : "Threads"}
-            data-tip={chat.forum ? "Danh sách topic (right dock)" : "Danh sách thread (right dock)"}
+            aria-label={chat.forum ? "Chủ đề" : "Luồng trả lời"}
+            aria-pressed={insp === "threads" && !rightOff}
+            data-tip={chat.forum ? "Xem các chủ đề" : "Xem các luồng trả lời"}
             onClick={() => useApp.setState({ inspTab: "threads", rightCollapsed: false })}
           >
             <Icon name="message-circle-reply" />
-            {chat.forum ? "Topics" : "Threads"}
+            {chat.forum ? "Chủ đề" : "Luồng trả lời"}
             {!chat.forum && threadCount > 0 && <small>{threadCount}</small>}
           </button>
         )}
@@ -105,8 +107,9 @@ export function Conversation() {
         </button>
         {capsOf(active).pin && (
           <button
-            className="tool-btn icon-only"
+            className={`tool-btn icon-only${insp === "pinned" && !rightOff ? " active" : ""}`}
             aria-label="Tin đã ghim"
+            aria-pressed={insp === "pinned" && !rightOff}
             data-tip="Tin đã ghim"
             onClick={() => useApp.setState({ inspTab: "pinned", rightCollapsed: false })}
           >
@@ -114,14 +117,16 @@ export function Conversation() {
           </button>
         )}
         <button
-          className="tool-btn icon-only"
+          className={`tool-btn icon-only${!rightOff ? " active" : ""}`}
           aria-label="Thông tin chat"
+          aria-expanded={!rightOff}
           data-tip="Thông tin chat"
-          data-kbd="⌘I"
+          data-kbd="⌘R"
           onClick={() => useApp.setState((s) => ({ rightCollapsed: !s.rightCollapsed }))}
         >
           <Icon name="info" />
         </button>
+        </div>
         {banner && (
           <div className={`health-banner ${h}`} role="status">
             <Icon name={h === "offline" ? "wifi-off" : "circle-alert"} />
@@ -377,7 +382,8 @@ export function useDownload(accountId: string, media: { fileRef: string; name: s
   useEffect(() => {
     if (auto && !path && media?.fileRef) void get();
   }, [auto, media?.fileRef]);
-  return { path, state, get };
+  const pct = useApp((s) => (media ? s.progress[`${accountId}|${media.fileRef}`] : undefined));
+  return { path, state, get, pct: state === "loading" ? pct : undefined };
 }
 
 export const accountIdOf = (k: string) => splitKey(k)[0];

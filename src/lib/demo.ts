@@ -145,6 +145,8 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
       const older = a.before ? list.filter((x) => x.sort < a.before) : list;
       return older.slice(-a.limit);
     }
+    case "cached_messages":
+      return [];
     case "web_show":
     case "web_hide":
     case "web_reload":

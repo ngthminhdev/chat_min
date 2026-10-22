@@ -387,6 +387,21 @@ async fn messages(core: C<'_>, account_id: String, chat_id: String, before: i64,
         if cached.is_empty() { Err(e) } else { Ok(cached) }
     })
 }
+/// macOS's own emoji picker (full set, search, recents); it types into the focused field.
+#[tauri::command]
+fn emoji_palette(app: tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
+    let _ = app.run_on_main_thread(|| {
+        if let Some(mtm) = objc2::MainThreadMarker::new() {
+            objc2_app_kit::NSApplication::sharedApplication(mtm).orderFrontCharacterPalette(None);
+        }
+    });
+}
+/// The newest cached page, instantly: shown while `messages` fetches the live one.
+#[tauri::command]
+fn cached_messages(core: C<'_>, account_id: String, chat_id: String, limit: i64) -> Res<Vec<Msg>> {
+    core.store().msgs(&account_id, &chat_id, 0, limit)
+}
 #[tauri::command]
 async fn thread(core: C<'_>, account_id: String, chat_id: String, thread_id: String) -> Res<Vec<Msg>> {
     let core = core.inner().clone();
@@ -623,8 +638,45 @@ fn set_badge(app: tauri::AppHandle, count: i64) {
     }
 }
 
+/// `tgstream://localhost/<account>/<file id>?<mime>`: Telegram videos play while they
+/// download. WebKit asks for byte ranges; each answer is one chunk (206), the player
+/// comes back for the next, and seeking just asks from another offset.
+async fn tg_stream(core: &Core, req: &tauri::http::Request<Vec<u8>>) -> Result<tauri::http::Response<Vec<u8>>, String> {
+    use tauri::http::header::{ACCEPT_RANGES, ACCESS_CONTROL_ALLOW_ORIGIN, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, RANGE};
+    const CHUNK: i64 = 2 << 20;
+    let (account, file) = req.uri().path().trim_start_matches('/').rsplit_once('/').ok_or("bad stream url")?;
+    let file_id: i32 = file.parse().map_err(|_| "bad file id")?;
+    let mime = req.uri().query().filter(|q| !q.is_empty()).unwrap_or("video/mp4");
+    // "bytes=START-" or "bytes=START-END" (END inclusive)
+    let range = req.headers().get(RANGE).and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("bytes=")).unwrap_or("0-");
+    let (a, b) = range.split_once('-').unwrap_or((range, ""));
+    let start: i64 = a.trim().parse().unwrap_or(0);
+    let want = b.trim().parse::<i64>().map(|end| end - start + 1).unwrap_or(CHUNK).clamp(1, CHUNK);
+    let (bytes, total) = core.tg.stream_part(account, file_id, start, want).await?;
+    let end = start + bytes.len() as i64 - 1;
+    tauri::http::Response::builder()
+        .status(206)
+        .header(CONTENT_TYPE, mime)
+        .header(ACCEPT_RANGES, "bytes")
+        .header(CONTENT_RANGE, format!("bytes {start}-{end}/{total}"))
+        .header(CONTENT_LENGTH, bytes.len())
+        .header(ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+        .body(bytes)
+        .map_err(|e| e.to_string())
+}
+
 pub fn run() {
     tauri::Builder::default()
+        .register_asynchronous_uri_scheme_protocol("tgstream", |ctx, req, responder| {
+            let core = ctx.app_handle().try_state::<Arc<Core>>().map(|c| c.inner().clone());
+            tauri::async_runtime::spawn(async move {
+                let res = match core {
+                    Some(core) => tg_stream(&core, &req).await.inspect_err(|e| eprintln!("[tgstream] {} {:?}: {e}", req.uri(), req.headers().get("range"))),
+                    None => Err("starting".into()),
+                };
+                responder.respond(res.unwrap_or_else(|e| tauri::http::Response::builder().status(500).body(e.into_bytes()).unwrap()));
+            });
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -680,6 +732,52 @@ pub fn run() {
                     }
                 }
             }
+            // Custom menu without File > Close Window so ⌘W reaches the webview
+            // (closes the active tab). Edit menu kept for copy/paste.
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::menu::{Menu, PredefinedMenuItem, Submenu};
+                let handle = app.handle();
+                let app_menu = Submenu::with_items(
+                    handle,
+                    "ChatMin",
+                    true,
+                    &[
+                        &PredefinedMenuItem::about(handle, None, None)?,
+                        &PredefinedMenuItem::separator(handle)?,
+                        &PredefinedMenuItem::hide(handle, None)?,
+                        &PredefinedMenuItem::hide_others(handle, None)?,
+                        &PredefinedMenuItem::show_all(handle, None)?,
+                        &PredefinedMenuItem::separator(handle)?,
+                        &PredefinedMenuItem::quit(handle, None)?,
+                    ],
+                )?;
+                let edit = Submenu::with_items(
+                    handle,
+                    "Edit",
+                    true,
+                    &[
+                        &PredefinedMenuItem::undo(handle, None)?,
+                        &PredefinedMenuItem::redo(handle, None)?,
+                        &PredefinedMenuItem::separator(handle)?,
+                        &PredefinedMenuItem::cut(handle, None)?,
+                        &PredefinedMenuItem::copy(handle, None)?,
+                        &PredefinedMenuItem::paste(handle, None)?,
+                        &PredefinedMenuItem::select_all(handle, None)?,
+                    ],
+                )?;
+                let window = Submenu::with_items(
+                    handle,
+                    "Window",
+                    true,
+                    &[
+                        &PredefinedMenuItem::minimize(handle, None)?,
+                        &PredefinedMenuItem::maximize(handle, None)?,
+                        &PredefinedMenuItem::fullscreen(handle, None)?,
+                    ],
+                )?;
+                app.set_menu(Menu::with_items(handle, &[&app_menu, &edit, &window])?)?;
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -711,6 +809,8 @@ pub fn run() {
             account_update,
             account_remove,
             messages,
+            cached_messages,
+            emoji_palette,
             thread,
             pinned,
             members,
@@ -728,13 +828,26 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building ChatMin")
-        .run(|app, event| {
-            if let tauri::RunEvent::Reopen { .. } = event {
+        .run(|app, event| match event {
+            tauri::RunEvent::Reopen { .. } => {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.show();
                     let _ = w.set_focus();
                 }
             }
+            // exit() runs TDLib's C++ static destructors while its receive thread is still
+            // blocked in td_receive → SIGSEGV on ⌘Q. Close the clients, then leave without
+            // running destructors (plugins, window-state included, already saved by now).
+            tauri::RunEvent::Exit => {
+                if let Some(core) = app.try_state::<Arc<Core>>() {
+                    tauri::async_runtime::block_on(core.tg.shutdown());
+                }
+                extern "C" {
+                    fn _exit(code: i32) -> !;
+                }
+                unsafe { _exit(0) }
+            }
+            _ => {}
         });
 }
 

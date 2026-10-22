@@ -32,6 +32,8 @@ struct Acc {
     supergroups: HashMap<i64, i64>,
     /// supergroup ids that are forums (have topics)
     forums: HashSet<i64>,
+    /// file id → last reported download percent
+    progress: HashMap<i32, i64>,
 }
 
 type R<T> = Result<T, String>;
@@ -128,6 +130,19 @@ impl Tg {
         let _ = if log_out { f::log_out(c).await } else { f::close(c).await };
     }
 
+    /// Quitting: closes every client so TDLib flushes its databases. Capped, so a stuck
+    /// network never holds up quit.
+    pub async fn shutdown(&self) {
+        let ids: Vec<i32> = self.accs.lock().unwrap().iter_mut().map(|(id, a)| (a.closing = true, *id).1).collect();
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            futures::future::join_all(ids.into_iter().map(f::close)).await;
+            while !self.accs.lock().unwrap().is_empty() {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+    }
+
     // ── update routing ──────────────────────────────────────────────────────
     fn handle(&self, core: &Arc<Core>, c: i32, update: Update) {
         let Some(account_id) = self.with(c, |a| a.account_id.clone()) else { return };
@@ -210,6 +225,17 @@ impl Tg {
             }
             Update::ChatNotificationSettings(u) => {
                 self.patch_chat(core, c, u.chat_id, |ch| ch.muted = is_muted(&u.notification_settings))
+            }
+            // progress of big downloads (videos, files); small ones finish before anyone looks
+            Update::File(u) => {
+                let f = &u.file;
+                let total = if f.size > 0 { f.size } else { f.expected_size };
+                if f.local.is_downloading_active && total > 4_000_000 {
+                    let pct = f.local.downloaded_size * 100 / total;
+                    if self.with(c, |a| a.progress.insert(f.id, pct) != Some(pct)).unwrap_or(false) {
+                        core.emit(crate::model::Event::FileProgress { account_id, file_ref: f.id.to_string(), pct });
+                    }
+                }
             }
             Update::ChatReadOutbox(u) => {
                 self.with(c, |a| a.read_outbox.insert(u.chat_id, u.last_read_outbox_message_id));
@@ -562,12 +588,57 @@ impl Tg {
     pub async fn download(&self, account_id: &str, file_ref: &str) -> R<String> {
         let c = self.client(account_id)?;
         let id: i32 = file_ref.parse().map_err(|_| "bad file id")?;
-        let enums::File::File(file) = f::download_file(id, 16, 0, 0, true, c).await.map_err(err)?;
-        if file.local.is_downloading_completed {
-            Ok(file.local.path)
-        } else {
-            Err("Tải file chưa xong".into())
+        // a synchronous download returns early when another request (a video streaming
+        // from another offset) moves the download: pick it up again until it is whole
+        for _ in 0..1000 {
+            let enums::File::File(file) = f::download_file(id, 16, 0, 0, true, c).await.map_err(err)?;
+            if file.local.is_downloading_completed {
+                return Ok(file.local.path);
+            }
+            if !file.local.can_be_downloaded {
+                break;
+            }
         }
+        Err("Tải file chưa xong".into())
+    }
+
+    /// Up to `max` bytes of a file from `start`, for streaming playback. Points TDLib's
+    /// download at `start` with no limit (so it keeps reading ahead), waits until enough of
+    /// that stretch is on disk, then reads it straight from TDLib's partial file.
+    /// Returns the bytes and the file's total size.
+    pub async fn stream_part(&self, account_id: &str, file_id: i32, start: i64, max: i64) -> R<(Vec<u8>, i64)> {
+        use std::io::{Read, Seek, SeekFrom};
+        let c = self.client(account_id)?;
+        let enums::File::File(mut file) = f::download_file(file_id, 32, start, 0, false, c).await.map_err(err)?;
+        let total = if file.size > 0 { file.size } else { file.expected_size };
+        let want = max.min(total - start).max(0);
+        let mut got = 0;
+        // ~60s at the slowest; the player gives up long before that anyway
+        for _ in 0..600 {
+            let enums::FileDownloadedPrefixSize::FileDownloadedPrefixSize(p) = f::get_file_downloaded_prefix_size(file_id, start, c).await.map_err(err)?;
+            got = p.size;
+            if got >= want {
+                break;
+            }
+            // another range (a seek, the moov atom at the end) took the download elsewhere
+            let enums::File::File(now) = f::download_file(file_id, 32, start + p.size, 0, false, c).await.map_err(err)?;
+            file = now;
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        let len = got.min(want);
+        if len <= 0 && want > 0 {
+            return Err("Telegram chưa tải được đoạn video này".into());
+        }
+        // the File from before the first bytes landed has no local path yet: ask again
+        if file.local.path.is_empty() {
+            let enums::File::File(now) = f::get_file(file_id, c).await.map_err(err)?;
+            file = now;
+        }
+        let mut buf = vec![0u8; len as usize];
+        let mut fd = std::fs::File::open(&file.local.path).map_err(|e| e.to_string())?;
+        fd.seek(SeekFrom::Start(start as u64)).map_err(|e| e.to_string())?;
+        fd.read_exact(&mut buf).map_err(|e| e.to_string())?;
+        Ok((buf, total))
     }
 
     // ── writes ──────────────────────────────────────────────────────────────
@@ -883,6 +954,7 @@ pub fn plain(text: &str, media: Option<&Media>) -> String {
 
 fn file_media(kind: &str, name: &str, mime: &str, file: &t::File, w: i32, h: i32, mini: Option<&t::Minithumbnail>) -> Media {
     Media {
+        thumb_file: String::new(),
         kind: kind.into(),
         name: name.into(),
         size: if file.size > 0 { file.size } else { file.expected_size },
@@ -893,6 +965,27 @@ fn file_media(kind: &str, name: &str, mime: &str, file: &t::File, w: i32, h: i32
         local_path: if file.local.is_downloading_completed { file.local.path.clone() } else { String::new() },
         thumb: mini.map(|m| format!("data:image/jpeg;base64,{}", m.data)).unwrap_or_default(),
         url: String::new(),
+    }
+}
+
+/// The ~320px JPEG/PNG/WebP thumbnail Telegram ships with videos and documents (the
+/// minithumbnail is a 40px blur). Animated formats can't be shown as an <img>.
+fn with_thumb(mut m: Media, th: Option<&t::Thumbnail>) -> Media {
+    if let Some(th) = th.filter(|th| matches!(th.format, enums::ThumbnailFormat::Jpeg | enums::ThumbnailFormat::Png | enums::ThumbnailFormat::Webp)) {
+        m.thumb_file = if th.file.local.is_downloading_completed { th.file.local.path.clone() } else { th.file.id.to_string() };
+        if m.width == 0 {
+            (m.width, m.height) = (th.width, th.height);
+        }
+    }
+    m
+}
+
+/// Photos and videos sent "as file" (no compression): previewed like media when WebKit can render them.
+fn document_kind(mime: &str) -> &'static str {
+    match mime {
+        "image/jpeg" | "image/png" | "image/gif" | "image/webp" | "image/heic" => "image",
+        "video/mp4" | "video/quicktime" | "video/webm" | "video/x-m4v" => "video",
+        _ => "file",
     }
 }
 
@@ -970,20 +1063,20 @@ fn to_msg(a: &Acc, m: &t::Message) -> Msg {
             out.kind = "media".into();
             out.text = render(&x.caption);
             let d = &x.document;
-            out.media = Some(file_media("file", &d.file_name, &d.mime_type, &d.document, 0, 0, None));
+            out.media = Some(with_thumb(file_media(document_kind(&d.mime_type), &d.file_name, &d.mime_type, &d.document, 0, 0, d.minithumbnail.as_ref()), d.thumbnail.as_ref()));
         }
         MessageContent::MessageVideo(x) => {
             out.kind = "media".into();
             out.text = render(&x.caption);
             let v = &x.video;
             let name = if v.file_name.is_empty() { "video.mp4" } else { &v.file_name };
-            out.media = Some(file_media("video", name, &v.mime_type, &v.video, v.width, v.height, v.minithumbnail.as_ref()));
+            out.media = Some(with_thumb(file_media("video", name, &v.mime_type, &v.video, v.width, v.height, v.minithumbnail.as_ref()), v.thumbnail.as_ref()));
         }
         MessageContent::MessageAnimation(x) => {
             out.kind = "media".into();
             out.text = render(&x.caption);
             let v = &x.animation;
-            out.media = Some(file_media("video", "GIF", &v.mime_type, &v.animation, v.width, v.height, v.minithumbnail.as_ref()));
+            out.media = Some(with_thumb(file_media("video", "GIF", &v.mime_type, &v.animation, v.width, v.height, v.minithumbnail.as_ref()), v.thumbnail.as_ref()));
         }
         MessageContent::MessageAudio(x) => {
             out.kind = "media".into();
@@ -1050,7 +1143,7 @@ fn to_msg(a: &Acc, m: &t::Message) -> Msg {
         MessageContent::MessageVideoNote(x) => {
             out.kind = "media".into();
             let v = &x.video_note;
-            out.media = Some(file_media("video", "Video tròn", "video/mp4", &v.video, v.length, v.length, v.minithumbnail.as_ref()));
+            out.media = Some(with_thumb(file_media("video", "Video tròn", "video/mp4", &v.video, v.length, v.length, v.minithumbnail.as_ref()), v.thumbnail.as_ref()));
         }
         _ => {
             out.kind = "service".into();
@@ -1079,9 +1172,11 @@ fn render(ft: &t::FormattedText) -> String {
         }
         let inner = slice(s, end);
         let rendered = match &e.r#type {
-            enums::TextEntityType::Code | enums::TextEntityType::Pre | enums::TextEntityType::PreCode(_) => {
-                format!("`{}`", inner.replace('`', "ʼ"))
-            }
+            enums::TextEntityType::Code => format!("`{}`", inner.replace('`', "ʼ")),
+            enums::TextEntityType::Pre | enums::TextEntityType::PreCode(_) => format!("```\n{}\n```", inner.trim_matches('\n').replace("```", "ʼʼʼ")),
+            enums::TextEntityType::Bold => wrap(&inner, '*'),
+            enums::TextEntityType::Italic => wrap(&inner, '_'),
+            enums::TextEntityType::Strikethrough => wrap(&inner, '~'),
             enums::TextEntityType::Mention | enums::TextEntityType::MentionName(_) => {
                 format!("@{{{}}}", inner.trim_start_matches('@'))
             }
@@ -1094,6 +1189,23 @@ fn render(ft: &t::FormattedText) -> String {
     }
     out.push_str(&slice(pos, units.len()));
     out
+}
+
+/// *bold* / _italic_ / ~strike~ hug their words: markers go inside surrounding spaces and
+/// on every line, since the frontend only matches them within one line (format.ts).
+pub fn wrap(inner: &str, mark: char) -> String {
+    inner
+        .split('\n')
+        .map(|l| {
+            let t = l.trim();
+            if t.is_empty() {
+                return l.to_string();
+            }
+            let (lead, trail) = (&l[..l.len() - l.trim_start().len()], &l[l.trim_end().len()..]);
+            format!("{lead}{mark}{t}{mark}{trail}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn is_image(path: &str) -> bool {
@@ -1110,6 +1222,13 @@ fn qr_svg(link: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn markers_hug_words() {
+        assert_eq!(wrap(" bold words ", '*'), " *bold words* ");
+        assert_eq!(wrap("line one\n\nline two", '_'), "_line one_\n\n_line two_");
+        assert_eq!(wrap("   ", '~'), "   ");
+    }
 
     #[test]
     fn render_marks_code_links_and_my_mentions_with_utf16_offsets() {

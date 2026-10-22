@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { motion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 import { api } from "../lib/bridge";
 import { EASE } from "../lib/motion";
 import type { StickerPack, StickerView } from "../lib/types";
@@ -10,10 +10,12 @@ import { Icon } from "../ui/Icon";
 // ── sticker picker (Telegram) ───────────────────────────────────────────────
 const packsCache = new Map<string, Promise<StickerPack[]>>();
 
-export function StickerPanel({ accountId, onPick, onClose }: { accountId: string; onPick: (s: StickerView) => void; onClose: () => void }) {
+export function StickerPanel({ id, accountId, onPick, onClose }: { id?: string; accountId: string; onPick: (s: StickerView) => void; onClose: (restoreFocus?: boolean) => void }) {
   const [packs, setPacks] = useState<StickerPack[] | null>(null);
   const [tab, setTab] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
+  const reduceMotion = useReducedMotion();
+  useEffect(() => { ref.current?.querySelector<HTMLButtonElement>("button")?.focus(); }, []);
   useEffect(() => {
     if (!packsCache.has(accountId)) packsCache.set(accountId, api.stickers(accountId).catch((e) => (packsCache.delete(accountId), fail(e), [])));
     let alive = true;
@@ -24,35 +26,41 @@ export function StickerPanel({ accountId, onPick, onClose }: { accountId: string
   }, [accountId]);
   // click outside / Esc closes
   useEffect(() => {
-    const down = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && onClose();
-    const key = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    setTimeout(() => document.addEventListener("mousedown", down));
+    const down = (e: MouseEvent) => {
+      if ((e.target as HTMLElement).closest("button")?.getAttribute("aria-controls") === id) return;
+      if (!ref.current?.contains(e.target as Node)) onClose();
+    };
+    const key = (e: KeyboardEvent) => e.key === "Escape" && !e.defaultPrevented && onClose(true);
+    document.addEventListener("mousedown", down);
     document.addEventListener("keydown", key);
     return () => {
       document.removeEventListener("mousedown", down);
       document.removeEventListener("keydown", key);
     };
-  }, [onClose]);
+  }, [onClose, id]);
   const pack = packs?.[tab];
   return (
     <motion.div
       ref={ref}
       className="sticker-panel"
-      initial={{ opacity: 0, y: 8 }}
+      id={id}
+      initial={reduceMotion ? false : { opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.16, ease: EASE }}
+      exit={{ opacity: 0, y: reduceMotion ? 0 : 4 }}
+      transition={{ duration: reduceMotion ? 0 : 0.16, ease: EASE }}
       role="dialog"
       aria-label="Sticker"
     >
+      <div className="sticker-head"><strong>Sticker</strong><button type="button" className="tool-btn icon-only" aria-label="Đóng sticker" data-tip="Đóng sticker" data-kbd="Esc" onClick={() => onClose(true)}><Icon name="x" /></button></div>
       {!packs ? (
         <div className="sticker-empty"><span className="veil-spinner" /> Đang tải sticker…</div>
       ) : !packs.length ? (
         <div className="sticker-empty">Chưa có bộ sticker nào trong tài khoản Telegram này</div>
       ) : (
         <>
-          <div className="sticker-tabs" role="tablist">
+          <div className="sticker-tabs" role="tablist" aria-label="Bộ sticker">
             {packs.map((p, i) => (
-              <button key={p.id} role="tab" aria-selected={i === tab} className={i === tab ? "on" : ""} data-tip={p.title} onClick={() => setTab(i)}>
+              <button key={p.id} role="tab" aria-selected={i === tab} className={i === tab ? "on" : ""} aria-label={p.title} data-tip={p.title} onClick={() => setTab(i)}>
                 {p.id === "recent" ? <Icon name="clock" /> : p.stickers[0] ? <Thumb accountId={accountId} s={p.stickers[0]} /> : p.title.slice(0, 2)}
               </button>
             ))}

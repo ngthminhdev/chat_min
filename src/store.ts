@@ -105,7 +105,10 @@ interface State {
   /** AI summaries, keyed by tab (chat or thread tab) — never persisted */
   summary: Record<string, { state: "loading" | "ok" | "err"; text: string; n: number }>;
   /** full-window image/video viewer */
-  viewer: { media: Media; path: string } | null;
+  /** `src` set: a Telegram video streaming, `path` stays empty until it is downloaded */
+  viewer: { media: Media; path: string; src?: string; accountId?: string } | null;
+  /** `${accountId}|${fileRef}` → percent of a big download in progress */
+  progress: Record<string, number>;
   /** inline translations, keyed "chatKey#msgId" — never persisted */
   tr: Record<string, Translation>;
   /** chats translating every message as it loads */
@@ -168,6 +171,7 @@ export const useApp = create<State>(() => ({
   jumpTo: null,
   hidden: saved.hidden ?? {},
   viewer: null,
+  progress: {},
   chatOrder: saved.chatOrder ?? {},
   hoverPeek: null,
   topics: {},
@@ -320,6 +324,8 @@ export function applyEvent(e: CoreEvent) {
       return;
     }
     case "health":
+      // just came online: Telegram's chat list is still streaming in, so give it a moment
+      if (e.health === "ok" && get().health[e.accountId]?.health !== "ok") setTimeout(() => void prefetchUnread(e.accountId), 3000);
       set((s) => ({ health: { ...s.health, [e.accountId]: { health: e.health, text: e.text, until: e.until } } }));
       return;
     case "auth":
@@ -368,7 +374,7 @@ export function applyEvent(e: CoreEvent) {
       if (get().msgs[k]) {
         set((s) => ({
           msgs: { ...s.msgs, [k]: upsert(s.msgs[k], e.msg) },
-          fresh: e.isNew || e.msg.outgoing ? { ...s.fresh, [e.msg.id]: true } : s.fresh,
+          fresh: e.isNew || (e.msg.outgoing && !known) ? { ...s.fresh, [e.msg.id]: true } : s.fresh,
           typing: e.isNew ? { ...s.typing, [k]: { who: "", until: 0 } } : s.typing,
         }));
       }
@@ -388,6 +394,9 @@ export function applyEvent(e: CoreEvent) {
       });
       return;
     }
+    case "fileProgress":
+      set((s) => ({ progress: { ...s.progress, [`${e.accountId}|${e.fileRef}`]: e.pct } }));
+      return;
     case "messagesDeleted": {
       const k = key(e.accountId, e.chatId);
       const ids = new Set(e.ids);
@@ -460,6 +469,7 @@ export async function openChat(k: string) {
   const [accountId, chatId] = splitKey(chatKey);
   if (prevChat && prevChat !== chatKey && get().chats[prevChat]?.kind !== "web") void api.setOpen(...splitKey(prevChat), false).catch(() => {});
   void api.setOpen(accountId, chatId, true).catch(() => {});
+  if (!get().msgs[chatKey]) await showCached(chatKey);
   if (!get().msgs[chatKey]) await loadLatest(chatKey);
   else void loadLatest(chatKey);
   if (isThreadTab(k)) return void loadThread(k);
@@ -517,14 +527,50 @@ export function toggleFavorite(k: string) {
   toast(on ? "Đã bỏ ghim khỏi đầu danh sách" : "Đã ghim lên đầu danh sách", "pin");
 }
 
+/** Warm the newest unread chats of an account so opening them shows the live page at once.
+ *  One at a time, so it never competes with the chat the user actually opens. */
+const prefetched = new Set<string>();
+async function prefetchUnread(accountId: string) {
+  const keys = Object.entries(get().chats)
+    .filter(([k, c]) => c.accountId === accountId && c.unread > 0 && c.kind !== "web" && !prefetched.has(k))
+    .sort(([, a], [, b]) => b.order - a.order)
+    .slice(0, 10)
+    .map(([k]) => k);
+  for (const k of keys) {
+    prefetched.add(k);
+    if (get().msgs[k]) continue;
+    const page = await api.messages(...splitKey(k), 0, PAGE).catch(() => null);
+    if (page?.length && !get().msgs[k]) set((s) => ({ msgs: { ...s.msgs, [k]: page } }));
+  }
+}
+
+/** First open since launch: paint the SQLite copy at once, the live page merges in after. */
+async function showCached(k: string) {
+  const cached = await api.cachedMessages(...splitKey(k), PAGE).catch(() => [] as Msg[]);
+  if (cached.length && !get().msgs[k]) set((s) => ({ msgs: { ...s.msgs, [k]: cached } }));
+}
+
+/** Where the next older page starts: the oldest message of the pages walked so far — not
+ *  list[0], which can be a thread starter fillRoots pulled from weeks back (paging from
+ *  there would skip everything in between). */
+const cursor = new Map<string, number>();
+/** Threaded spaces: a page is mostly replies folded into a few rows, so take bigger pages. */
+const pageSize = (k: string) => (get().chats[k]?.threaded ? 100 : PAGE);
+
 export async function loadLatest(k: string) {
   const [accountId, chatId] = splitKey(k);
   const unread = get().chats[k]?.unread ?? 0;
+  const size = pageSize(k);
   try {
-    const page = await api.messages(accountId, chatId, 0, PAGE);
+    const page = await api.messages(accountId, chatId, 0, size);
     set((s) => {
-      // merge: keep older pages already loaded and anything that arrived meanwhile
+      // merge: keep older pages already loaded and anything that arrived meanwhile —
+      // unless a full page doesn't reach them (more than a page arrived while closed):
+      // that gap would never fill, so start over from the live page
       let list = s.msgs[k] ?? [];
+      const gap = page.length >= size && list.length > 0 && list[list.length - 1].sort < page[0].sort;
+      if (gap) list = [];
+      if (page.length && (gap || !cursor.has(k))) cursor.set(k, page[0].sort);
       for (const m of page) list = upsert(list, m);
       const incoming = page.filter((m) => !m.outgoing && m.kind !== "service");
       const mark =
@@ -533,12 +579,13 @@ export async function loadLatest(k: string) {
           : s.unreadMark;
       return {
         msgs: { ...s.msgs, [k]: list },
-        older: { ...s.older, [k]: page.length < PAGE ? "done" : s.older[k] ?? "idle" },
+        older: { ...s.older, [k]: page.length ? s.older[k] ?? "idle" : "done" },
         loadErr: { ...s.loadErr, [k]: "" },
         unreadMark: mark,
       };
     });
     void fillRoots(k);
+    void fillScreen(k);
   } catch (e) {
     set((s) => ({ loadErr: { ...s.loadErr, [k]: String(e) }, msgs: { ...s.msgs, [k]: s.msgs[k] ?? [] } }));
   }
@@ -574,15 +621,28 @@ export async function loadOlder(k: string) {
   set({ older: { ...s.older, [k]: "loading" } });
   const [accountId, chatId] = splitKey(k);
   try {
-    const page = await api.messages(accountId, chatId, list[0].sort, PAGE);
+    const page = await api.messages(accountId, chatId, cursor.get(k) ?? list[0].sort, pageSize(k));
+    if (page.length) cursor.set(k, page[0].sort);
     set((st) => {
       let next = st.msgs[k] ?? [];
       for (const m of page) next = upsert(next, m);
-      return { msgs: { ...st.msgs, [k]: next }, older: { ...st.older, [k]: page.length < PAGE / 2 ? "done" : "idle" } };
+      return { msgs: { ...st.msgs, [k]: next }, older: { ...st.older, [k]: page.length ? "idle" : "done" } };
     });
     void fillRoots(k);
   } catch {
     set((st) => ({ older: { ...st.older, [k]: "idle" } }));
+  }
+}
+
+/** Threaded spaces fold replies under their thread, so a page can come down to a handful
+ *  of rows — too short to scroll, and scrolling up is what loads more. Keep paging back
+ *  (a few pages at most) until the timeline has enough rows to scroll. */
+async function fillScreen(k: string) {
+  for (let i = 0; i < 5 && get().chats[k]?.threaded; i++) {
+    const list = get().msgs[k] ?? [];
+    const rows = new Set(list.map((m) => m.threadId || m.id)).size;
+    if (rows >= 25 || get().older[k] === "done") return;
+    await loadOlder(k);
   }
 }
 
