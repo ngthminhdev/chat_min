@@ -1,12 +1,12 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { api, isTauri, pickFile } from "../lib/bridge";
-import { plain } from "../lib/format";
+import { api, fileSrc, isTauri, pickFiles, type Staged } from "../lib/bridge";
+import { fileSize, plain } from "../lib/format";
 import { CAP_OFF_NOTE, PLATFORMS } from "../lib/platforms";
 import { addMsg, anchor, capsOf, fail, send, splitKey, toast, useApp } from "../store";
 import { Icon } from "../ui/Icon";
 import { startEdit } from "./Message";
-import { clock, StickerPanel, useRecorder } from "./ComposerExtras";
+import { clock, StickerPanel, useMentions, useRecorder } from "./ComposerExtras";
 import { LANGS, langLabel, langTag, suggestReplies, translateDraft } from "../ai";
 import type { Suggestion } from "../lib/types";
 import { ReplySuggestions, type ReplySuggestionsState } from "./ReplySuggestions";
@@ -44,6 +44,47 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
   const [aiBusy, setAiBusy] = useState(false);
   const [stickers, setStickers] = useState(false);
   const recorder = useRecorder();
+  /** pasted / dropped files waiting for Enter; the draft goes out as the first one's caption */
+  const [files, setFiles] = useState<Staged[]>([]);
+  const [dropping, setDropping] = useState(false);
+  const stage = async (paths: string[]) => {
+    if (!paths.length || editId) return;
+    const add = await api.stageFiles(paths);
+    if (add.length < paths.length) toast("Thư mục không gửi được, chỉ đính kèm file", "info");
+    setFiles((f) => [...f, ...add.filter((a) => !f.some((x) => x.path === a.path))]);
+    ta.current?.focus();
+  };
+  // Tauri owns file drops (dragDropEnabled): the composer of the visible tab takes them
+  useEffect(() => {
+    if (!isTauri) return;
+    let off = () => {};
+    let gone = false;
+    void import("@tauri-apps/api/webview").then(({ getCurrentWebview }) =>
+      getCurrentWebview().onDragDropEvent(({ payload }) => {
+        if (useApp.getState().active !== k) return;
+        if (payload.type === "enter" || payload.type === "over") setDropping(true);
+        else {
+          setDropping(false);
+          if (payload.type === "drop") void stage(payload.paths).catch(fail);
+        }
+      }).then((u) => (gone ? u() : (off = u))),
+    );
+    return () => { gone = true; off(); };
+  }, [k, editId]);
+  const onPaste = (e: React.ClipboardEvent) => {
+    const cd = e.clipboardData;
+    const blobs = [...cd.files];
+    if (!blobs.length && !cd.types.includes("Files")) return;
+    e.preventDefault();
+    void (async () => {
+      try {
+        // Finder copies: real paths, no need to read the bytes; screenshots/images: bytes only
+        const paths = await api.clipboardFiles();
+        if (paths.length) return await stage(paths);
+        await stage(await Promise.all(blobs.map(async (b, i) => api.saveTemp(b.name || `paste-${Date.now()}-${i}.${b.type.split("/")[1] || "bin"}`, await b64(b)))));
+      } catch (err) { fail(err); }
+    })();
+  };
   // A response from a previous composer must not update a newly opened chat.
   useEffect(() => () => { suggestionRun.current++; translationRun.current++; }, []);
   const sendVoice = async () => {
@@ -70,6 +111,7 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
   }, [k, blocked]);
 
   const setDraft = (v: string) => useApp.setState((s) => ({ drafts: { ...s.drafts, [k]: v } }));
+  const mentions = useMentions(chatKey, ta, draft, setDraft);
   const cancelRef = () =>
     useApp.setState((s) => ({
       replyTo: { ...s.replyTo, [k]: "" },
@@ -162,6 +204,13 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
 
   const submit = async () => {
     const text = draft.trim();
+    if (files.length && !editId && !blocked && canSend) {
+      const { wire, shown } = mentions.encode(text);
+      files.forEach((f, i) => void send(chatKey, i ? "" : shown, { file: f.path, replyTo: i ? undefined : replyId || undefined, threadId, wire: i ? undefined : wire }));
+      setFiles([]);
+      useApp.setState((s) => ({ drafts: { ...s.drafts, [k]: "" }, replyTo: { ...s.replyTo, [k]: "" } }));
+      return;
+    }
     if (!text || blocked || !canSend || savingRef.current) return;
     if (editId) {
       const [a, c] = splitKey(chatKey);
@@ -181,7 +230,8 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
         msgs: { ...s.msgs, [chatKey]: (s.msgs[chatKey] ?? []).map((m) => (m.id === editId ? { ...m, text, edited: true } : m)) },
       }));
     } else {
-      void send(chatKey, text, { replyTo: replyId || undefined, threadId });
+      const { wire, shown } = mentions.encode(text);
+      void send(chatKey, shown, { replyTo: replyId || undefined, threadId, wire });
     }
     setOrig(null);
     dismissSuggestions();
@@ -191,10 +241,7 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
   const attach = async () => {
     if (blocked || saving || editId) return;
     try {
-      const path = await pickFile();
-      if (!path) return;
-      void send(chatKey, draft.trim(), { file: path, replyTo: replyId || undefined, threadId });
-      useApp.setState((s) => ({ drafts: { ...s.drafts, [k]: "" }, replyTo: { ...s.replyTo, [k]: "" } }));
+      await stage(await pickFiles());
     } catch (e) { fail(e); }
   };
 
@@ -210,6 +257,17 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
 
   return (
     <div className={`composer${blocked ? " composer-blocked" : ""}`}>
+      <AnimatePresence>
+        {dropping && (
+          <motion.div className="drop-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.12 }}>
+            <div>
+              <Icon name="paperclip" />
+              <strong>Thả để đính kèm</strong>
+              <span>Gửi tới {useApp.getState().chats[chatKey]?.title} · Enter để gửi, thêm chú thích nếu muốn</span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       <div className="composer-inner">
         <AnimatePresence initial={false}>
           {ref && (
@@ -247,7 +305,27 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
         <AnimatePresence>
           {stickers && caps.stickers && <StickerPanel id={stickerId} accountId={accountId} onPick={sendSticker} onClose={(restoreFocus) => { setStickers(false); if (restoreFocus) stickerButton.current?.focus(); }} />}
         </AnimatePresence>
-        <div className="composer-box main-composer">
+        <AnimatePresence initial={false}>
+          {files.length > 0 && (
+            <motion.div className="attach-bar" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.16, ease: EASE }}>
+              <AnimatePresence initial={false}>
+                {files.map((f) => (
+                  <motion.div className="attach-chip" key={f.path} title={f.path} layout initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }}>
+                    {IMG.test(f.name) ? <img src={fileSrc(f.path)} alt="" /> : <span className="attach-ic"><Icon name={VID.test(f.name) ? "film" : "file-text"} /></span>}
+                    <span className="attach-meta">
+                      <b>{f.name}</b>
+                      <small>{fileSize(f.size)}</small>
+                    </span>
+                    <button className="tool-btn icon-only" aria-label={`Bỏ ${f.name}`} onClick={() => setFiles((x) => x.filter((p) => p.path !== f.path))}>
+                      <Icon name="x" />
+                    </button>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        <div className={`composer-box main-composer${dropping ? " dropping" : ""}`}>
           {recorder.recording && (
             <div className="rec-bar" role="status">
               <span className="rec-dot" />
@@ -255,6 +333,7 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
               <small>Bấm Gửi để gửi · ✕ để huỷ</small>
             </div>
           )}
+          {mentions.pop}
           <textarea
             style={recorder.recording ? { display: "none" } : undefined}
             id="composer-input"
@@ -264,8 +343,13 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
             aria-label="Soạn tin nhắn"
             value={draft}
             disabled={blocked || saving}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              mentions.detect(e.target.value, e.target.selectionStart);
+            }}
+            onPaste={onPaste}
             onKeyDown={(e) => {
+              if (mentions.onKey(e)) return;
               const mod = e.metaKey || e.ctrlKey;
               if (mod && e.key.toLowerCase() === "j") {
                 e.preventDefault();
@@ -384,7 +468,7 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
               aria-label={editId ? "Lưu chỉnh sửa" : "Gửi"}
               data-tip={recorder.recording ? "Gửi tin thoại" : editId ? "Lưu chỉnh sửa" : "Gửi"}
               data-kbd="↵"
-              disabled={blocked || saving || (!draft.trim() && !recorder.recording)}
+              disabled={blocked || saving || (!draft.trim() && !recorder.recording && !files.length)}
               onClick={() => (recorder.recording ? void sendVoice() : void submit())}
             >
               <Icon name={editId ? "check" : "send"} />
@@ -404,11 +488,21 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
               >
                 <Icon name="undo-2" /> Khôi phục bản gốc
               </button>
-            ) : ref ? "Esc để huỷ trả lời / sửa" : ""}
+            ) : null}
           </span>
-          <span className="draft-saved">{draft.trim() && !editId ? "Nháp đã lưu cho tab này" : ""}</span>
         </div>
       </div>
     </div>
   );
 }
+
+const IMG = /\.(jpe?g|png|gif|webp|heic)$/i;
+const VID = /\.(mp4|mov|m4v|webm)$/i;
+
+const b64 = (b: Blob) =>
+  new Promise<string>((ok, no) => {
+    const fr = new FileReader();
+    fr.onload = () => ok(String(fr.result).split(",")[1] ?? "");
+    fr.onerror = () => no(fr.error);
+    fr.readAsDataURL(b);
+  });

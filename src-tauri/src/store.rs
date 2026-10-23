@@ -167,6 +167,42 @@ impl Store {
         Ok(out)
     }
 
+    /// Thread starters older than `before`, to lead the threads of a cached page whose
+    /// starter fell outside it (one scan instead of a query per thread).
+    pub fn roots(&self, account_id: &str, chat_id: &str, before: i64) -> R<Vec<Msg>> {
+        let mut st = self
+            .db
+            .prepare(
+                "SELECT data FROM messages WHERE account_id = ?1 AND chat_id = ?2 AND sort < ?3
+                 AND json_extract(data, '$.threadReply') = 0 AND json_extract(data, '$.threadId') != ''",
+            )
+            .map_err(e)?;
+        let rows = st.query_map(params![account_id, chat_id, before], |r| r.get::<_, String>(0)).map_err(e)?;
+        Ok(rows.filter_map(|r| r.ok()).filter_map(|s| serde_json::from_str(&s).ok()).collect())
+    }
+
+    /// Newest messages that call for me: mentions anywhere, DMs that aren't muted, and
+    /// replies in threads I posted in (same rule as `Event::Message.inbox`).
+    pub fn inbox(&self, limit: i64) -> R<Vec<Msg>> {
+        let mut st = self
+            .db
+            .prepare(
+                "WITH f AS (SELECT DISTINCT account_id, chat_id, json_extract(data, '$.threadId') AS t FROM messages
+                            WHERE json_extract(data, '$.outgoing') = 1 AND json_extract(data, '$.threadId') != '')
+                 SELECT m.data FROM messages m JOIN chats c ON c.account_id = m.account_id AND c.id = m.chat_id
+                 LEFT JOIN f ON f.account_id = m.account_id AND f.chat_id = m.chat_id
+                      AND f.t = json_extract(m.data, '$.threadId') AND json_extract(m.data, '$.threadReply') = 1
+                 WHERE json_extract(m.data, '$.outgoing') = 0
+                 AND (json_extract(m.data, '$.mentionsMe') = 1
+                      OR (json_extract(c.data, '$.kind') = 'dm' AND json_extract(c.data, '$.muted') = 0)
+                      OR f.t IS NOT NULL)
+                 ORDER BY json_extract(m.data, '$.ts') DESC LIMIT ?1",
+            )
+            .map_err(e)?;
+        let rows = st.query_map(params![limit], |r| r.get::<_, String>(0)).map_err(e)?;
+        Ok(rows.filter_map(|r| r.ok()).filter_map(|s| serde_json::from_str(&s).ok()).collect())
+    }
+
     pub fn thread_msgs(&self, account_id: &str, chat_id: &str, thread_id: &str) -> R<Vec<Msg>> {
         let mut st = self
             .db

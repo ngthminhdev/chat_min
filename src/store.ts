@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { api, onEvent, saveFile } from "./lib/bridge";
 import { plain } from "./lib/format";
+import { windowAppearance, type BackgroundMode } from "./lib/appearance";
 import { PLATFORMS, type Cap } from "./lib/platforms";
 import type { Account, Chat, CoreEvent, Health, Media, Msg, Topic } from "./lib/types";
 import type { IconName } from "./ui/Icon";
@@ -17,8 +18,17 @@ export const splitKey = (k: string): [string, string] => {
 
 export interface Prefs {
   size: number; theme: string; uiFont: string; monoFont: string; compact: boolean;
+  backgroundMode: BackgroundMode; backgroundTransparency: number;
   /** AI: the language the user reads in, and the default one to write in */
   aiMe: string; aiTo: string;
+}
+/** `reacted`: someone added this emoji to my message; `ts` is then when it was seen */
+export type InboxItem = Msg & { reacted?: string };
+export const inboxKey = (m: InboxItem) => `${m.accountId}|${m.chatId}|${m.id}|${m.reacted ?? ""}`;
+/** Unread until opened, marked all read, or (a plain message) its chat was read elsewhere. */
+export function inboxUnread(s: Pick<State, "inboxSeen" | "inboxRead" | "chats">, m: InboxItem) {
+  if (m.ts <= s.inboxSeen || s.inboxRead[inboxKey(m)]) return false;
+  return !!m.reacted || m.threadReply || (s.chats[key(m.accountId, m.chatId)]?.unread ?? 1) > 0;
 }
 export interface Translation { state: "loading" | "ok" | "err"; text: string }
 export interface NotifyPrefs { enabled: boolean; mentions: boolean; quiet: boolean; from: string; to: string; preview: boolean }
@@ -27,7 +37,7 @@ export const DEFAULT_NOTIFY: NotifyPrefs = { enabled: true, mentions: false, qui
 export interface MenuItem { icon: IconName; label: string; kbd?: string; danger?: boolean; run: () => void }
 /** Popovers anchor below `y` (an element's bottom) and flip above `top` when they don't fit. */
 export type Pop = { x: number; y: number; top: number } & (
-  | { kind: "emoji"; onPick: (emoji: string) => void }
+  | { kind: "emoji"; onPick: (emoji: string) => void; only?: string[] }
   | { kind: "menu"; items: MenuItem[] }
   | { kind: "color"; accountId: string }
 );
@@ -58,6 +68,16 @@ interface State {
   unreadMark: Record<string, { sort: number; count: number }>;
   /** ids that arrived live (not from history) — they animate in */
   fresh: Record<string, true>;
+  /** latest reply sort seen per thread (`chatKey#threadId`): clears its "N mới" */
+  threadSeen: Record<string, number>;
+  /** mentions + DMs + reactions to my messages, newest first (titlebar bell) */
+  inbox: InboxItem[];
+  /** "account|user" → online (Telegram only: Google Chat has no presence API) */
+  online: Record<string, true>;
+  /** inbox items at or before this ts count as read ("Đánh dấu đã đọc") */
+  inboxSeen: number;
+  /** inbox items opened one by one (`inboxKey`) */
+  inboxRead: Record<string, true>;
   typing: Record<string, { who: string; until: number }>;
   tabs: string[];
   active: string | null;
@@ -93,6 +113,8 @@ interface State {
   auth: Record<string, AuthState>;
   sync: Record<string, SyncState>;
   jumpTo: string | null;
+  /** bumped to bring the open conversation to its newest message (notification click) */
+  toLatest: number;
   /** chats hidden from the sidebar → lastTs when hidden; a newer message brings them back */
   hidden: Record<string, number>;
   /** manual chat order per sidebar section ("accountId:section") — a prefix; the rest sorts by activity */
@@ -108,6 +130,8 @@ interface State {
   viewer: { media: Media; path: string; src?: string; accountId?: string } | null;
   /** `${accountId}|${fileRef}` → percent of a big download in progress */
   progress: Record<string, number>;
+  /** the open chat is scrolled to its newest message: only then does a new one count as seen */
+  atBottom: boolean;
   /** inline translations, keyed "chatKey#msgId" — never persisted */
   tr: Record<string, Translation>;
   /** chats translating every message as it loads */
@@ -137,6 +161,12 @@ export const useApp = create<State>(() => ({
   loadErr: {},
   unreadMark: {},
   fresh: {},
+  threadSeen: {},
+  inbox: [],
+  online: {},
+  // first run: what is already in the cache is history, not news
+  inboxSeen: saved.inboxSeen || Date.now(),
+  inboxRead: saved.inboxRead ?? {},
   typing: {},
   tabs: saved.tabs ?? [],
   active: saved.active ?? null,
@@ -163,14 +193,18 @@ export const useApp = create<State>(() => ({
   pop: null,
   dialog: null,
   toasts: [],
-  prefs: { size: 13, theme: "", uiFont: "", monoFont: "", compact: false, aiMe: "Vietnamese", aiTo: "English", ...saved.prefs },
+  prefs: { size: 13, theme: "", uiFont: "", monoFont: "", compact: false, aiMe: "Vietnamese", aiTo: "English", ...saved.prefs,
+    backgroundMode: windowAppearance(saved.prefs ?? {}).mode,
+    backgroundTransparency: windowAppearance(saved.prefs ?? {}).transparency },
   notif: saved.notif ?? {},
   auth: {},
   sync: {},
   jumpTo: null,
+  toLatest: 0,
   hidden: saved.hidden ?? {},
   viewer: null,
   progress: {},
+  atBottom: true,
   chatOrder: saved.chatOrder ?? {},
   hoverPeek: null,
   topics: {},
@@ -188,11 +222,11 @@ let persistT: ReturnType<typeof setTimeout> | undefined;
 useApp.subscribe((s) => {
   clearTimeout(persistT);
   persistT = setTimeout(() => {
-    const { tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, favorites, accountOrder, trAuto, aiLang, hidden, chatOrder } = s;
+    const { tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, favorites, accountOrder, trAuto, aiLang, hidden, chatOrder, inboxSeen, inboxRead } = s;
     try {
       localStorage.setItem(
         PERSIST,
-        JSON.stringify({ tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, favorites, accountOrder, trAuto, aiLang, hidden, chatOrder }),
+        JSON.stringify({ tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, favorites, accountOrder, trAuto, aiLang, hidden, chatOrder, inboxSeen, inboxRead }),
       );
     } catch {}
   }, 300);
@@ -239,11 +273,11 @@ export function hideChat(k: string) {
   });
 }
 
-/** Save a downloaded file (quick → ~/Downloads, else a dialog) and say where it went. */
+/** Save a downloaded file (quick → the download folder, else a dialog) and say where it went. */
 export async function saveMedia(path: string, name: string, ask: boolean) {
   try {
     const out = await saveFile(path, name, ask);
-    if (out) toast(`Đã lưu ${out.replace(/^.*\/(Downloads\/)/, "$1")}`, "download");
+    if (out) toast(`Đã lưu ${out.split("/").slice(-2).join("/")}`, "download");
   } catch (e) {
     fail(e);
   }
@@ -277,6 +311,8 @@ async function bootOnce() {
   for (const c of st.chats) if (!(c.lastTs <= hidden[key(c.accountId, c.id)])) chats[key(c.accountId, c.id)] = c;
   const tabs = get().tabs.filter((t) => chats[t] || (isThreadTab(t) && chats[get().threadTabs[t]?.chatKey ?? ""]));
   const active = get().active && tabs.includes(get().active!) ? get().active : tabs[0] ?? null;
+  void api.inbox(100).then((inbox) => set({ inbox })).catch(() => {});
+  void api.presence().then((ids) => set({ online: Object.fromEntries(ids.map((id) => [id, true as const])) })).catch(() => {});
   set({
     booted: true,
     accounts: st.accounts,
@@ -372,6 +408,8 @@ export function applyEvent(e: CoreEvent) {
           typing: e.isNew ? { ...s.typing, [k]: { who: "", until: 0 } } : s.typing,
         }));
       }
+      if (e.inbox)
+        set((s) => ({ inbox: [e.msg, ...s.inbox.filter((x) => x.id !== e.msg.id || x.chatId !== e.msg.chatId)].slice(0, 100) }));
       // notifications and the Dock badge are decided in Rust (notify.rs): this webview
       // can be throttled while the window is hidden
       if (e.isNew && isWatching(k)) void markRead(k);
@@ -387,10 +425,12 @@ export function applyEvent(e: CoreEvent) {
       });
       return;
     }
-    case "open":
-      // a notification was clicked (notify.rs)
-      if (get().chats[e.key]) void openChat(e.key);
-      return;
+    case "open": {
+      // a notification was clicked (notify.rs); a thread reply opens its thread tab
+      if (!get().chats[e.key]) return;
+      set((s) => ({ toLatest: s.toLatest + 1 }));
+      return openAt(e.key, e.msg, e.thread);
+    }
     case "fileProgress":
       set((s) => ({ progress: { ...s.progress, [`${e.accountId}|${e.fileRef}`]: e.pct } }));
       return;
@@ -409,6 +449,21 @@ export function applyEvent(e: CoreEvent) {
       );
       return;
     }
+    case "reacted": {
+      const it: InboxItem = { ...e.msg, ts: Date.now(), reacted: e.emoji };
+      set((s) => ({ inbox: [it, ...s.inbox].slice(0, 100) }));
+      return;
+    }
+    case "presence": {
+      const id = key(e.accountId, e.userId);
+      set((s) => {
+        const online = { ...s.online };
+        if (e.online) online[id] = true;
+        else delete online[id];
+        return { online };
+      });
+      return;
+    }
     case "typing": {
       const k = key(e.accountId, e.chatId);
       set((s) => ({ typing: { ...s.typing, [k]: e.on ? { who: e.who, until: Date.now() + 6000 } : { who: "", until: 0 } } }));
@@ -418,7 +473,9 @@ export function applyEvent(e: CoreEvent) {
 }
 
 /** The user is looking at this chat right now: new messages count as read. */
-const isWatching = (k: string) => chatKeyOf(get().active) === k && get().route === "shell" && document.hasFocus() && !document.hidden;
+// reading older messages up the list isn't seeing the new one: it stays unread (badge + "N tin mới")
+const isWatching = (k: string) =>
+  chatKeyOf(get().active) === k && get().route === "shell" && get().atBottom && document.hasFocus() && !document.hidden;
 
 // ── chats & messages ────────────────────────────────────────────────────────
 const PAGE = 50;
@@ -447,6 +504,29 @@ export async function openChat(k: string) {
 }
 
 /** Opens a Google Chat thread as its own workspace tab, next to its space. */
+/** Opens the chat holding `msg`, or its thread tab when it's a reply in a threaded space. */
+export function openAt(k: string, msg: string, thread: string) {
+  const chat = get().chats[k];
+  if (!chat) return toast("Chat này không còn trong danh sách", "info");
+  if (!thread || !chat.threaded) return void openChat(k);
+  const m = get().msgs[k]?.find((x) => x.id === msg);
+  if (m) return openThreadTab(k, m);
+  const t = threadTabKey(k, thread);
+  set((s) => ({ threadTabs: { ...s.threadTabs, [t]: s.threadTabs[t] ?? { chatKey: k, threadId: thread, rootId: msg, title: "Thread" } } }));
+  void openChat(t);
+}
+
+/** Incoming replies the user hasn't caught up on: past the chat's unread line or arrived
+ *  live, and newer than the last time the thread was open. */
+export function threadUnread(s: Pick<State, "unreadMark" | "fresh" | "threadSeen">, k: string, threadId: string, replies: Msg[]) {
+  const mark = s.unreadMark[k]?.sort;
+  const seen = s.threadSeen[`${k}#${threadId}`] ?? -Infinity;
+  return replies.filter((r) => !r.outgoing && r.sort > seen && ((mark !== undefined && r.sort >= mark) || s.fresh[r.id])).length;
+}
+
+export const seenThread = (k: string, thread: string, sort: number) =>
+  set((s) => ((s.threadSeen[`${k}#${thread}`] ?? -Infinity) >= sort ? s : { threadSeen: { ...s.threadSeen, [`${k}#${thread}`]: sort } }));
+
 export function openThreadTab(chatKey: string, root: Msg) {
   if (!root.threadId) return toast("Tin nhắn này chưa có thread ID từ Google Chat", "info");
   const threadId = root.threadId;
@@ -516,8 +596,13 @@ async function prefetchUnread(accountId: string) {
 
 /** First open since launch: paint the SQLite copy at once, the live page merges in after. */
 async function showCached(k: string) {
-  const cached = await api.cachedMessages(...splitKey(k), PAGE).catch(() => [] as Msg[]);
-  if (cached.length && !get().msgs[k]) set((s) => ({ msgs: { ...s.msgs, [k]: cached } }));
+  // threaded: a page is mostly folded replies, 50 messages can be just 2 rows
+  const limit = get().chats[k]?.threaded ? 400 : PAGE;
+  const [page, roots] = await api.cachedMessages(...splitKey(k), limit).catch(() => [[], []] as Msg[][]);
+  if (!page.length || get().msgs[k]) return;
+  let list = page;
+  for (const m of roots) list = upsert(list, m);
+  set((s) => ({ msgs: { ...s.msgs, [k]: list } }));
 }
 
 /** Where the next older page starts: the oldest message of the pages walked so far — not
@@ -532,24 +617,27 @@ export async function loadLatest(k: string) {
   const unread = get().chats[k]?.unread ?? 0;
   const size = pageSize(k);
   try {
-    const page = await api.messages(accountId, chatId, 0, size);
+    const fetched = await api.messages(accountId, chatId, 0, size);
+    // threaded spaces: bring the missing thread starters in the same update — added after
+    // the page, each one moved its thread's row up in plain view
+    const page = [...fetched, ...(await fetchRoots(k, [...(get().msgs[k] ?? []), ...fetched]))];
     set((s) => {
       // merge: keep older pages already loaded and anything that arrived meanwhile —
       // unless a full page doesn't reach them (more than a page arrived while closed):
       // that gap would never fill, so start over from the live page
       let list = s.msgs[k] ?? [];
-      const gap = page.length >= size && list.length > 0 && list[list.length - 1].sort < page[0].sort;
+      const gap = fetched.length >= size && list.length > 0 && list[list.length - 1].sort < fetched[0].sort;
       if (gap) list = [];
-      if (page.length && (gap || !cursor.has(k))) cursor.set(k, page[0].sort);
+      if (fetched.length && (gap || !cursor.has(k))) cursor.set(k, fetched[0].sort);
       for (const m of page) list = upsert(list, m);
-      const incoming = page.filter((m) => !m.outgoing && m.kind !== "service");
+      const incoming = fetched.filter((m) => !m.outgoing && m.kind !== "service");
       const mark =
         unread > 0 && !s.unreadMark[k] && incoming.length
           ? { ...s.unreadMark, [k]: { sort: incoming[Math.max(0, incoming.length - unread)].sort, count: unread } }
           : s.unreadMark;
       return {
         msgs: { ...s.msgs, [k]: list },
-        older: { ...s.older, [k]: page.length ? s.older[k] ?? "idle" : "done" },
+        older: { ...s.older, [k]: fetched.length ? s.older[k] ?? "idle" : "done" },
         loadErr: { ...s.loadErr, [k]: "" },
         unreadMark: mark,
       };
@@ -565,21 +653,26 @@ export async function loadLatest(k: string) {
  *  threads, which leaves the timeline empty. Fetch those threads (oldest first, so the
  *  starter comes along). Each thread is tried once per session. */
 const rootTried = new Set<string>();
-async function fillRoots(k: string) {
-  const s = get();
-  if (!s.chats[k]?.threaded) return;
-  const list = s.msgs[k] ?? [];
+/** The threads in `list` whose starter is missing, fetched whole (≤8, each tried once). */
+async function fetchRoots(k: string, list: Msg[]): Promise<Msg[]> {
+  if (!get().chats[k]?.threaded) return [];
   const roots = new Set(list.filter((m) => !m.threadReply).map((m) => m.threadId));
   const missing = [...new Set(list.filter((m) => m.threadReply && m.threadId && !roots.has(m.threadId)).map((m) => m.threadId))]
     .filter((t) => !rootTried.has(`${k}#${t}`))
     .slice(-8);
-  if (!missing.length) return;
+  if (!missing.length) return [];
   missing.forEach((t) => rootTried.add(`${k}#${t}`));
   const [accountId, chatId] = splitKey(k);
   const pages = await Promise.all(missing.map((t) => api.thread(accountId, chatId, t).catch(() => [] as Msg[])));
+  return pages.flat();
+}
+
+async function fillRoots(k: string) {
+  const found = await fetchRoots(k, get().msgs[k] ?? []);
+  if (!found.length) return;
   set((st) => {
     let next = st.msgs[k] ?? [];
-    for (const page of pages) for (const m of page) next = upsert(next, m);
+    for (const m of found) next = upsert(next, m);
     return { msgs: { ...st.msgs, [k]: next } };
   });
 }
@@ -593,11 +686,16 @@ export async function loadOlder(k: string) {
   try {
     const page = await api.messages(accountId, chatId, cursor.get(k) ?? list[0].sort, pageSize(k));
     if (page.length) cursor.set(k, page[0].sort);
+    let grew = false;
     set((st) => {
       let next = st.msgs[k] ?? [];
       for (const m of page) next = upsert(next, m);
+      grew = next.length > (st.msgs[k]?.length ?? 0);
       return { msgs: { ...st.msgs, [k]: next }, older: { ...st.older, [k]: page.length ? "idle" : "done" } };
     });
+    // a page the cache already showed changes nothing on screen, and the list doesn't
+    // scroll again to ask for the next one: keep walking back until something new comes
+    if (page.length && !grew) return loadOlder(k);
     void fillRoots(k);
   } catch {
     set((st) => ({ older: { ...st.older, [k]: "idle" } }));
@@ -699,7 +797,8 @@ export async function forwardMsg(m: Msg, to: string) {
   }
 }
 
-export async function send(k: string, text: string, opts: { replyTo?: string; threadId?: string; file?: string; voice?: number } = {}) {
+/** `wire`: the text the platform gets when it differs from the one shown (mentions) */
+export async function send(k: string, text: string, { wire, ...opts }: { replyTo?: string; threadId?: string; file?: string; voice?: number; wire?: string } = {}) {
   const [accountId, chatId] = splitKey(k);
   const temp: Msg = {
     accountId, chatId, id: `local-${++localId}`, sort: Number.MAX_SAFE_INTEGER - 1000 + localId, senderId: "", senderName: "", senderPhoto: "",
@@ -715,7 +814,7 @@ export async function send(k: string, text: string, opts: { replyTo?: string; th
   }
   set((s) => ({ msgs: { ...s.msgs, [k]: [...(s.msgs[k] ?? []), temp] }, fresh: { ...s.fresh, [temp.id]: true } }));
   try {
-    const real = await api.send({ accountId, chatId, text, ...opts });
+    const real = await api.send({ accountId, chatId, text: wire ?? text, ...opts });
     set((s) => {
       const list = (s.msgs[k] ?? []).filter((m) => m.id !== temp.id);
       return { msgs: { ...s.msgs, [k]: list.some((m) => m.id === real.id) ? list : upsert(list, real) }, fresh: { ...s.fresh, [real.id]: true } };
@@ -729,6 +828,13 @@ export function retry(k: string, m: Msg) {
   set((s) => ({ msgs: { ...s.msgs, [k]: (s.msgs[k] ?? []).filter((x) => x.id !== m.id) } }));
   if (!m.id.startsWith("local-")) void api.deleteMsg(m.accountId, m.chatId, m.id).catch(() => {});
   void send(k, m.text, { replyTo: m.replyTo || undefined, threadId: m.threadId || undefined });
+}
+
+/** Reaction picker limited to what the platform accepts (Telegram chats restrict reactions). */
+export async function pickReaction(k: string, m: Msg, at: { x: number; y: number; top: number }) {
+  const only = await api.reactions(m.accountId, m.chatId, m.id).catch(() => null);
+  if (only && !only.length) return toast("Chat này không cho thả biểu cảm", "info");
+  set({ pop: { kind: "emoji", ...at, only: only ?? undefined, onPick: (emoji) => void toggleReaction(k, m, emoji) } });
 }
 
 export async function toggleReaction(k: string, m: Msg, emoji: string) {

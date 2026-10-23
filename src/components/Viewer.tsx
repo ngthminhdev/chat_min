@@ -17,7 +17,7 @@ export function Viewer() {
     return api.download(v.accountId, v.media.fileRef, v.media.name).catch((e) => (fail(e), ""));
   };
   const keep = (ask: boolean) => void local().then((p) => { if (p) void saveMedia(p, v!.media.name, ask); });
-  // ⌘S saves to Downloads, ⌘⇧S asks where
+  // ⌘S saves to the download folder (Settings), ⌘⇧S asks where
   useEffect(() => {
     if (!v) return;
     const onKey = (e: KeyboardEvent) => {
@@ -51,7 +51,7 @@ export function Viewer() {
               <strong>{v.media.name}</strong>
               {v.media.size > 0 && <small>{fileSize(v.media.size)}</small>}
             </span>
-            <button className="tool-btn icon-only" aria-label="Lưu vào Downloads" data-tip="Lưu vào Downloads" data-kbd="⌘S" onClick={() => keep(false)}>
+            <button className="tool-btn icon-only" aria-label="Lưu vào thư mục tải về" data-tip="Lưu vào thư mục tải về" data-kbd="⌘S" onClick={() => keep(false)}>
               <Icon name="download" />
             </button>
             <button className="tool-btn icon-only" aria-label="Lưu thành" data-tip="Lưu thành…" data-kbd="⌘⇧S" onClick={() => keep(true)}>

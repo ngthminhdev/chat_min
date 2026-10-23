@@ -4,6 +4,7 @@ mod model;
 mod store;
 mod tg;
 mod notify;
+mod storage;
 mod web;
 
 use gchat::GChat;
@@ -31,6 +32,12 @@ struct Config {
     gchat_client_id: String,
     gchat_client_secret: String,
     ai: ai::AiConfig,
+    /// where "Lưu vào…" puts files; "" = ~/Downloads/ChatMin
+    download_dir: String,
+    /// media cache limit in MB; None = 2048, Some(0) = no limit
+    cache_mb: Option<u64>,
+    /// keep cached media this many days since last use; None = 30, Some(0) = forever
+    keep_days: Option<u32>,
 }
 
 #[derive(Clone, Serialize)]
@@ -93,11 +100,59 @@ impl Core {
         self.notifier.track(&self.app, &Chat { account_id: account_id.into(), id: chat_id.into(), ..Default::default() }, true);
         self.emit(Event::ChatRemoved { account_id: account_id.into(), chat_id: chat_id.into() });
     }
+    fn download_dir(&self) -> PathBuf {
+        let d = self.config.lock().unwrap().download_dir.clone();
+        if d.is_empty() {
+            self.app.path().download_dir().unwrap_or_else(|_| self.data_dir.clone()).join("ChatMin")
+        } else {
+            d.into()
+        }
+    }
+
+    /// Trims the media caches to the configured size / age (`all`: empties them).
+    /// Returns bytes freed.
+    async fn clean_storage(&self, all: bool) -> u64 {
+        let (mb, days) = {
+            let c = self.config.lock().unwrap();
+            (c.cache_mb.unwrap_or(2048), c.keep_days.unwrap_or(30))
+        };
+        let (limit, ttl) = if all { (Some(0), Some(0)) } else { ((mb > 0).then_some(mb << 20), (days > 0).then_some(days as u64 * 86400)) };
+        // ponytail: the limit applies to each store (Telegram, ChatMin's own cache), not to their sum
+        let tg = self.tg.optimize(limit.map_or(i64::MAX >> 2, |l| l as i64), ttl.map_or(i32::MAX, |t| t.min(i32::MAX as u64) as i32)).await;
+        let dirs = [self.cache_dir.join("gchat"), self.cache_dir.join("outbox")];
+        let ttl = ttl.map(std::time::Duration::from_secs);
+        let local: u64 = dirs.iter().map(|d| storage::prune(d, limit, ttl)).sum();
+        tg as u64 + local
+    }
+
     pub fn put_msg(&self, msg: Msg, is_new: bool) {
         // Hold the store mutex across existence check + upsert: concurrent pollers
         // and history loads must agree on whether this ID is a first delivery.
+        // reactions on my messages only show up as changed counts: diff against the stored copy
+        let before = if msg.outgoing && !msg.reactions.is_empty() {
+            self.store().msg(&msg.account_id, &msg.chat_id, &msg.id).ok().flatten()
+        } else {
+            None
+        };
+        let mut msg = msg;
+        if let (Some(old), true) = (&before, msg.account_id.starts_with("gc-")) {
+            // gchat never says which reactions are mine: keep what we knew unless that count fell
+            for r in msg.reactions.iter_mut() {
+                if let Some(o) = old.reactions.iter().find(|o| o.emoji == r.emoji) {
+                    r.mine |= o.mine && r.count >= o.count;
+                }
+            }
+        }
         let first_delivery = self.store().put_msg_if_new(&msg).unwrap_or(false);
+        if let Some(old) = before {
+            if let Some(emoji) = notify::new_reaction(&old, &msg) {
+                let chat = self.store().chat(&msg.account_id, &msg.chat_id).ok().flatten();
+                self.notifier.reaction(&self.app, chat.as_ref(), &msg, &emoji);
+                self.emit(Event::Reacted { msg: msg.clone(), emoji });
+            }
+        }
         let is_new = is_new && first_delivery && !msg.deleted;
+        let mut inbox = false;
         if is_new {
             let (chat, followed) = {
                 let s = self.store();
@@ -107,12 +162,13 @@ impl Core {
                     && s.thread_msgs(&msg.account_id, &msg.chat_id, &msg.thread_id).is_ok_and(|t| t.iter().any(|m| m.outgoing));
                 (chat, followed)
             };
+            inbox = !msg.outgoing && (msg.mentions_me || followed || chat.as_ref().is_some_and(|c| c.kind == "dm" && !c.muted));
             let rang = self.notifier.message(&self.app, chat.as_ref(), &msg, followed);
             // how long a message took to reach us (what the polling cadence is tuned by), and
             // why it did or didn't ring — no names or content
             let c = chat.as_ref();
             eprintln!(
-                "[recv] {} +{}ms {}{}{} rang={rang}",
+                "[recv] {} +{}ms {}{}{} rang={rang:?}",
                 msg.account_id.split('-').next().unwrap_or(""),
                 now_ms() - msg.ts,
                 c.map_or("?", |c| c.kind.as_str()),
@@ -120,7 +176,7 @@ impl Core {
                 if msg.thread_reply { " reply" } else { "" },
             );
         }
-        self.emit(Event::Message { msg, is_new });
+        self.emit(Event::Message { msg, is_new, inbox });
     }
     pub fn replace_msg(&self, old_id: &str, msg: Msg) {
         {
@@ -287,6 +343,49 @@ fn config_set(core: C, tg_api_id: Option<String>, tg_api_hash: Option<String>, g
     write_private(&core.data_dir.join("config.json"), &serde_json::to_string_pretty(&*c).unwrap()).map_err(|e| e.to_string())
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StorageView {
+    download_dir: String,
+    cache_mb: u64,
+    keep_days: u32,
+    tg_bytes: i64,
+    local_bytes: u64,
+}
+#[tauri::command]
+async fn storage(core: C<'_>) -> Res<StorageView> {
+    let core = core.inner().clone();
+    let dirs = [core.cache_dir.join("gchat"), core.cache_dir.join("outbox")];
+    let local_bytes = tauri::async_runtime::spawn_blocking(move || dirs.iter().map(|d| storage::dir_size(d)).sum()).await.unwrap_or(0);
+    let tg_bytes = core.tg.files_size().await;
+    let (cache_mb, keep_days) = {
+        let c = core.config.lock().unwrap();
+        (c.cache_mb.unwrap_or(2048), c.keep_days.unwrap_or(30))
+    };
+    let dir = core.download_dir();
+    let _ = std::fs::create_dir_all(&dir); // so "Mở" has something to open
+    Ok(StorageView { download_dir: dir.to_string_lossy().into(), cache_mb, keep_days, tg_bytes, local_bytes })
+}
+#[tauri::command]
+fn storage_set(core: C, download_dir: Option<String>, cache_mb: Option<u64>, keep_days: Option<u32>) -> Res<()> {
+    {
+        let mut c = core.config.lock().unwrap();
+        if let Some(d) = download_dir {
+            c.download_dir = d;
+        }
+        c.cache_mb = cache_mb.or(c.cache_mb);
+        c.keep_days = keep_days.or(c.keep_days);
+        write_private(&core.data_dir.join("config.json"), &serde_json::to_string_pretty(&*c).unwrap()).map_err(|e| e.to_string())?;
+    }
+    let core = core.inner().clone();
+    tauri::async_runtime::spawn(async move { core.clean_storage(false).await });
+    Ok(())
+}
+/// Trim now (`all`: empty the media cache). Returns bytes freed.
+#[tauri::command]
+async fn storage_clean(core: C<'_>, all: bool) -> Res<u64> {
+    Ok(core.inner().clone().clean_storage(all).await)
+}
 #[tauri::command]
 fn ai_config(core: C) -> ai::AiView {
     core.config.lock().unwrap().ai.view()
@@ -432,6 +531,52 @@ fn emoji_palette(app: tauri::AppHandle) {
         }
     });
 }
+/// Webview errors (no console in release builds) land in the app's stderr log.
+#[tauri::command]
+fn log_js(msg: String) {
+    eprintln!("[js] {msg}");
+}
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Staged {
+    path: String,
+    name: String,
+    size: u64,
+}
+/// Files about to be sent (dropped, pasted, picked): their size for the chip, folders
+/// dropped (can't be sent), and the asset protocol opened so images can preview.
+#[tauri::command]
+fn stage_files(app: tauri::AppHandle, paths: Vec<String>) -> Vec<Staged> {
+    paths
+        .into_iter()
+        .filter_map(|path| {
+            let md = std::fs::metadata(&path).ok().filter(|m| m.is_file())?;
+            let _ = app.asset_protocol_scope().allow_file(&path);
+            let name = std::path::Path::new(&path).file_name()?.to_string_lossy().into();
+            Some(Staged { name, size: md.len(), path })
+        })
+        .collect()
+}
+/// Files copied in Finder: the webview's paste event only sees their names, the paths
+/// live on the native pasteboard (as file reference URLs, resolved here).
+#[tauri::command]
+fn clipboard_files() -> Vec<String> {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_app_kit::{NSPasteboard, NSPasteboardTypeFileURL};
+        use objc2_foundation::NSURL;
+        let Some(items) = NSPasteboard::generalPasteboard().pasteboardItems() else { return vec![] };
+        items
+            .iter()
+            .filter_map(|i| {
+                let s = i.stringForType(unsafe { NSPasteboardTypeFileURL })?;
+                Some(NSURL::URLWithString(&s)?.filePathURL()?.path()?.to_string())
+            })
+            .collect()
+    }
+    #[cfg(not(target_os = "macos"))]
+    vec![]
+}
 /// Clicking a notification (or ⌘Tab / the Dock) activates the app, but the window may be
 /// hidden after a close: bring it back whenever the app becomes active, like Slack does.
 #[cfg(target_os = "macos")]
@@ -457,10 +602,31 @@ fn show_on_activate(app: tauri::AppHandle) {
     std::mem::forget(observer);
 }
 
-/// The newest cached page, instantly: shown while `messages` fetches the live one.
+/// The newest cached page, instantly: shown while `messages` fetches the live one. Second:
+/// cached starters of the page's threads that begin before it, so the threaded timeline
+/// paints with its final rows instead of reshuffling when the starters arrive.
+/// Telegram users online now ("account|user"); changes follow as `presence` events.
 #[tauri::command]
-fn cached_messages(core: C<'_>, account_id: String, chat_id: String, limit: i64) -> Res<Vec<Msg>> {
-    core.store().msgs(&account_id, &chat_id, 0, limit)
+fn presence(core: C<'_>) -> Vec<String> {
+    core.tg.online()
+}
+/// Mentions + DMs for the notification inbox (titlebar bell).
+#[tauri::command]
+fn inbox(core: C<'_>, limit: i64) -> Res<Vec<Msg>> {
+    Ok(core.store().inbox(limit)?)
+}
+#[tauri::command]
+fn cached_messages(core: C<'_>, account_id: String, chat_id: String, limit: i64) -> Res<(Vec<Msg>, Vec<Msg>)> {
+    let store = core.store();
+    let page = store.msgs(&account_id, &chat_id, 0, limit)?;
+    let led: std::collections::HashSet<&str> = page.iter().filter(|m| !m.thread_reply).map(|m| m.thread_id.as_str()).collect();
+    let missing: std::collections::HashSet<&str> =
+        page.iter().filter(|m| m.thread_reply && !led.contains(m.thread_id.as_str())).map(|m| m.thread_id.as_str()).collect();
+    let roots = match (missing.is_empty(), page.first()) {
+        (false, Some(first)) => store.roots(&account_id, &chat_id, first.sort)?.into_iter().filter(|m| missing.contains(m.thread_id.as_str())).collect(),
+        _ => vec![],
+    };
+    Ok((page, roots))
 }
 #[tauri::command]
 async fn thread(core: C<'_>, account_id: String, chat_id: String, thread_id: String) -> Res<Vec<Msg>> {
@@ -524,6 +690,15 @@ async fn delete_msg(core: C<'_>, account_id: String, chat_id: String, msg_id: St
         core.gchat.delete(&core, &account_id, &chat_id, &msg_id).await
     }
 }
+/// Telegram: the emoji this message accepts. None = any emoji (Google Chat).
+#[tauri::command]
+async fn reactions(core: C<'_>, account_id: String, chat_id: String, msg_id: String) -> Res<Option<Vec<String>>> {
+    if core.platform(&account_id) == "telegram" {
+        core.tg.reactions(&account_id, &chat_id, &msg_id).await.map(Some)
+    } else {
+        Ok(None)
+    }
+}
 #[tauri::command]
 async fn react(core: C<'_>, account_id: String, chat_id: String, msg_id: String, emoji: String, add: bool) -> Res<()> {
     let core = core.inner().clone();
@@ -533,7 +708,11 @@ async fn react(core: C<'_>, account_id: String, chat_id: String, msg_id: String,
         core.gchat.react(&core, &account_id, &msg_id, &emoji, add).await?;
         // gchat has no reaction push; re-read the message so counts update right away
         if let Ok(v) = core.gchat.history(&core, &account_id, &chat_id, 0, 20).await {
-            for m in v.into_iter().filter(|m| m.id == msg_id) {
+            for mut m in v.into_iter().filter(|m| m.id == msg_id) {
+                // gchat summaries don't say whose reaction it is: don't let mine look like someone else's
+                if let Some(r) = m.reactions.iter_mut().find(|r| r.emoji == emoji) {
+                    r.mine = add;
+                }
                 core.put_msg(m, false);
             }
         }
@@ -650,7 +829,8 @@ fn save_file(core: C, src: String, name: String, dest: Option<String>) -> Res<St
     let dest = match dest.filter(|d| !d.is_empty()) {
         Some(d) => PathBuf::from(d),
         None => {
-            let dir = core.app.path().download_dir().map_err(|e| e.to_string())?;
+            let dir = core.download_dir();
+            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
             unique_path(&dir, &save_name(&name, &src))
         }
     };
@@ -679,13 +859,16 @@ fn unique_path(dir: &std::path::Path, name: &str) -> PathBuf {
 }
 
 #[tauri::command]
-async fn download(core: C<'_>, account_id: String, file_ref: String, name: String) -> Res<String> {
+async fn download(app: tauri::AppHandle, core: C<'_>, account_id: String, file_ref: String, name: String) -> Res<String> {
     let core = core.inner().clone();
-    if core.platform(&account_id) == "telegram" {
-        core.tg.download(&account_id, &file_ref).await
+    let path = if core.platform(&account_id) == "telegram" {
+        core.tg.download(&account_id, &file_ref).await?
     } else {
-        core.gchat.download(&core, &account_id, &file_ref, &name).await
-    }
+        core.gchat.download(&core, &account_id, &file_ref, &name).await?
+    };
+    // a file I sent stays at its original path (Desktop, Downloads…), outside the asset scope
+    let _ = app.asset_protocol_scope().allow_file(&path);
+    Ok(path)
 }
 #[tauri::command]
 fn search(core: C, query: String, account_id: Option<String>, chat_id: Option<String>, limit: i64) -> Res<Vec<Msg>> {
@@ -781,6 +964,16 @@ pub fn run() {
                 notifier: Default::default(),
             });
             app.manage(core.clone());
+            // keep the media cache inside its limits: shortly after launch, then every 6 hours
+            let c = core.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+                loop {
+                    let freed = c.clean_storage(false).await;
+                    eprintln!("[storage] freed {} MB", freed >> 20);
+                    tokio::time::sleep(std::time::Duration::from_secs(6 * 3600)).await;
+                }
+            });
             for c in core.store().chats()? {
                 core.notifier.track(&core.app, &c, false);
             }
@@ -862,6 +1055,9 @@ pub fn run() {
             stickers,
             send_sticker,
             save_temp,
+            clipboard_files,
+            stage_files,
+            log_js,
             web_add,
             web_show,
             web_hide,
@@ -888,6 +1084,12 @@ pub fn run() {
             edit,
             delete_msg,
             react,
+            reactions,
+            inbox,
+            storage,
+            storage_set,
+            storage_clean,
+            presence,
             pin,
             mark_read,
             set_open,

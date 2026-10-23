@@ -49,9 +49,12 @@ export const EMOJI = [
   ["🌻", "Hoa hướng dương", "flower"], ["🐱", "Mèo", "cat"],
 ] as const;
 
-export function searchEmoji(query: string) {
+/** Telegram writes some emoji without the U+FE0F variation selector (❤ vs ❤️). */
+export const bare = (e: string) => e.replace(/\uFE0F/g, "");
+
+export function searchEmoji(query: string, list: readonly (readonly [string, string, string])[] = EMOJI) {
   const q = norm(query.trim());
-  return EMOJI.filter((item) => norm(item.join(" ")).includes(q));
+  return list.filter((item) => norm(item.join(" ")).includes(q));
 }
 
 export function nextEmojiIndex(index: number, key: string, count: number, columns = 8): number {

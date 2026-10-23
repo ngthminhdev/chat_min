@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, fileSrc } from "../lib/bridge";
 import { initials } from "../lib/format";
+import { useApp } from "../store";
 import type { Chat, Platform } from "../lib/types";
 import { Glyph, Icon } from "./Icon";
 
@@ -28,11 +29,11 @@ export function useAvatar(accountId: string, photo: string): string {
 const HUES = ["blue", "purple", "green", "orange", "pink", "amber", "red", "slate"];
 const hue = (s: string) => HUES[[...s].reduce((h, c) => (h * 31 + c.codePointAt(0)!) >>> 0, 7) % HUES.length];
 
-function Face({ src, fallback, cls, title, tint, platform }: { src: string; fallback: React.ReactNode; cls: string; title?: string; tint: string; platform?: Platform }) {
+function Face({ src, fallback, cls, title, tint, platform, online }: { src: string; fallback: React.ReactNode; cls: string; title?: string; tint: string; platform?: Platform; online?: boolean }) {
   const [broken, setBroken] = useState(false);
   useEffect(() => setBroken(false), [src]);
   return (
-    <span className={`${cls}${src && !broken ? " has-img" : ""}`} title={title} style={{ "--av": `var(--conn-${tint})` } as React.CSSProperties}>
+    <span className={`${cls}${src && !broken ? " has-img" : ""}${online ? " online" : ""}`} title={online ? `${title ?? ""} · đang online`.replace(/^ · /, "") : title} style={{ "--av": `var(--conn-${tint})` } as React.CSSProperties}>
       {src && !broken ? <img src={src} alt="" draggable={false} onError={() => setBroken(true)} /> : fallback}
       {platform && (
         <span className="avatar-badge" aria-hidden="true">
@@ -49,10 +50,13 @@ export function ChatAvatar({ chat, size = "", platform }: { chat: Chat; size?: "
   const group = chat.kind !== "dm";
   const fallback =
     chat.kind === "space" ? <Icon name="hash" /> : chat.kind === "channel" ? <Icon name="megaphone" /> : initials(chat.title || "?", group);
-  return <Face src={src} fallback={fallback} cls={`avatar tinted${group ? " group" : ""} ${size}`} tint={hue(chat.id)} platform={platform} />;
+  // a Telegram private chat's id is the other user's id
+  const online = useApp((s) => !group && !!s.online[`${chat.accountId}|${chat.id}`]);
+  return <Face src={src} fallback={fallback} cls={`avatar tinted${group ? " group" : ""} ${size}`} tint={hue(chat.id)} platform={platform} online={online} />;
 }
 
-export function PersonAvatar({ name, size = "", accountId = "", photo = "" }: { name: string; size?: "" | "sm" | "lg"; accountId?: string; photo?: string }) {
+export function PersonAvatar({ name, size = "", accountId = "", photo = "", userId = "" }: { name: string; size?: "" | "sm" | "lg"; accountId?: string; photo?: string; userId?: string }) {
   const src = useAvatar(accountId, photo);
-  return <Face src={src} fallback={initials(name || "?")} cls={`avatar tinted ${size}`} title={name} tint={hue(name || "?")} />;
+  const online = useApp((s) => !!userId && !!s.online[`${accountId}|${userId}`]);
+  return <Face src={src} fallback={initials(name || "?")} cls={`avatar tinted ${size}`} title={name} tint={hue(name || "?")} online={online} />;
 }

@@ -169,18 +169,23 @@ pub enum Event {
     #[serde(rename_all = "camelCase")]
     ChatRemoved { account_id: String, chat_id: String },
     #[serde(rename_all = "camelCase")]
-    Message { msg: Msg, is_new: bool },
+    /// `inbox`: a new message for the titlebar bell (mention, DM, reply in a thread I posted in)
+    Message { msg: Msg, is_new: bool, #[serde(default)] inbox: bool },
     #[serde(rename_all = "camelCase")]
     MessageIdChanged { old_id: String, msg: Msg },
     #[serde(rename_all = "camelCase")]
     MessagesDeleted { account_id: String, chat_id: String, ids: Vec<String> },
     /// a notification was clicked: open this chat ("account|chat")
-    Open { key: String },
+    Open { key: String, msg: String, thread: String },
     /// a big download in progress, in whole percent
     #[serde(rename_all = "camelCase")]
     FileProgress { account_id: String, file_ref: String, pct: i64 },
     #[serde(rename_all = "camelCase")]
     ReadOutbox { account_id: String, chat_id: String, up_to: i64 },
+    /// someone else reacted to my message
+    Reacted { msg: Msg, emoji: String },
+    #[serde(rename_all = "camelCase")]
+    Presence { account_id: String, user_id: String, online: bool },
     #[serde(rename_all = "camelCase")]
     Typing { account_id: String, chat_id: String, who: String, on: bool },
     #[serde(rename_all = "camelCase")]

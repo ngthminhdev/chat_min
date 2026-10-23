@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
-import { api } from "../lib/bridge";
+import { api, openPath, pickFolder, type StorageView } from "../lib/bridge";
+import { fileSize } from "../lib/format";
 import type { AiView } from "../lib/types";
 import { HEALTH_LABELS, PLATFORMS } from "../lib/platforms";
 import { LANGS } from "../ai";
 import { THEMES } from "../lib/themes";
-import { anchor, DEFAULT_NOTIFY, fail, toast, useApp, type NotifyPrefs } from "../store";
+import type { BackgroundMode } from "../lib/appearance";
+import { anchor, confirmDialog, DEFAULT_NOTIFY, fail, toast, useApp, type NotifyPrefs } from "../store";
 import { removeAccount, renameAccount } from "../App";
 import { startWizard } from "./Wizard";
 import { Glyph, Icon, type IconName } from "../ui/Icon";
@@ -52,7 +54,7 @@ export function Settings() {
       <header className="r2-header">
         <div className="od-field">
           <h1>Cài đặt</h1>
-          <p>Giao diện, tài khoản và thông báo</p>
+          <p>Giao diện, tài khoản, thông báo và bộ nhớ</p>
         </div>
       </header>
       <div className="settings-shell">
@@ -66,6 +68,21 @@ export function Settings() {
               ))}
             </select>
           </Row>
+          <Row title="Nền cửa sổ" help="Nền toàn cửa sổ, gồm cả hai dock. Các thành phần nội dung giữ nền riêng." icon="palette">
+            <select className="settings-select" aria-label="Nền cửa sổ" value={prefs.backgroundMode} onChange={(e) => setPrefs({ backgroundMode: e.target.value as BackgroundMode })}>
+              <option value="solid">Nền đặc</option>
+              <option value="glass">Kính mờ</option>
+              <option value="clear">Xuyên desktop</option>
+            </select>
+          </Row>
+          {prefs.backgroundMode !== "solid" && <Row title="Độ trong suốt của nền" help="Kéo sang phải để thấy desktop rõ hơn. Không làm mờ chữ.">
+            <div className="background-slider">
+              <input type="range" min="0" max="100" step="1" aria-label="Độ trong suốt của nền" aria-valuetext={`${prefs.backgroundTransparency}%`} value={prefs.backgroundTransparency} onChange={(e) => setPrefs({ backgroundTransparency: Number(e.target.value) })} />
+              <output>{prefs.backgroundTransparency}%</output>
+              <button type="button" className="tool-btn" onClick={() => setPrefs({ backgroundMode: "glass", backgroundTransparency: 35 })}>Đặt lại</button>
+            </div>
+          </Row>}
+          <p className="r2-muted">Nền xuyên desktop hiển thị trong ứng dụng desktop. Tùy chọn giảm độ trong suốt của hệ thống được ưu tiên.</p>
           <Row title="Cỡ chữ giao diện" help="Bước 0.5px. Bấm giá trị để về 13px.">
             <div className="font-stepper">
               <button type="button" className="tool-btn" aria-label="Giảm cỡ chữ" disabled={prefs.size <= 11} onClick={() => setPrefs({ size: Math.max(11, prefs.size - 0.5) })}>−</button>
@@ -187,6 +204,8 @@ export function Settings() {
           })}
           {!accounts.length && <p>Thêm tài khoản để thiết lập thông báo.</p>}
         </section>
+
+        <StorageCard />
 
         <section className="settings-card">
           <h3>Phím tắt</h3>
@@ -326,4 +345,51 @@ function preview(p: NotifyPrefs) {
   const inQuiet = p.from <= p.to ? now >= p.from && now < p.to : now >= p.from || now < p.to;
   if (p.quiet && inQuiet) return `Đang im lặng · ${p.from}–${p.to}`;
   return `${p.mentions ? "Chỉ khi được nhắc tên · " : ""}${p.preview ? "Minh Trần: Anh review giúp PR này nhé?" : "Bạn có tin nhắn mới"}${p.quiet ? ` · Im lặng ${p.from}–${p.to}` : ""}`;
+}
+
+const CACHE_MB: [number, string][] = [[1024, "1 GB"], [2048, "2 GB"], [5120, "5 GB"], [10240, "10 GB"], [0, "Không giới hạn"]];
+const KEEP_DAYS: [number, string][] = [[3, "3 ngày"], [7, "1 tuần"], [30, "1 tháng"], [0, "Mãi mãi"]];
+
+/** Like Telegram's "Storage usage": cache limit, how long media stays, where saves go. */
+function StorageCard() {
+  const [v, setV] = useState<StorageView | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = () => void api.storage().then(setV).catch(fail);
+  useEffect(load, []);
+  const set = (p: Parameters<typeof api.storageSet>[0]) => void api.storageSet(p).then(load).catch(fail);
+  const clean = async (all: boolean) => {
+    setBusy(true);
+    try {
+      const freed = await api.storageClean(all);
+      toast(freed ? `Đã dọn ${fileSize(freed)}` : "Không có gì cần dọn", "check");
+      load();
+    } catch (e) {
+      fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="settings-card">
+      <h3>Bộ nhớ & tải về</h3>
+      <Row title="Thư mục tải về" help={v?.downloadDir ?? "…"} icon="folder-open">
+        <button className="tool-btn" onClick={() => void pickFolder().then((d) => d && set({ downloadDir: d }))}>Chọn…</button>
+        {v && <button className="tool-btn" onClick={() => void openPath(v.downloadDir).catch(fail)}>Mở</button>}
+      </Row>
+      <Row title="Giới hạn bộ nhớ đệm" help="Ảnh, video, tệp đã xem. Vượt giới hạn thì xoá cái lâu không dùng nhất; cần lại sẽ tải lại." icon="download">
+        <select className="settings-select" aria-label="Giới hạn bộ nhớ đệm" value={v?.cacheMb ?? 2048} onChange={(e) => set({ cacheMb: +e.target.value })}>
+          {CACHE_MB.map(([n, l]) => <option key={n} value={n}>{l}</option>)}
+        </select>
+      </Row>
+      <Row title="Giữ media" help="Xoá khỏi bộ nhớ đệm khi lâu hơn chừng này chưa mở lại." icon="clock">
+        <select className="settings-select" aria-label="Giữ media" value={v?.keepDays ?? 30} onChange={(e) => set({ keepDays: +e.target.value })}>
+          {KEEP_DAYS.map(([n, l]) => <option key={n} value={n}>{l}</option>)}
+        </select>
+      </Row>
+      <Row title="Đang dùng" help={v ? `Telegram ${fileSize(v.tgBytes) || "0 B"} · Google Chat & tệp chờ gửi ${fileSize(v.localBytes) || "0 B"}` : "Đang tính…"} icon="trash-2">
+        <button className="tool-btn" disabled={busy} onClick={() => void clean(false)}>Dọn theo giới hạn</button>
+        <button className="tool-btn danger" disabled={busy} onClick={() => confirmDialog("Xoá hết bộ nhớ đệm?", "Ảnh, video, tệp đã tải sẽ bị xoá khỏi máy; mở lại sẽ tải lại. Tin nhắn không bị ảnh hưởng.", "Xoá", () => void clean(true))}>Xoá hết bộ nhớ đệm</button>
+      </Row>
+    </section>
+  );
 }

@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { dayKey, dayLabel, fmtCount } from "../lib/format";
 import type { Msg } from "../lib/types";
-import { capsOf, healthOf, loadLatest, loadOlder, splitKey, threadTabKey, toast, useApp, openSearch } from "../store";
+import { capsOf, healthOf, loadLatest, loadOlder, markRead, splitKey, threadTabKey, toast, useApp, openSearch } from "../store";
 import { api } from "../lib/bridge";
 import { startWizard } from "../views/Wizard";
 import { ChatAvatar, PersonAvatar } from "../ui/Avatar";
@@ -27,8 +27,6 @@ export function Conversation() {
   const platform = useApp((s) => s.accounts.find((a) => a.id === chat?.accountId)?.platform);
   const insp = useApp((s) => s.inspTab);
   const rightOff = useApp((s) => s.rightCollapsed);
-  const auto = useApp((s) => (s.active ? !!s.trAuto[s.active] : false));
-  const aiMe = useApp((s) => s.prefs.aiMe);
   const threadCount = useApp((s) => (s.active && chat?.threaded ? new Set((s.msgs[s.active] ?? []).filter((m) => m.threadReply).map((m) => m.threadId)).size : 0));
   const [, tick] = useState(0);
 
@@ -87,15 +85,7 @@ export function Conversation() {
           </button>
         )}
         <SummaryButton tab={active} />
-        <button
-          className={`tool-btn icon-only${auto ? " active" : ""}`}
-          aria-label="Dịch cả chat"
-          aria-pressed={auto}
-          data-tip={auto ? "Tắt dịch cả chat" : `Dịch cả chat sang ${langLabel(aiMe)}`}
-          onClick={() => toggleAutoTranslate(active)}
-        >
-          <Icon name="languages" />
-        </button>
+        <TranslateAllButton autoKey={active} />
         <button
           className="tool-btn icon-only"
           aria-label="Tìm trong chat này"
@@ -161,7 +151,6 @@ function MessageList({ k }: { k: string }) {
   const jumpTo = useApp((s) => s.jumpTo);
   const caps = capsOf(k);
   const box = useRef<HTMLDivElement>(null);
-  const auto = useApp((s) => !!s.trAuto[k]);
 
   // threaded spaces show thread starters with their replies folded underneath; a thread
   // whose starter isn't loaded (older page, deleted) is led by its earliest reply instead
@@ -181,11 +170,19 @@ function MessageList({ k }: { k: string }) {
     return { visible: vis, replies: r };
   }, [list, chat?.threaded]);
 
-  useEffect(() => {
-    if (auto) void translateMissing(k, visible);
-  }, [auto, k, visible.length, visible[visible.length - 1]?.id]);
+  useViewportTranslate(box, k, k, visible);
 
   const scroll = useStickyScroll(box, visible[visible.length - 1]?.id, () => void loadOlder(k));
+  // back at the newest message: what arrived meanwhile is now seen
+  const onScroll = () => {
+    scroll.onScroll();
+    const bottom = scroll.stick.current;
+    if (bottom !== useApp.getState().atBottom) {
+      useApp.setState({ atBottom: bottom });
+      if (bottom && useApp.getState().chats[k]?.unread) markRead(k);
+    }
+  };
+  useEffect(() => () => useApp.setState({ atBottom: true }), [k]);
 
   useEffect(() => {
     if (!jumpTo) return;
@@ -283,7 +280,7 @@ function MessageList({ k }: { k: string }) {
   }
 
   return (
-    <div className="msgs" ref={box} onScroll={scroll.onScroll} aria-live="polite">
+    <div className="msgs" ref={box} onScroll={onScroll} aria-live="polite">
       <div className="msgs-inner">{body}</div>
       <JumpBottom away={scroll.away} fresh={scroll.fresh} onClick={scroll.toBottom} />
     </div>
@@ -383,7 +380,64 @@ export function useDownload(accountId: string, media: { fileRef: string; name: s
     if (auto && !path && media?.fileRef) void get();
   }, [auto, media?.fileRef]);
   const pct = useApp((s) => (media ? s.progress[`${accountId}|${media.fileRef}`] : undefined));
-  return { path, state, get, pct: state === "loading" ? pct : undefined };
+  // the cached localPath can be outside the asset scope after a restart (a file I sent from
+  // Desktop) or gone: fetch it again once through `download`, which opens the scope
+  const retried = useRef(false);
+  const broken = () => {
+    if (retried.current || !media?.fileRef) return;
+    retried.current = true;
+    setPath("");
+    void get();
+  };
+  return { path, state, get, broken, pct: state === "loading" ? pct : undefined };
 }
 
 export const accountIdOf = (k: string) => splitKey(k)[0];
+
+export function TranslateAllButton({ autoKey, chatKey = autoKey, msgs }: { autoKey: string; chatKey?: string; msgs?: Msg[] }) {
+  const auto = useApp((s) => !!s.trAuto[autoKey]);
+  const aiMe = useApp((s) => s.prefs.aiMe);
+  return (
+    <button
+      className={`tool-btn icon-only${auto ? " active" : ""}`}
+      aria-label="Dịch cả chat"
+      aria-pressed={auto}
+      data-tip={auto ? "Tắt dịch cả chat" : `Dịch cả chat sang ${langLabel(aiMe)}`}
+      onClick={() => toggleAutoTranslate(autoKey, chatKey, msgs)}
+    >
+      <Icon name="languages" />
+    </button>
+  );
+}
+
+/** Whole-chat translation spends tokens only on what's read: the messages on screen ±5,
+ *  more as the list scrolls (debounced) or grows. */
+export function useViewportTranslate(box: React.RefObject<HTMLDivElement | null>, autoKey: string, chatKey: string, list: Msg[]) {
+  const on = useApp((s) => !!s.trAuto[autoKey]);
+  useEffect(() => {
+    const el = box.current;
+    if (!on || !el) return;
+    let t = 0;
+    const run = () => {
+      clearTimeout(t);
+      t = window.setTimeout(() => {
+        const { top, bottom } = el.getBoundingClientRect();
+        let lo = -1, hi = -1;
+        list.forEach((m, i) => {
+          const r = document.getElementById(`m-${m.id}`)?.getBoundingClientRect();
+          if (r && r.bottom > top && r.top < bottom) {
+            if (lo < 0) lo = i;
+            hi = i;
+          }
+        });
+        if (lo >= 0) void translateMissing(chatKey, list.slice(Math.max(0, lo - 5), hi + 6), autoKey);
+      }, 250);
+    };
+    run();
+    el.addEventListener("scroll", run, { passive: true });
+    return () => {
+      clearTimeout(t);
+      el.removeEventListener("scroll", run);
+    };
+  }, [on, box, autoKey, chatKey, list]);
+}

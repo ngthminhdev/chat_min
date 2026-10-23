@@ -5,6 +5,8 @@ import { listen } from "@tauri-apps/api/event";
 import type { Account, AiView, AppState, CoreEvent, Member, Msg, StickerPack, Topic } from "./types";
 
 export const isTauri = "__TAURI_INTERNALS__" in window;
+export type Staged = { path: string; name: string; size: number };
+export type StorageView = { downloadDir: string; cacheMb: number; keepDays: number; tgBytes: number; localBytes: number };
 
 type Demo = typeof import("./demo");
 let demo: Promise<Demo> | null = null;
@@ -38,7 +40,9 @@ export const api = {
   accountRemove: (id: string) => call<void>("account_remove", { id }),
   messages: (accountId: string, chatId: string, before: number, limit: number) =>
     call<Msg[]>("messages", { accountId, chatId, before, limit }),
-  cachedMessages: (accountId: string, chatId: string, limit: number) => call<Msg[]>("cached_messages", { accountId, chatId, limit }),
+  presence: () => (isTauri ? call<string[]>("presence") : Promise.resolve([] as string[])),
+  inbox: (limit: number) => call<Msg[]>("inbox", { limit }),
+  cachedMessages: (accountId: string, chatId: string, limit: number) => call<[Msg[], Msg[]]>("cached_messages", { accountId, chatId, limit }),
   thread: (accountId: string, chatId: string, threadId: string) => call<Msg[]>("thread", { accountId, chatId, threadId }),
   pinned: (accountId: string, chatId: string) => call<Msg[]>("pinned", { accountId, chatId }),
   members: (accountId: string, chatId: string) => call<Member[]>("members", { accountId, chatId }),
@@ -51,10 +55,17 @@ export const api = {
   sendSticker: (a: { accountId: string; chatId: string; threadId?: string; fileId: number; width: number; height: number; emoji: string }) => call<Msg>("send_sticker", a),
   /** base64 bytes → a cache file path that `send` can upload */
   saveTemp: (name: string, data: string) => call<string>("save_temp", { name, data }),
+  /** paths of files copied in Finder (the web paste event only carries their names) */
+  /** size + preview access for files about to be sent; folders are dropped */
+  stageFiles: (paths: string[]) =>
+    isTauri ? call<Staged[]>("stage_files", { paths }) : Promise.resolve(paths.map((path) => ({ path, name: path.split("/").pop() ?? path, size: 0 }))),
+  clipboardFiles: () => (isTauri ? call<string[]>("clipboard_files") : Promise.resolve([] as string[])),
   edit: (accountId: string, chatId: string, msgId: string, text: string) => call<void>("edit", { accountId, chatId, msgId, text }),
   deleteMsg: (accountId: string, chatId: string, msgId: string) => call<void>("delete_msg", { accountId, chatId, msgId }),
   react: (accountId: string, chatId: string, msgId: string, emoji: string, add: boolean) =>
     call<void>("react", { accountId, chatId, msgId, emoji, add }),
+  /** Telegram: emoji this message accepts; null = any emoji */
+  reactions: (accountId: string, chatId: string, msgId: string) => call<string[] | null>("reactions", { accountId, chatId, msgId }),
   pin: (accountId: string, chatId: string, msgId: string, on: boolean) => call<void>("pin", { accountId, chatId, msgId, on }),
   markRead: (accountId: string, chatId: string, msgIds: string[]) => call<void>("mark_read", { accountId, chatId, msgIds }),
   setOpen: (accountId: string, chatId: string, open: boolean) => call<void>("set_open", { accountId, chatId, open }),
@@ -71,6 +82,11 @@ export const api = {
   /** translate/translate_to/translate_many → string[]; suggest → Suggestion[] */
   aiRun: <T = string>(task: string, texts: string[], me: string, to: string) => call<T[]>("ai_run", { task, texts, me, to }),
   emojiPalette: () => call<void>("emoji_palette"),
+  storage: () => call<StorageView>("storage"),
+  storageSet: (a: { downloadDir?: string; cacheMb?: number; keepDays?: number }) => call<void>("storage_set", a),
+  /** bytes freed; `all` empties the media cache */
+  storageClean: (all: boolean) => call<number>("storage_clean", { all }),
+  logJs: (msg: string) => (isTauri ? call<void>("log_js", { msg }) : Promise.resolve()),
   /** per-account notification settings: Rust decides and sends notifications (notify.rs) */
   notifyPrefs: (prefs: Record<string, unknown>) => (isTauri ? call<void>("notify_prefs", { prefs }) : Promise.resolve()),
   notifyTest: () => (isTauri ? call<void>("notify_test") : Promise.resolve()),
@@ -106,7 +122,20 @@ export async function pickFile(filters?: { name: string; extensions: string[] }[
   return typeof picked === "string" ? picked : null;
 }
 
-/** Copy a downloaded file out of the app: `ask` shows a save dialog, otherwise ~/Downloads.
+export async function pickFolder(): Promise<string | null> {
+  if (!isTauri) return null;
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const picked = await open({ directory: true, multiple: false, title: "Thư mục tải về" });
+  return typeof picked === "string" ? picked : null;
+}
+
+export async function pickFiles(): Promise<string[]> {
+  if (!isTauri) return [];
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  return (await open({ multiple: true, directory: false })) ?? [];
+}
+
+/** Copy a downloaded file out of the app: `ask` shows a save dialog, otherwise the download folder (Settings, default ~/Downloads/ChatMin).
  *  Resolves to the saved path, or null when the dialog was cancelled. */
 export async function saveFile(src: string, name: string, ask: boolean): Promise<string | null> {
   if (!isTauri) return null;

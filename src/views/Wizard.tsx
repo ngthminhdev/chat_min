@@ -34,7 +34,7 @@ export function Wizard() {
 
   return (
     <>
-      <header className="r2-header">
+      <header className="r2-header wizard-header">
         <div className="od-field">
           <h1>{existing ? "Đăng nhập lại" : "Thêm tài khoản"}</h1>
           <p>{existing ? `${existing.name} · ${existing.handle}` : "Kết nối một tài khoản vào ChatMin"}</p>
@@ -124,7 +124,7 @@ export function Wizard() {
               </AnimatePresence>
             </section>
           </div>
-          <aside className="create-col">
+          <aside className="create-col wizard-summary">
             <section className="create-card">
               <div className="card-step"><h3>Tài khoản của bạn</h3></div>
               <div className="conn-summary">
@@ -136,7 +136,9 @@ export function Wizard() {
             <p className="wizard-sim-note">
               {platform === "telegram"
                 ? "ChatMin đăng nhập như một thiết bị Telegram mới (TDLib). Phiên lưu trên máy này; xoá tài khoản sẽ đăng xuất thiết bị."
-                : "ChatMin dùng Google Chat API bằng quyền của bạn (OAuth). Cần tài khoản Google Workspace; tin gửi từ ChatMin hiển thị như tin của bạn."}
+                : platform === "gchat"
+                  ? "ChatMin dùng Google Chat API bằng quyền của bạn (OAuth). Cần tài khoản Google Workspace; tin gửi từ ChatMin hiển thị như tin của bạn."
+                  : `Đăng nhập ${PLATFORMS[platform].name} trong cửa sổ ứng dụng. Mỗi tài khoản dùng một phiên riêng trên máy này.`}
             </p>
           </aside>
         </div>
@@ -160,9 +162,10 @@ function PlatformStep({ platform, setPlatform, next }: { platform: Platform; set
             onClick={() => setPlatform(p as Platform)}
             onDoubleClick={() => on && (setPlatform(p as Platform), next())}
           >
-            {on ? <Glyph platform={p as Platform} /> : <Icon name="messages-square" />}
+            <span className="provider-logo">{on ? <Glyph platform={p as Platform} /> : <Icon name="messages-square" />}</span>
             <strong>{label}</strong>
-            <span>{p === "messenger" || p === "zalo" ? "Web app · đăng nhập trong app" : on ? "Kết nối tài khoản" : "Coming soon"}</span>
+            <span className="provider-description">{p === "messenger" || p === "zalo" ? "Đăng nhập trong ứng dụng" : p === "telegram" ? "Số điện thoại hoặc mã QR" : "Tài khoản Google Workspace"}</span>
+            <span className="provider-selection" aria-hidden="true">{platform === p && <Icon name="check" />}</span>
           </button>
         ))}
       </div>

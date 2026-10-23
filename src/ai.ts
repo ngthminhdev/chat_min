@@ -55,18 +55,20 @@ export async function translateMsg(chatKey: string, m: Msg) {
   }
 }
 
-/** Whole-chat mode: on → every loaded message gets translated, new ones as they arrive. */
-export function toggleAutoTranslate(chatKey: string) {
-  const on = !useApp.getState().trAuto[chatKey];
+/** Whole-chat mode for a chat or thread tab (`autoKey`): on → what's on screen gets
+ *  translated as it scrolls into view (useViewportTranslate). Off drops the translations. */
+export function toggleAutoTranslate(autoKey: string, chatKey = autoKey, msgs?: Msg[]) {
+  const on = !useApp.getState().trAuto[autoKey];
+  const ids = msgs && new Set(msgs.map((m) => trKey(chatKey, m.id)));
   useApp.setState((s) => {
-    const tr = on ? s.tr : Object.fromEntries(Object.entries(s.tr).filter(([k]) => !k.startsWith(`${chatKey}#`)));
-    return { trAuto: { ...s.trAuto, [chatKey]: on }, tr };
+    const tr = on ? s.tr : Object.fromEntries(Object.entries(s.tr).filter(([k]) => (ids ? !ids.has(k) : !k.startsWith(`${chatKey}#`))));
+    return { trAuto: { ...s.trAuto, [autoKey]: on }, tr };
   });
 }
 
 const BATCH = 40;
 /** Translate the newest untranslated messages in `list` (one request per call). */
-export async function translateMissing(chatKey: string, list: Msg[]) {
+export async function translateMissing(chatKey: string, list: Msg[], autoKey = chatKey) {
   const s = useApp.getState();
   const todo = list
     .filter((m) => !m.outgoing && !m.deleted && m.kind !== "service" && plain(m.text).trim() && !s.tr[trKey(chatKey, m.id)])
@@ -82,7 +84,7 @@ export async function translateMissing(chatKey: string, list: Msg[]) {
     // drop the placeholders so a later pass can retry; stop auto mode on config errors
     useApp.setState((st) => ({
       tr: Object.fromEntries(Object.entries(st.tr).filter(([k]) => !todo.some((m) => trKey(chatKey, m.id) === k))),
-      trAuto: { ...st.trAuto, [chatKey]: false },
+      trAuto: { ...st.trAuto, [autoKey]: false },
     }));
     fail(e);
   }

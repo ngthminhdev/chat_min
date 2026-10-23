@@ -3,8 +3,10 @@ import { api } from "../lib/bridge";
 import { hm, norm, plain } from "../lib/format";
 import type { Msg } from "../lib/types";
 import { key, openChat, splitKey, useApp } from "../store";
-import { PersonAvatar } from "../ui/Avatar";
-import { Icon } from "../ui/Icon";
+import { ChatAvatar, PersonAvatar } from "../ui/Avatar";
+import { Glyph, Icon } from "../ui/Icon";
+import { PLATFORMS } from "../lib/platforms";
+import { SearchCombobox } from "../ui/SearchCombobox";
 
 export function MessageSearch() {
   const query = useApp((s) => s.searchQuery);
@@ -50,7 +52,8 @@ export function MessageSearch() {
     const terms = norm(q).split(/\s+/).filter(Boolean);
     return text.split(/(\s+)/).map((word, i) => terms.some((t) => norm(word).includes(t)) ? <mark key={i}>{word}</mark> : word);
   };
-  const options = Object.entries(chats).filter(([, c]) => !account || c.accountId === account).sort((a, b) => a[1].title.localeCompare(b[1].title));
+  const options = Object.entries(chats).filter(([, c]) => !account || c.accountId === account)
+    .sort((a, b) => b[1].lastTs - a[1].lastTs || a[1].title.localeCompare(b[1].title));
   return (
     <section className="message-search" aria-label="Tìm kiếm tin nhắn">
       <header className="message-search-head">
@@ -66,12 +69,15 @@ export function MessageSearch() {
           {query && <button className="tool-btn icon-only" aria-label="Xóa từ khóa" onClick={() => { useApp.setState({ searchQuery: "" }); input.current?.focus(); }}><Icon name="x" /></button>}
         </div>
         <div className="message-search-filters">
-          <label>Tài khoản<select aria-label="Tài khoản" value={account} onChange={(e) => useApp.setState({ searchAccount: e.target.value, searchScope: "" })}>
-            <option value="">Tất cả tài khoản</option>{accounts.map((a) => <option key={a.id} value={a.id}>{a.name} · {a.platform === "gchat" ? "Google Chat" : "Telegram"}</option>)}
-          </select></label>
-          <label>Hội thoại<select aria-label="Hội thoại" value={scope} onChange={(e) => useApp.setState({ searchScope: e.target.value })}>
-            <option value="">Tất cả hội thoại</option>{options.map(([k, c]) => <option key={k} value={k}>{c.title}{!account ? ` · ${accounts.find((a) => a.id === c.accountId)?.name ?? ""}` : ""}</option>)}
-          </select></label>
+          <SearchCombobox label="Tài khoản" value={account} onChange={(value) => useApp.setState({ searchAccount: value, searchScope: "" })}
+            options={[{ value: "", label: "Tất cả tài khoản", detail: "Tìm trên mọi tài khoản", avatar: <Icon name="layers" /> },
+              ...accounts.map((a) => ({ value: a.id, label: a.name, detail: `${PLATFORMS[a.platform].name}${a.handle ? ` · ${a.handle}` : ""}`, avatar: <span className="search-account-logo"><Glyph platform={a.platform} /></span> }))]} />
+          <SearchCombobox label="Hội thoại" value={scope} recent onChange={(value) => useApp.setState({ searchScope: value })}
+            options={[{ value: "", label: "Tất cả hội thoại", detail: account ? `Trong ${accounts.find((a) => a.id === account)?.name ?? "tài khoản đã chọn"}` : "Tìm trên mọi hội thoại", avatar: <Icon name="messages-square" /> },
+              ...options.map(([k, c]) => {
+                const a = accounts.find((a) => a.id === c.accountId);
+                return { value: k, label: c.title, detail: `${a?.name ?? ""} · ${a ? PLATFORMS[a.platform].name : ""}${c.lastTs ? ` · ${new Date(c.lastTs).toLocaleDateString("vi-VN")}` : ""}`, avatar: <ChatAvatar chat={c} size="sm" platform={a?.platform} /> };
+              })]} />
           {(account || scope) && <button className="tool-btn" onClick={() => useApp.setState({ searchAccount: "", searchScope: "" })}>Bỏ bộ lọc</button>}
         </div>
       </div>

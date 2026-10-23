@@ -19,7 +19,7 @@ export function Welcome() {
       <motion.p {...item(3)}>
         Thêm tài khoản đầu tiên để bắt đầu.
         <br />
-        Chuyển giữa công việc và cá nhân bằng một phím tắt.
+        Hội thoại công việc và cá nhân, trong cùng một ứng dụng.
       </motion.p>
       <motion.button type="button" className="tool-btn primary" onClick={() => startWizard()} {...item(4)}>
         Thêm tài khoản <kbd className="kbd">⌘N</kbd>
@@ -27,6 +27,8 @@ export function Welcome() {
       <motion.div className="welcome-platforms" {...item(5)}>
         <span><Glyph platform="telegram" /> Telegram</span>
         <span><Glyph platform="gchat" /> Google Chat</span>
+        <span><Glyph platform="messenger" /> Messenger</span>
+        <span><Glyph platform="zalo" /> Zalo</span>
       </motion.div>
       <motion.small {...item(6)}>Tài khoản được quản lý riêng · Không trộn lịch sử hội thoại</motion.small>
     </div>

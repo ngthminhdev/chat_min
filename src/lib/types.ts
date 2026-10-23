@@ -95,12 +95,14 @@ export type CoreEvent =
   | { type: "auth"; accountId: string; step: "phone" | "code" | "password" | "qr" | "ready" | "error"; info: string; error: string }
   | { type: "chat"; chat: Chat }
   | { type: "chatRemoved"; accountId: string; chatId: string }
-  | { type: "message"; msg: Msg; isNew: boolean }
+  | { type: "message"; msg: Msg; isNew: boolean; inbox?: boolean }
   | { type: "messageIdChanged"; oldId: string; msg: Msg }
   | { type: "messagesDeleted"; accountId: string; chatId: string; ids: string[] }
   | { type: "fileProgress"; accountId: string; fileRef: string; pct: number }
-  | { type: "open"; key: string }
+  | { type: "open"; key: string; msg: string; thread: string }
   | { type: "readOutbox"; accountId: string; chatId: string; upTo: number }
+  | { type: "reacted"; msg: Msg; emoji: string }
+  | { type: "presence"; accountId: string; userId: string; online: boolean }
   | { type: "typing"; accountId: string; chatId: string; who: string; on: boolean }
   | { type: "sync"; accountId: string; step: number; state: "run" | "ok" | "err"; log: string };
 

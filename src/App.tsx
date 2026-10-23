@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MotionConfig } from "motion/react";
-import { api, openUrl } from "./lib/bridge";
+import { api, isTauri, openUrl } from "./lib/bridge";
+import { windowAppearance } from "./lib/appearance";
+import { Effect, EffectState, getCurrentWindow } from "@tauri-apps/api/window";
 import { PLATFORMS } from "./lib/platforms";
 import { themeBase } from "./lib/themes";
 import {
@@ -32,6 +34,7 @@ export default function App() {
   const right = useApp((s) => s.rightCollapsed);
   const threadTab = useApp((s) => (isThreadTab(s.active) ? s.active : null));
   const [bootError, setBootError] = useState("");
+  const windowEffectsUpdate = useRef(Promise.resolve());
   const retryBoot = () => {
     setBootError("");
     boot().catch((e) => setBootError(String(e)));
@@ -68,6 +71,35 @@ export default function App() {
     document.body.classList.toggle("light", !!prefs.theme && themeBase(prefs.theme) === "light");
     document.body.classList.toggle("chatmin-compact", prefs.compact);
   }, [prefs]);
+
+  useEffect(() => {
+    const reduced = window.matchMedia("(prefers-reduced-transparency: reduce)");
+    // Serialize native calls so rapid mode changes cannot leave an older effect applied.
+    let disposed = false;
+    const apply = () => {
+      const { mode } = windowAppearance(prefs, reduced.matches);
+      document.body.dataset.background = mode;
+      if (isTauri) windowEffectsUpdate.current = windowEffectsUpdate.current.then(async () => {
+        if (disposed) return;
+        const win = getCurrentWindow();
+        if (mode === "glass") await win.setEffects({ effects: [Effect.UnderWindowBackground], state: EffectState.Active });
+        else await win.clearEffects();
+      }).catch((error) => {
+        if (disposed) return;
+        document.body.dataset.background = "solid";
+        toast("Không bật được nền trong suốt. Đã dùng nền đặc.", "circle-alert");
+        void api.logJs(`window appearance: ${String(error)}`).catch(() => {});
+      });
+    };
+    apply();
+    reduced.addEventListener("change", apply);
+    return () => { disposed = true; reduced.removeEventListener("change", apply); };
+  }, [prefs.backgroundMode]);
+
+  useEffect(() => {
+    const { transparency } = windowAppearance(prefs);
+    document.documentElement.style.setProperty("--background-opacity", `${100 - transparency}%`);
+  }, [prefs.backgroundTransparency]);
 
   const page = route === "welcome" || route === "wizard";
   const tabPage = route === "inbox" || route === "settings" || route === "search";
@@ -297,7 +329,7 @@ function useGlobalHandlers() {
     // coming back to the window reads whatever arrived in the open chat meanwhile
     const onFocus = () => {
       const s = useApp.getState();
-      if (s.active && !isThreadTab(s.active) && s.route === "shell" && s.chats[s.active]?.unread) markRead(s.active);
+      if (s.active && !isThreadTab(s.active) && s.route === "shell" && s.atBottom && s.chats[s.active]?.unread) markRead(s.active);
     };
     // typing indicators expire on their own
     const tick = setInterval(() => {

@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useApp } from "../store";
 
 /**
  * Scroll behaviour for a message list:
@@ -82,6 +83,15 @@ export function useStickyScroll(box: React.RefObject<HTMLDivElement | null>, las
   const release = () => {
     stick.current = false;
   };
+
+  // a notification was clicked: back to the newest message, even when scrolled up reading
+  const toLatest = useApp((s) => s.toLatest);
+  const seen = useRef(toLatest);
+  useEffect(() => {
+    if (seen.current === toLatest) return;
+    seen.current = toLatest;
+    toBottom();
+  }, [toLatest]);
 
   return { onScroll, toBottom, release, away, fresh, stick };
 }

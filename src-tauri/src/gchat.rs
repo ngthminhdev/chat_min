@@ -593,7 +593,7 @@ impl GChat {
             if !changed.is_empty() {
                 let _ = core.store_mut().put_msgs(&changed);
                 for msg in changed {
-                    core.emit(Event::Message { msg, is_new: false });
+                    core.emit(Event::Message { msg, is_new: false, inbox: false });
                 }
             }
             if refresh {
@@ -1137,6 +1137,13 @@ fn chat_markup(ft: &str, names: &HashMap<String, String>) -> String {
             Some("@{all}".to_string())
         } else if tok.starts_with("users/") {
             Some(format!("@{{{}}}", names.get(tok).map(String::as_str).unwrap_or("?")))
+        } else if let Some(user) = attr(tok, "chat-user", "data-user") {
+            // the newer web composer's tags: <chat-user data-user="users/1"></chat-user>
+            Some(if user == "users/all" { "@{all}".into() } else { format!("@{{{}}}", names.get(user).map(String::as_str).unwrap_or("?")) })
+        } else if let Some(name) = attr(tok, "chat-emoji", "data-emoji-name") {
+            Some(name.to_string()) // custom emoji: its :name:, the image isn't in the API
+        } else if tok == "/chat-user" || tok == "/chat-emoji" {
+            Some(String::new())
         } else if tok.starts_with("http://") || tok.starts_with("https://") {
             Some(match tok.split_once('|') {
                 Some((url, label)) => format!("[{}]({url})", label.replace(['[', ']'], "")),
@@ -1162,6 +1169,12 @@ fn chat_markup(ft: &str, names: &HashMap<String, String>) -> String {
     }
     out.push_str(rest);
     unescape(&out)
+}
+
+/// `chat-user data-user="users/1"` → "users/1" for tag "chat-user", attribute "data-user"
+fn attr<'a>(tok: &'a str, tag: &str, name: &str) -> Option<&'a str> {
+    let rest = tok.strip_prefix(tag)?.trim_start().strip_prefix(name)?.strip_prefix("=\"")?;
+    rest.split('"').next()
 }
 
 /// formattedText backslash-escapes punctuation that would otherwise read as markup
@@ -1191,6 +1204,10 @@ mod tests {
         assert_eq!(
             chat_markup("Hi <users/7>, see <https://x.dev/a|the doc> & <https://y.dev>:\n* *one*\n* two <users/all> <customEmojis/abc>", &names),
             "Hi @{Minh}, see [the doc](https://x.dev/a) & https://y.dev:\n* *one*\n* two @{all} "
+        );
+        assert_eq!(
+            chat_markup("Hi <chat-user data-user=\"users/7\"></chat-user> or <chat-user data-user=\"users/9\"></chat-user> <chat-emoji data-emoji-name=\":ok:\"></chat-emoji>", &names),
+            "Hi @{Minh} or @{?} :ok:"
         );
         assert_eq!(chat_markup("a < b and <mailto:a@b.c|mail> <unclosed", &names), "a < b and mail <unclosed");
         assert_eq!(chat_markup("4\\. /var/www/wallet-services-v7\\_3 C:\\\\tmp \\n", &names), "4. /var/www/wallet-services-v7_3 C:\\tmp \\n");

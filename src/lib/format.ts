@@ -10,6 +10,8 @@ const INLINE = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<]+[^\s<.,:
 // *x* / _x_ / ~x~ only when they hug a word and aren't inside one: snake_case_names,
 // 2 * 3 * 4 and ~/paths stay as typed
 const EMPH: [RegExp, string][] = [
+  // **x**: Markdown habit, Google Chat renders it bold too
+  [/(^|[^\w*])\*\*(?=\S)([^*\n]*?\S)\*\*(?![\w*])/g, "strong"],
   [/(^|[^\w*])\*(?=\S)([^*\n]*?\S)\*(?![\w*])/g, "strong"],
   [/(^|[^\w_])_(?=\S)([^_\n]*?\S)_(?![\w_])/g, "em"],
   [/(^|[^\w~])~(?=\S)([^~\n]*?\S)~(?![\w~])/g, "s"],
@@ -78,6 +80,7 @@ export function plain(text: string): string {
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
     .replace(/@\{([^}]+)\}/g, "@$1")
     .replace(/`/g, "")
+    .replace(/\*\*(?=\S)([^*\n]*?\S)\*\*/g, "$1")
     .replace(/(^|[^\w*_~])[*_~](?=\S)([^*_~\n]*?\S)[*_~](?![\w*_~])/g, "$1$2")
     .replace(/^\s*[*-]\s+/gm, "• ")
     .replace(/\s+/g, " ")

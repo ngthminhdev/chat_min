@@ -42,6 +42,8 @@ struct Acc {
     watched: HashSet<i64>,
     /// chats open on screen (set_open)
     ui_open: HashSet<i64>,
+    /// users Telegram reports online right now
+    online: HashSet<i64>,
     watching: bool,
 }
 
@@ -106,6 +108,30 @@ impl Tg {
             .ok_or_else(|| "Telegram account chưa kết nối".to_string())
     }
 
+    /// Drops cached files past `size` bytes / `ttl` seconds since last use (TDLib keeps
+    /// what is in use or was touched in the last hour). Returns bytes freed.
+    pub async fn optimize(&self, size: i64, ttl: i32) -> i64 {
+        let clients: Vec<i32> = self.accs.lock().unwrap().iter().filter(|(_, a)| !a.pending).map(|(c, _)| *c).collect();
+        let mut freed = 0;
+        for c in clients {
+            let before = f::get_storage_statistics_fast(c).await.map(|enums::StorageStatisticsFast::StorageStatisticsFast(s)| s.files_size).unwrap_or(0);
+            let _ = f::optimize_storage(size, ttl, i32::MAX, -1, vec![], vec![], vec![], false, 0, c).await;
+            let after = f::get_storage_statistics_fast(c).await.map(|enums::StorageStatisticsFast::StorageStatisticsFast(s)| s.files_size).unwrap_or(before);
+            freed += (before - after).max(0);
+        }
+        freed
+    }
+
+    /// Bytes of downloaded files across Telegram accounts.
+    pub async fn files_size(&self) -> i64 {
+        let clients: Vec<i32> = self.accs.lock().unwrap().iter().filter(|(_, a)| !a.pending).map(|(c, _)| *c).collect();
+        let mut n = 0;
+        for c in clients {
+            n += f::get_storage_statistics_fast(c).await.map(|enums::StorageStatisticsFast::StorageStatisticsFast(s)| s.files_size).unwrap_or(0);
+        }
+        n
+    }
+
     fn with<T>(&self, client_id: i32, fun: impl FnOnce(&mut Acc) -> T) -> Option<T> {
         self.accs.lock().unwrap().get_mut(&client_id).map(fun)
     }
@@ -152,6 +178,21 @@ impl Tg {
         .await;
     }
 
+    // ── presence ────────────────────────────────────────────────────────────
+    fn presence(&self, core: &Arc<Core>, c: i32, account_id: &str, user_id: i64, status: &enums::UserStatus) {
+        let online = matches!(status, enums::UserStatus::Online(_));
+        let changed = self.with(c, |a| if online { a.online.insert(user_id) } else { a.online.remove(&user_id) }).unwrap_or(false);
+        if changed {
+            core.emit(crate::model::Event::Presence { account_id: account_id.into(), user_id: user_id.to_string(), online });
+        }
+    }
+
+    /// "account|user" of everyone online, for a webview that (re)loads after the updates went by.
+    pub fn online(&self) -> Vec<String> {
+        let accs = self.accs.lock().unwrap();
+        accs.values().flat_map(|a| a.online.iter().map(move |u| format!("{}|{u}", a.account_id))).collect()
+    }
+
     // ── update routing ──────────────────────────────────────────────────────
     fn handle(&self, core: &Arc<Core>, c: i32, update: Update) {
         let Some(account_id) = self.with(c, |a| a.account_id.clone()) else { return };
@@ -165,7 +206,9 @@ impl Tg {
                         a.photos.insert(u.id, file_ref(&p.small));
                     }
                 });
+                self.presence(core, c, &account_id, u.id, &u.status);
             }
+            Update::UserStatus(u) => self.presence(core, c, &account_id, u.user_id, &u.status),
             Update::ChatPhoto(u) => {
                 let (photo, photo_ref) = chat_photo(u.photo.as_ref());
                 self.patch_chat(core, c, u.chat_id, |ch| {
@@ -694,7 +737,7 @@ impl Tg {
         let reply = reply_to.and_then(|r| r.parse::<i64>().ok()).map(|id| {
             enums::InputMessageReplyTo::Message(t::InputMessageReplyToMessage { message_id: id, quote: None, checklist_task_id: 0 })
         });
-        let caption = t::FormattedText { text, entities: vec![] };
+        let caption = with_mentions(&text);
         let content = match file {
             Some(path) if voice.is_some() => enums::InputMessageContent::InputMessageVoiceNote(t::InputMessageVoiceNote {
                 voice_note: enums::InputFile::Local(t::InputFileLocal { path }),
@@ -712,6 +755,23 @@ impl Tg {
                         added_sticker_file_ids: vec![],
                         width: 0,
                         height: 0,
+                        caption: Some(caption),
+                        show_caption_above_media: false,
+                        self_destruct_type: None,
+                        has_spoiler: false,
+                    })
+                } else if is_video(&path) {
+                    // duration/size 0: TDLib and the clients read them from the file
+                    enums::InputMessageContent::InputMessageVideo(t::InputMessageVideo {
+                        video: input,
+                        thumbnail: None,
+                        cover: None,
+                        start_timestamp: 0,
+                        added_sticker_file_ids: vec![],
+                        duration: 0,
+                        width: 0,
+                        height: 0,
+                        supports_streaming: true,
                         caption: Some(caption),
                         show_caption_above_media: false,
                         self_destruct_type: None,
@@ -803,6 +863,22 @@ impl Tg {
         } else {
             f::remove_message_reaction(chat, id, r, c).await.map_err(err)
         }
+    }
+
+    /// Emoji this message accepts: chats can limit reactions and some need Premium.
+    pub async fn reactions(&self, account_id: &str, chat_id: &str, msg_id: &str) -> R<Vec<String>> {
+        let c = self.client(account_id)?;
+        let enums::AvailableReactions::AvailableReactions(a) =
+            f::get_message_available_reactions(chat_id.parse().unwrap_or(0), msg_id.parse().unwrap_or(0), 8, c).await.map_err(err)?;
+        let mut out: Vec<String> = vec![];
+        for r in a.top_reactions.iter().chain(&a.recent_reactions).chain(&a.popular_reactions) {
+            if let (false, enums::ReactionType::Emoji(e)) = (r.needs_premium, &r.r#type) {
+                if !out.contains(&e.emoji) {
+                    out.push(e.emoji.clone());
+                }
+            }
+        }
+        Ok(out)
     }
 
     pub async fn pin(&self, account_id: &str, chat_id: &str, msg_id: &str, on: bool) -> R<()> {
@@ -919,6 +995,33 @@ impl Tg {
 // ── translation ─────────────────────────────────────────────────────────────
 fn user_name(u: &t::User) -> String {
     format!("{} {}", u.first_name, u.last_name).trim().to_string()
+}
+
+/// The composer writes a picked @mention as "@[Name](user id)": send it as "Name" carrying a
+/// mention-by-id entity, which works for people without a username too.
+fn with_mentions(text: &str) -> t::FormattedText {
+    let (mut out, mut entities, mut rest) = (String::new(), vec![], text);
+    while let Some(i) = rest.find("@[") {
+        let after = &rest[i + 2..];
+        let parsed = after.find("](").and_then(|j| {
+            let tail = &after[j + 2..];
+            let k = tail.find(')')?;
+            Some((&after[..j], tail[..k].parse::<i64>().ok()?, &tail[k + 1..]))
+        });
+        let Some((name, user_id, tail)) = parsed else {
+            out.push_str(&rest[..i + 2]);
+            rest = after;
+            continue;
+        };
+        out.push_str(&rest[..i]);
+        let offset = out.encode_utf16().count() as i32;
+        out.push_str(name);
+        let length = name.encode_utf16().count() as i32;
+        entities.push(t::TextEntity { offset, length, r#type: enums::TextEntityType::MentionName(t::TextEntityTypeMentionName { user_id }) });
+        rest = tail;
+    }
+    out.push_str(rest);
+    t::FormattedText { text: out, entities }
 }
 
 fn status_text(s: &enums::UserStatus) -> String {
@@ -1246,7 +1349,12 @@ fn to_msg(a: &Acc, m: &t::Message) -> Msg {
             let v = &x.video_note;
             out.media = Some(with_thumb(file_media("video", "Video tròn", "video/mp4", &v.video, v.length, v.length, v.minithumbnail.as_ref()), v.thumbnail.as_ref()));
         }
-        _ => {
+        // a lone emoji is sent as an animated one; dice/darts carry their emoji too
+        MessageContent::MessageAnimatedEmoji(x) => out.text = x.emoji.clone(),
+        MessageContent::MessageDice(x) => out.text = format!("{} {}", x.emoji, x.value),
+        other => {
+            let name = format!("{other:?}");
+            eprintln!("[tg] unsupported content {}", name.split(['(', ' ']).next().unwrap_or(""));
             out.kind = "service".into();
             out.text = "Tin nhắn ChatMin chưa hỗ trợ hiển thị".into();
         }
@@ -1314,6 +1422,11 @@ fn is_image(path: &str) -> bool {
     [".jpg", ".jpeg", ".png", ".webp", ".heic", ".gif"].iter().any(|ext| p.ends_with(ext)) && !p.ends_with(".gif")
 }
 
+fn is_video(path: &str) -> bool {
+    let p = path.to_lowercase();
+    [".mp4", ".mov", ".m4v"].iter().any(|ext| p.ends_with(ext))
+}
+
 fn qr_svg(link: &str) -> String {
     let code = qrcode::QrCode::new(link.as_bytes()).unwrap();
     let svg = code.render::<qrcode::render::svg::Color>().min_dimensions(200, 200).quiet_zone(true).build();
@@ -1323,6 +1436,14 @@ fn qr_svg(link: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mentions_become_entities() {
+        let f = with_mentions("Hi @[Lan Phạm](42), xem @[x](no) và 😀@[B](7)!");
+        assert_eq!(f.text, "Hi Lan Phạm, xem @[x](no) và 😀B!");
+        let e: Vec<(i32, i32)> = f.entities.iter().map(|e| (e.offset, e.length)).collect();
+        assert_eq!(e, vec![(3, 8), (31, 1)]); // UTF-16: 😀 counts 2
+    }
 
     #[test]
     fn markers_hug_words() {

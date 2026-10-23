@@ -34,9 +34,21 @@ impl Prefs {
     }
 }
 
-/// Messages older than this when they reach us (catch-up after sleep or a reconnect)
-/// update the chat but don't ring.
+/// Messages older than this when they reach us (catch-up after the Mac slept or the app
+/// was closed) don't ring one by one: they go into one "while you were away" summary.
 const STALE_MS: i64 = 10 * 60 * 1000;
+/// Older than this they only update the chat.
+const DIGEST_MS: i64 = 12 * 60 * 60 * 1000;
+
+/// What a message that just arrived gets.
+#[derive(Debug, PartialEq)]
+pub enum Ring {
+    No,
+    /// its own notification
+    Now,
+    /// a line in the "while you were away" summary
+    Later,
+}
 
 #[derive(Default)]
 pub struct Notifier {
@@ -46,6 +58,8 @@ pub struct Notifier {
     /// unread per chat, muted chats as 0; their sum is the Dock badge
     unread: Mutex<HashMap<(String, String), i32>>,
     badge: Mutex<i64>,
+    /// (chat title, "account|chat") waiting for the summary
+    missed: Mutex<Vec<(String, String)>>,
 }
 
 impl Notifier {
@@ -70,27 +84,35 @@ impl Notifier {
     /// Whether a just-arrived message should ring, given its chat and the account's prefs.
     /// Google Chat spaces ring like Chat's own default ("All"): @mentions, the first message
     /// of a thread, and replies in threads you've posted in — not every reply everywhere.
-    fn rings(p: &Prefs, chat: &Chat, m: &Msg, followed: bool, watching: bool, now_ms: i64, now_hm: &str) -> bool {
+    fn rings(p: &Prefs, chat: &Chat, m: &Msg, followed: bool, watching: bool, now_ms: i64, now_hm: &str) -> Ring {
         // Telegram still rings for @mentions and replies to you in a muted chat (its default)
         let muted = chat.muted && !(m.mentions_me && chat.account_id.starts_with("tg-"));
-        if m.outgoing || m.deleted || muted || watching || now_ms - m.ts > STALE_MS {
-            return false;
+        let age = now_ms - m.ts;
+        if m.outgoing || m.deleted || muted || watching || age > DIGEST_MS {
+            return Ring::No;
         }
         if chat.kind == "space" && m.thread_reply && !m.mentions_me && !followed {
-            return false;
+            return Ring::No;
         }
-        p.enabled && !p.quiet_at(now_hm) && (!p.mentions || m.mentions_me)
+        if !p.enabled || p.quiet_at(now_hm) || (p.mentions && !m.mentions_me) {
+            return Ring::No;
+        }
+        if age > STALE_MS { Ring::Later } else { Ring::Now }
     }
 
     /// `followed`: you have posted in this message's thread.
-    /// Returns whether it rang.
-    pub fn message(&self, app: &AppHandle, chat: Option<&Chat>, m: &Msg, followed: bool) -> bool {
-        let Some(chat) = chat else { return false };
+    pub fn message(&self, app: &AppHandle, chat: Option<&Chat>, m: &Msg, followed: bool) -> Ring {
+        let Some(chat) = chat else { return Ring::No };
         let now_hm = chrono::Local::now().format("%H:%M").to_string();
         let p = self.prefs.lock().unwrap().get(&m.account_id).cloned().unwrap_or_default();
         let watching = self.watching(app, &m.account_id, &m.chat_id);
-        if !Self::rings(&p, chat, m, followed, watching, crate::now_ms(), &now_hm) {
-            return false;
+        match Self::rings(&p, chat, m, followed, watching, crate::now_ms(), &now_hm) {
+            Ring::No => return Ring::No,
+            Ring::Later => {
+                self.later(app, &chat.title, &format!("{}|{}", m.account_id, m.chat_id));
+                return Ring::Later;
+            }
+            Ring::Now => {}
         }
         let who = if m.sender_name.is_empty() { chat.title.clone() } else { m.sender_name.clone() };
         let title = if chat.kind == "dm" { who } else { format!("{who} · {}", chat.title) };
@@ -100,8 +122,46 @@ impl Notifier {
         } else {
             "Bạn có tin nhắn mới".into()
         };
-        show(app, &title, &body, &format!("{}|{}", m.account_id, m.chat_id));
-        true
+        // a thread reply opens its thread: in the space it's folded out of sight
+        let thread = if m.thread_reply { m.thread_id.as_str() } else { "" };
+        show(app, &title, &body, &format!("{}|{}\n{}\n{thread}", m.account_id, m.chat_id, m.id));
+        Ring::Now
+    }
+
+    /// Someone reacted to one of my messages. Not while that chat is on screen, nor when
+    /// notifications are off / quiet hours.
+    pub fn reaction(&self, app: &AppHandle, chat: Option<&Chat>, m: &Msg, emoji: &str) {
+        let Some(chat) = chat else { return };
+        let p = self.prefs.lock().unwrap().get(&m.account_id).cloned().unwrap_or_default();
+        let now_hm = chrono::Local::now().format("%H:%M").to_string();
+        if !p.enabled || p.quiet_at(&now_hm) || self.watching(app, &m.account_id, &m.chat_id) {
+            return;
+        }
+        let t = crate::tg::plain(&m.text, m.media.as_ref());
+        let body = if p.preview && !t.is_empty() { format!("{emoji} vào tin của bạn: {t}") } else { format!("{emoji} vào tin của bạn") };
+        let thread = if m.thread_reply { m.thread_id.as_str() } else { "" };
+        show(app, &format!("Biểu cảm mới · {}", chat.title), &body, &format!("{}|{}\n{}\n{thread}", m.account_id, m.chat_id, m.id));
+    }
+
+    /// Queues a missed message; a catch-up burst settles for a few seconds, then rings once.
+    fn later(&self, app: &AppHandle, title: &str, key: &str) {
+        let first = {
+            let mut q = self.missed.lock().unwrap();
+            q.push((title.into(), key.into()));
+            q.len() == 1
+        };
+        if first {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                if let Some(core) = app.try_state::<std::sync::Arc<crate::Core>>() {
+                    let q = std::mem::take(&mut *core.notifier.missed.lock().unwrap());
+                    if let Some((title, body, key)) = summary(&q) {
+                        show(&app, &title, &body, &key);
+                    }
+                }
+            });
+        }
     }
 
     /// Messenger / Zalo only report a count (from the page title).
@@ -134,6 +194,19 @@ impl Notifier {
     }
 }
 
+/// "3 tin nhắn trong lúc vắng" / "Minh, Backend Go, Lan +2 chat"; clicking opens the first.
+fn summary(q: &[(String, String)]) -> Option<(String, String, String)> {
+    let (_, key) = q.first()?;
+    let mut chats: Vec<&str> = vec![];
+    for (t, _) in q {
+        if !chats.contains(&t.as_str()) {
+            chats.push(t);
+        }
+    }
+    let more = if chats.len() > 3 { format!(" +{} chat", chats.len() - 3) } else { String::new() };
+    Some((format!("{} tin nhắn trong lúc vắng", q.len()), format!("{}{more}", chats[..chats.len().min(3)].join(", ")), key.clone()))
+}
+
 /// Account-level problems (session expired): always shown, whatever the message settings.
 pub fn alert(app: &AppHandle, title: &str, body: &str) {
     show(app, title, body, "");
@@ -145,14 +218,18 @@ pub fn test(app: &AppHandle) {
 }
 
 /// Brings the window up and opens `chat` ("account|chat"; empty: just the window).
-fn open(app: &AppHandle, chat: &str) {
+/// `target`: "account|chat", optionally followed by "\nmessage id\nthread id".
+fn open(app: &AppHandle, target: &str) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
     }
-    if !chat.is_empty() {
-        let _ = app.emit("chatmin", crate::model::Event::Open { key: chat.into() });
+    let mut parts = target.split('\n').map(String::from);
+    let key = parts.next().unwrap_or_default();
+    if !key.is_empty() {
+        let (msg, thread) = (parts.next().unwrap_or_default(), parts.next().unwrap_or_default());
+        let _ = app.emit("chatmin", crate::model::Event::Open { key, msg, thread });
     }
 }
 
@@ -218,9 +295,26 @@ fn show(app: &AppHandle, title: &str, body: &str, chat: &str) {
     }
 }
 
+/// An emoji someone else added to `new` since `old` (counts minus my own reaction).
+pub fn new_reaction(old: &Msg, new: &Msg) -> Option<String> {
+    let others = |m: &Msg, e: &str| m.reactions.iter().find(|r| r.emoji == e).map_or(0, |r| r.count - r.mine as i32);
+    new.reactions.iter().find(|r| others(new, &r.emoji) > others(old, &r.emoji)).map(|r| r.emoji.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reaction_diff() {
+        use crate::model::Reaction;
+        let m = |rs: &[(&str, i32, bool)]| Msg { reactions: rs.iter().map(|&(e, c, mine)| Reaction { emoji: e.into(), count: c, mine }).collect(), ..Default::default() };
+        assert_eq!(new_reaction(&m(&[]), &m(&[("👍", 1, false)])).as_deref(), Some("👍"));
+        assert_eq!(new_reaction(&m(&[]), &m(&[("👍", 1, true)])), None); // my own
+        assert_eq!(new_reaction(&m(&[("👍", 1, true)]), &m(&[("👍", 2, true)])).as_deref(), Some("👍"));
+        assert_eq!(new_reaction(&m(&[("👍", 2, false)]), &m(&[("👍", 2, false)])), None);
+        assert_eq!(new_reaction(&m(&[("👍", 2, false)]), &m(&[("👍", 1, false)])), None); // removed
+    }
 
     #[test]
     fn who_rings() {
@@ -233,7 +327,7 @@ mod tests {
             f(&mut m);
             m
         };
-        let ring = |p: &Prefs, c: &Chat, m: &Msg, followed: bool| Notifier::rings(p, c, m, followed, false, now, "12:00");
+        let ring = |p: &Prefs, c: &Chat, m: &Msg, followed: bool| Notifier::rings(p, c, m, followed, false, now, "12:00") == Ring::Now;
         assert!(ring(&p, &dm, &msg(|_| {}), false));
         assert!(ring(&p, &dm, &msg(|m| m.thread_reply = true), false), "DMs ring for everything");
         assert!(ring(&p, &space, &msg(|_| {}), false), "first message of a thread");
@@ -241,17 +335,28 @@ mod tests {
         assert!(ring(&p, &space, &msg(|m| m.thread_reply = true), true), "reply in a thread you posted in");
         assert!(ring(&p, &space, &msg(|m| { m.thread_reply = true; m.mentions_me = true }), false));
         assert!(!ring(&p, &dm, &msg(|m| m.outgoing = true), false));
-        assert!(!ring(&p, &dm, &Msg { ts: now - STALE_MS - 1, ..Default::default() }, false), "catch-up after sleep stays silent");
+        let at = |ts| Notifier::rings(&p, &dm, &Msg { ts, ..Default::default() }, false, false, now, "12:00");
+        assert_eq!(at(now - STALE_MS - 1), Ring::Later, "caught up after sleep: into the summary");
+        assert_eq!(at(now - DIGEST_MS - 1), Ring::No, "too old to mention");
+        assert_eq!(Notifier::rings(&p, &Chat { muted: true, ..dm.clone() }, &Msg { ts: now - STALE_MS - 1, ..Default::default() }, false, false, now, "12:00"), Ring::No);
         assert!(!ring(&p, &Chat { muted: true, ..dm.clone() }, &msg(|_| {}), false));
         let muted_tg = Chat { muted: true, account_id: "tg-1".into(), kind: "group".into(), ..Default::default() };
         assert!(ring(&p, &muted_tg, &msg(|m| m.mentions_me = true), false), "Telegram: mention in a muted group");
         assert!(!ring(&p, &muted_tg, &msg(|_| {}), false));
         assert!(!ring(&p, &Chat { muted: true, account_id: "gc-1".into(), ..space.clone() }, &msg(|m| m.mentions_me = true), false), "muted space stays silent");
-        assert!(!Notifier::rings(&p, &dm, &msg(|_| {}), false, true, now, "12:00"), "chat on screen");
+        assert_eq!(Notifier::rings(&p, &dm, &msg(|_| {}), false, true, now, "12:00"), Ring::No, "chat on screen");
         let only = Prefs { mentions: true, ..Default::default() };
         assert!(!ring(&only, &dm, &msg(|_| {}), false) && ring(&only, &dm, &msg(|m| m.mentions_me = true), false));
         assert!(!ring(&Prefs { enabled: false, ..Default::default() }, &dm, &msg(|_| {}), false));
-        assert!(!Notifier::rings(&Prefs { quiet: true, ..Default::default() }, &dm, &msg(|_| {}), false, false, now, "23:00"));
+        assert_eq!(Notifier::rings(&Prefs { quiet: true, ..Default::default() }, &dm, &msg(|_| {}), false, false, now, "23:00"), Ring::No);
+    }
+
+    #[test]
+    fn away_summary() {
+        let q = |v: &[&str]| v.iter().map(|t| (t.to_string(), format!("k-{t}"))).collect::<Vec<_>>();
+        assert_eq!(summary(&[]), None);
+        assert_eq!(summary(&q(&["Minh", "Lan", "Minh"])).unwrap(), ("3 tin nhắn trong lúc vắng".into(), "Minh, Lan".into(), "k-Minh".into()));
+        assert_eq!(summary(&q(&["A", "B", "C", "D", "E"])).unwrap().1, "A, B, C +2 chat");
     }
 
     #[test]

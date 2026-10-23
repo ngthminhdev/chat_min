@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { api } from "../lib/bridge";
 import { esc, hm, norm, plain } from "../lib/format";
-import { EMOJI, nextEmojiIndex, searchEmoji } from "../lib/micro-ux";
+import { bare, EMOJI, nextEmojiIndex, searchEmoji } from "../lib/micro-ux";
 import { COLORS, COLOR_LABELS } from "../lib/platforms";
 import type { Msg } from "../lib/types";
 import { forwardMsg, key, openChat, splitKey, useApp, openSearch, type Pop } from "../store";
@@ -372,7 +372,7 @@ function Popover() {
 
 function PopBody({ pop, close }: { pop: Pop; close: () => void }) {
   if (pop.kind === "emoji") {
-    return <EmojiPicker onPick={(emoji) => { close(); pop.onPick(emoji); }} />;
+    return <EmojiPicker only={pop.only} onPick={(emoji) => { close(); pop.onPick(emoji); }} />;
   }
   if (pop.kind === "menu") {
     return (
@@ -390,12 +390,13 @@ function PopBody({ pop, close }: { pop: Pop; close: () => void }) {
   return <ColorPicker accountId={pop.accountId} close={close} />;
 }
 
-function EmojiPicker({ onPick }: { onPick: (emoji: string) => void }) {
+function EmojiPicker({ onPick, only }: { onPick: (emoji: string) => void; only?: string[] }) {
   const [expanded, setExpanded] = useState(false);
   const [query, setQuery] = useState("");
   const input = useRef<HTMLInputElement>(null);
   const grid = useRef<HTMLDivElement>(null);
-  const items = expanded ? searchEmoji(query) : EMOJI.slice(0, 16);
+  const all = only ? only.map((e) => EMOJI.find((x) => bare(x[0]) === bare(e)) ?? ([e, e, ""] as const)) : EMOJI;
+  const items = expanded ? searchEmoji(query, all) : all.slice(0, 16);
   useEffect(() => { if (expanded) input.current?.focus(); }, [expanded]);
   return (
     <>

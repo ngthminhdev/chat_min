@@ -1,11 +1,12 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { useShallow } from "zustand/react/shallow";
 import { api, fileSrc } from "../lib/bridge";
 import { dayLabel, fileSize, fmtCount, hm, listTime, norm, plain } from "../lib/format";
 import { CAP_LABELS, CAP_OFF_NOTE, PLATFORMS, type Cap } from "../lib/platforms";
 import type { Member, Msg } from "../lib/types";
 import { fileActionLabel, mediaSection } from "../lib/micro-ux";
-import { capsOf, chatKeyOf, fail, loadTopics, openThreadTab, openTopicTab, saveMedia, threadTabKey, toast, useApp, type InspTab } from "../store";
+import { capsOf, chatKeyOf, fail, loadTopics, openThreadTab, openTopicTab, saveMedia, threadTabKey, threadUnread, toast, useApp, type InspTab } from "../store";
 import { ChatAvatar, PersonAvatar } from "../ui/Avatar";
 import { Glyph, Icon } from "../ui/Icon";
 import { useDownload } from "./Conversation";
@@ -84,12 +85,14 @@ export function Inspector() {
           exit={{ opacity: 0, transition: { duration: reduceMotion ? 0 : 0.08 } }}
           transition={{ duration: reduceMotion ? 0 : 0.16 }}
         >
+          <div className="inspector-surface">
           {tab === "info" && <InfoTab k={active} files={files} />}
           {tab === "members" && <MembersTab k={active} />}
           {tab === "files" && <><p className="history-scope">{files.length} tệp và tin nhắn thoại trong lịch sử đã tải</p><FilesTab files={files} /></>}
           {tab === "media" && <><p className="history-scope">{imgs.length} ảnh và video trong lịch sử đã tải</p><MediaTab imgs={imgs} /></>}
           {tab === "pinned" && <PinnedTab k={active} />}
           {tab === "threads" && (chat.forum ? <TopicsTab k={active} /> : chat.threaded ? <ThreadsTab k={active} /> : null)}
+          </div>
         </motion.div>
       </AnimatePresence>
     </aside>
@@ -141,7 +144,7 @@ function InspectorTabs({ tabs, selected, panelId }: { tabs: [InspTab, string, nu
   );
 }
 
-function InfoTab({ k, files }: { k: string; files: Msg[] }) {
+function InfoTabBody({ k, files }: { k: string; files: Msg[] }) {
   const chat = useApp((s) => s.chats[k])!;
   const account = useApp((s) => s.accounts.find((a) => a.id === chat.accountId))!;
   const pl = PLATFORMS[account.platform];
@@ -224,7 +227,7 @@ function InfoTab({ k, files }: { k: string; files: Msg[] }) {
   );
 }
 
-function MembersTab({ k }: { k: string }) {
+function MembersTabBody({ k }: { k: string }) {
   const chat = useApp((s) => s.chats[k])!;
   const [members, setMembers] = useState<Member[] | null>(null);
   const [err, setErr] = useState("");
@@ -292,7 +295,7 @@ function FileRow({ m, recent = false }: { m: Msg; recent?: boolean }) {
         kind: "menu", x: e.clientX, y: e.clientY, top: e.clientY,
         items: [
           { icon: "external-link", label: "Mở", run: () => void open() },
-          { icon: "download", label: "Lưu vào Downloads", run: () => void ensure().then((p) => { if (p) void saveMedia(p, m.media!.name, false); }) },
+          { icon: "download", label: "Lưu vào thư mục tải về", run: () => void ensure().then((p) => { if (p) void saveMedia(p, m.media!.name, false); }) },
           { icon: "download", label: "Lưu thành…", run: () => void ensure().then((p) => { if (p) void saveMedia(p, m.media!.name, true); }) },
           { icon: "message-square-text", label: "Tới tin nhắn", run: () => useApp.setState({ jumpTo: m.id }) },
         ],
@@ -374,7 +377,7 @@ function MediaCell({ m }: { m: Msg }) {
   );
 }
 
-function PinnedTab({ k }: { k: string }) {
+function PinnedTabBody({ k }: { k: string }) {
   const chat = useApp((s) => s.chats[k])!;
   const local = useApp((s) => s.msgs[k]);
   const [pins, setPins] = useState<Msg[] | null>(null);
@@ -413,6 +416,7 @@ function PinnedTab({ k }: { k: string }) {
 function ThreadsTab({ k }: { k: string }) {
   const list = useApp((s) => s.msgs[k]);
   const tabs = useApp((s) => s.tabs);
+  const marks = useApp(useShallow((s) => ({ unreadMark: s.unreadMark, fresh: s.fresh, threadSeen: s.threadSeen })));
   const rows = useMemo(() => {
     const roots = (list ?? []).filter((m) => !m.threadReply && m.threadId && !m.deleted && m.kind !== "service");
     const replies: Record<string, Msg[]> = {};
@@ -428,8 +432,9 @@ function ThreadsTab({ k }: { k: string }) {
     <div className="side-threads">
       {rows.map(({ root, replies, last }) => {
         const faces = [...new Map(replies.map((r) => [r.senderName, r])).values()].slice(0, 3);
+        const unread = threadUnread(marks, k, root.threadId, replies);
         return (
-          <button key={root.id} className={`side-thread${tabs.includes(threadTabKey(k, root.threadId)) ? " open" : ""}`} onClick={() => openThreadTab(k, root)}>
+          <button key={root.id} className={`side-thread${tabs.includes(threadTabKey(k, root.threadId)) ? " open" : ""}${unread ? " has-new" : ""}`} onClick={() => openThreadTab(k, root)}>
             <span className="hd">
               <b>{root.outgoing ? "Bạn" : root.senderName}</b>
               <time>{dayLabel(last).split(" · ")[0]} {hm(last)}</time>
@@ -438,6 +443,7 @@ function ThreadsTab({ k }: { k: string }) {
             <span className="meta">
               <span className="faces">{faces.map((f) => <PersonAvatar key={f.senderName} name={f.senderName} accountId={f.accountId} photo={f.senderPhoto} />)}</span>
               {replies.length} trả lời
+              {unread > 0 && <b className="thread-new">· {unread} mới</b>}
             </span>
           </button>
         );
@@ -480,3 +486,13 @@ function TopicsTab({ k }: { k: string }) {
     </div>
   );
 }
+
+/** The tabs read their chat unguarded: render them only while it exists, so a chat
+ *  deleted elsewhere (another Telegram app) unmounts them instead of crashing. */
+const withChat = <P extends { k: string }>(Body: React.ComponentType<P>) =>
+  function Gate(p: P) {
+    return useApp((s) => !!s.chats[p.k]) ? <Body {...p} /> : null;
+  };
+const InfoTab = withChat(InfoTabBody);
+const MembersTab = withChat(MembersTabBody);
+const PinnedTab = withChat(PinnedTabBody);

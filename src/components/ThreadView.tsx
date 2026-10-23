@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef } from "react";
 import { fmtCount, plain } from "../lib/format";
-import { capsOf, openChat, toast, useApp } from "../store";
+import { capsOf, openChat, seenThread, toast, useApp } from "../store";
 import { ChatAvatar } from "../ui/Avatar";
 import { Icon } from "../ui/Icon";
 import { Composer } from "./Composer";
 import { MessageItem } from "./Message";
-import { JumpBottom } from "./Conversation";
+import { JumpBottom, TranslateAllButton, useViewportTranslate } from "./Conversation";
 import { useStickyScroll } from "./useStickyScroll";
 import { SummaryButton, SummaryCard } from "./Summary";
 
@@ -26,6 +26,12 @@ export function ThreadView({ tab }: { tab: string }) {
     [list, meta?.threadId, meta?.topic],
   );
 
+  const shown = useMemo(() => (root && !meta?.topic ? [root, ...replies] : replies), [root, replies, meta?.topic]);
+  useViewportTranslate(box, tab, meta?.chatKey ?? "", shown);
+  const last = replies[replies.length - 1]?.sort;
+  useEffect(() => {
+    if (meta && last !== undefined) seenThread(meta.chatKey, meta.threadId, last);
+  }, [meta?.chatKey, meta?.threadId, last]);
   const scroll = useStickyScroll(box, replies[replies.length - 1]?.id ?? root?.id);
   useEffect(() => {
     scroll.stick.current = true;
@@ -67,6 +73,7 @@ export function ThreadView({ tab }: { tab: string }) {
             {meta.topic ? `Topic · ${chat.title} · ${fmtCount(replies.length)} tin đã tải` : `Thread trong tab riêng · ${chat.title} · ${fmtCount(replies.length)} trả lời`}
           </span>
         </div>
+        <TranslateAllButton autoKey={tab} chatKey={meta.chatKey} msgs={shown} />
         <SummaryButton tab={tab} />
       </div>
       <SummaryCard tab={tab} />

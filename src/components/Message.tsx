@@ -1,11 +1,11 @@
 import { memo, useState } from "react";
-import { motion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { EASE } from "../lib/motion";
 import { fileSrc, isTauri, openPath, openUrl, revealPath, streamSrc } from "../lib/bridge";
 import { fileSize, fmt, hm, plain } from "../lib/format";
 import { CAP_OFF_NOTE, type Cap } from "../lib/platforms";
 import type { Chat, Media, Msg } from "../lib/types";
-import { anchor, confirmDialog, fail, openThreadTab, retry, saveMedia, toast, toggleReaction, useApp, type MenuItem } from "../store";
+import { anchor, confirmDialog, fail, openThreadTab, pickReaction, retry, threadUnread, saveMedia, toast, toggleReaction, useApp, type MenuItem } from "../store";
 import { api } from "../lib/bridge";
 import { PersonAvatar, useAvatar } from "../ui/Avatar";
 import { Icon, type IconName } from "../ui/Icon";
@@ -40,7 +40,7 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
   }
   const me = m.outgoing;
   const cls = `msg${me ? " me" : ""}${first ? " first" : ""}${last ? " last" : ""}${m.mentionsMe ? " mentions-me" : ""}`;
-  const side = me ? null : first ? <PersonAvatar name={m.senderName} accountId={m.accountId} photo={m.senderPhoto} /> : <span className="avatar-gap" />;
+  const side = me ? null : first ? <PersonAvatar name={m.senderName} accountId={m.accountId} photo={m.senderPhoto} userId={m.senderId} /> : <span className="avatar-gap" />;
   const sender = !me && first && chat.kind !== "dm" ? <span className="sender">{m.senderName}</span> : null;
   const Wrap = fresh ? motion.div : "div";
   const anim = fresh ? { initial: { opacity: 0, y: 8 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.2, ease: EASE } } : {};
@@ -83,6 +83,7 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
     >
       {side}
       <div className="msg-col">
+        <div className="message-surface">
         {sender}
         <div className={`bubble${m.media?.kind === "sticker" && !m.text ? " sticker" : ""}`}>
           {quote}
@@ -114,22 +115,27 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
           )}
         </div>
         <Meta m={m} caps={caps} />
+        </div>
         {caps.reactions && m.reactions.length > 0 && (
           <div className="reactions">
+            {/* only reactions added while the message is on screen pop in; ones loaded with
+                history don't (no `layout` either: it slid them around whenever the list
+                scrolled or older pages landed above) */}
+            <AnimatePresence initial={false}>
             {m.reactions.map((r) => (
               <motion.button
                 key={r.emoji}
-                layout
-                initial={fresh ? false : { scale: 0.6, opacity: 0 }}
+                initial={{ scale: 0.6, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 className={`reaction${r.mine ? " mine" : ""}`}
                 aria-pressed={r.mine}
                 onClick={() => void toggleReaction(k, m, r.emoji)}
               >
-                <span className="e">{r.emoji}</span>
+                <span className="e"><Emoji e={r.emoji} /></span>
                 {r.count}
               </motion.button>
             ))}
+            </AnimatePresence>
           </div>
         )}
         {caps.threads && chat.threaded && <ThreadLink k={k} m={m} replies={replies} open={threadOpen} />}
@@ -156,7 +162,7 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
             aria-label="Thả biểu cảm"
             data-tip="Biểu cảm"
             onClick={(e) => {
-              useApp.setState({ pop: { kind: "emoji", ...anchor(e.currentTarget), onPick: (emoji) => void toggleReaction(k, m, emoji) } });
+              void pickReaction(k, m, anchor(e.currentTarget));
             }}
           >
             <Icon name="smile" />
@@ -240,7 +246,7 @@ function MediaView({ accountId, media }: { accountId: string; media: Media }) {
           ...(viewable ? [{ icon: "image" as const, label: "Xem", run: () => void view() }] : []),
           { icon: "external-link", label: "Mở bằng app mặc định", run: () => void ensure().then((p) => { if (p) openPath(p).catch(fail); }) },
           { icon: "folder-open", label: "Hiện trong Finder", run: () => void ensure().then((p) => { if (p) revealPath(p).catch(fail); }) },
-          { icon: "download", label: "Lưu vào Downloads", run: () => void ensure().then((p) => { if (p) void saveMedia(p, media.name, false); }) },
+          { icon: "download", label: "Lưu vào thư mục tải về", run: () => void ensure().then((p) => { if (p) void saveMedia(p, media.name, false); }) },
           { icon: "download", label: "Lưu thành…", run: () => void ensure().then((p) => { if (p) void saveMedia(p, media.name, true); }) },
           { icon: "copy", label: "Sao chép tên tệp", run: () => void navigator.clipboard.writeText(media.name).then(() => toast("Đã sao chép")) },
         ];
@@ -256,7 +262,7 @@ function MediaView({ accountId, media }: { accountId: string; media: Media }) {
         onClick={() => void view()}
         onContextMenu={(e) => menu(e, true)}
       >
-        {src ? <img className="od-media" src={src} alt={media.name} /> : <span className="veil-spinner" />}
+        {src ? <img className="od-media" src={src} alt={media.name} onError={dl.path ? dl.broken : undefined} /> : <span className="veil-spinner" />}
       </figure>
     );
   }
@@ -270,7 +276,7 @@ function MediaView({ accountId, media }: { accountId: string; media: Media }) {
         onContextMenu={(e) => menu(e, true)}
       >
         {live ? (
-          <video className="od-media" src={fileSrc(dl.path)} poster={poster || undefined} muted loop autoPlay playsInline />
+          <video className="od-media" src={fileSrc(dl.path)} poster={poster || undefined} muted loop autoPlay playsInline onError={dl.broken} />
         ) : poster ? (
           <img className="od-media" src={poster} alt={media.name} />
         ) : null}
@@ -314,13 +320,14 @@ function MediaView({ accountId, media }: { accountId: string; media: Media }) {
 }
 
 function ThreadLink({ k, m, replies, open }: { k: string; m: Msg; replies?: Msg[]; open: boolean }) {
+  const unread = useApp((s) => (replies ? threadUnread(s, k, m.threadId, replies) : 0));
   const n = replies?.length ?? 0;
   if (!n) return null;
   const faces = [...new Map(replies!.map((r) => [r.senderName, r])).values()].slice(0, 3);
   return (
-    <button className={`thread-link${open ? " open" : ""}`} onClick={() => openThread(k, m)}>
+    <button className={`thread-link${open ? " open" : ""}${unread ? " has-new" : ""}`} onClick={() => openThread(k, m)}>
       <span className="faces">{faces.map((f) => <PersonAvatar key={f.senderName} name={f.senderName} accountId={f.accountId} photo={f.senderPhoto} />)}</span>
-      {n} trả lời <Icon name="external-link" />
+      {n} trả lời{unread > 0 && <b className="thread-new">· {unread} mới</b>} <Icon name="external-link" />
       <small>lần cuối {hm(replies![n - 1].ts)}</small>
     </button>
   );
@@ -353,7 +360,7 @@ function menuFor(k: string, tab: string, m: Msg, caps: Record<Cap, boolean>): Me
     { icon: "reply", label: "Trả lời", run: () => setReply(tab, m) },
     caps.reactions && { icon: "smile", label: "Thả biểu cảm", run: () => {
       const el = document.getElementById(`m-${m.id}`);
-      useApp.setState({ pop: { kind: "emoji", ...(el ? anchor(el.querySelector('.bubble') ?? el) : {x: 40, y: 80, top: 80}), onPick: (emoji) => void toggleReaction(k, m, emoji) } });
+      void pickReaction(k, m, el ? anchor(el.querySelector('.bubble') ?? el) : { x: 40, y: 80, top: 80 });
     } },
     caps.threads && !!m.threadId && { icon: "message-circle-reply", label: "Mở luồng trả lời trong tab", run: () => openThread(k, m) },
     !!m.text && { icon: "languages", label: useApp.getState().tr[trKey(k, m.id)] ? "Ẩn bản dịch" : "Dịch", run: () => void translateMsg(k, m) },
@@ -383,4 +390,31 @@ function menuFor(k: string, tab: string, m: Msg, caps: Record<Cap, boolean>): Me
       },
   ];
   return items.filter(Boolean) as MenuItem[];
+}
+
+const glyphs = new Map<string, boolean>();
+/** macOS lags Unicode: an emoji newer than Apple Color Emoji draws as an empty box.
+ *  A drawn emoji has coloured pixels; the box is the plain fill colour. */
+function hasGlyph(e: string) {
+  let ok = glyphs.get(e);
+  if (ok === undefined) {
+    const g = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+    if (!g) return true;
+    g.canvas.width = g.canvas.height = 24;
+    g.font = "20px 'Apple Color Emoji'";
+    g.textBaseline = "top";
+    g.fillText(e, 0, 0);
+    const px = g.getImageData(0, 0, 24, 24).data;
+    ok = false;
+    for (let i = 0; i < px.length && !ok; i += 4) ok = px[i + 3] > 0 && (px[i] !== px[i + 1] || px[i + 1] !== px[i + 2]);
+    glyphs.set(e, ok);
+  }
+  return ok;
+}
+
+/** Falls back to Google's Noto emoji image for emoji the system font can't draw. */
+function Emoji({ e }: { e: string }) {
+  if (hasGlyph(e)) return <>{e}</>;
+  const cp = [...e].map((c) => c.codePointAt(0)!.toString(16)).filter((h) => h !== "fe0f").join("_");
+  return <img className="emoji-img" alt={e} src={`https://fonts.gstatic.com/s/e/notoemoji/latest/${cp}/emoji.svg`} />;
 }

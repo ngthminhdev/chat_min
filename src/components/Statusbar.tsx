@@ -23,12 +23,17 @@ export function Statusbar() {
         {accounts.map((a) => {
           const h = health[a.id]?.health ?? "ok";
           return (
-            <span key={a.id} className="acc-status" style={{ "--conn": `var(--conn-${a.color})` } as React.CSSProperties}>
+            // healthy accounts are just a dot and a name (status in the tooltip); words only
+            // show up when something needs attention
+            <span
+              key={a.id}
+              className={`acc-status${h === "ok" ? "" : ` ${h}`}`}
+              style={{ "--conn": `var(--conn-${a.color})` } as React.CSSProperties}
+              data-tip={`${a.name} · ${h === "ok" ? "Đã đồng bộ" : HEALTH_LABELS[h]}`}
+            >
               <span className="conn-dot" />
               {a.name}
-              {h === "ok" ? (
-                <span className="ok"><Icon name="check" /> Đã đồng bộ</span>
-              ) : h === "syncing" || h === "reconnecting" ? (
+              {h === "ok" ? null : h === "syncing" || h === "reconnecting" ? (
                 <span className="warn"><Icon name="refresh-cw" className="spin" /> {HEALTH_LABELS[h]}</span>
               ) : (
                 <span className={`health-text ${h}`}>{HEALTH_LABELS[h]}</span>
@@ -38,8 +43,8 @@ export function Statusbar() {
         })}
       </div>
       <div className="right-status">
-        <span>{unread} chưa đọc</span>
-        <span>{drafts} nháp</span>
+        {unread > 0 && <span>{unread} chưa đọc</span>}
+        {drafts > 0 && <span>{drafts} nháp</span>}
         <span><kbd className="kbd">⌘K</kbd> lệnh</span>
       </div>
     </div>

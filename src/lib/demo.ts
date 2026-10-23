@@ -146,7 +146,20 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
       return older.slice(-a.limit);
     }
     case "cached_messages":
-      return [];
+      return [[], []];
+    case "storage":
+      return { downloadDir: "~/Downloads/ChatMin", cacheMb: 2048, keepDays: 30, tgBytes: 1.3e9, localBytes: 188e6 };
+    case "storage_set":
+      return;
+    case "storage_clean":
+      return 0;
+    case "inbox": {
+      const dm = new Set(chats.filter((c) => c.kind === "dm").map((c) => k(c.accountId, c.id)));
+      return Object.entries(msgs).flatMap(([key, l]) => l.filter((x) => !x.outgoing && (x.mentionsMe || dm.has(key))))
+        .sort((x, y) => y.ts - x.ts).slice(0, a.limit);
+    }
+    case "reactions":
+      return null;
     case "web_show":
     case "web_hide":
     case "web_reload":
