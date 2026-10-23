@@ -509,7 +509,10 @@ export async function openChat(k: string) {
   // web apps (Messenger, Zalo) live in their own webview: nothing to load or mark here
   if (get().chats[chatKey]?.kind === "web") return;
   const [accountId, chatId] = splitKey(chatKey);
-  if (prevChat && prevChat !== chatKey && get().chats[prevChat]?.kind !== "web") void api.setOpen(...splitKey(prevChat), false).catch(() => {});
+  if (prevChat && prevChat !== chatKey && get().chats[prevChat]?.kind !== "web") {
+    void api.setOpen(...splitKey(prevChat), false).catch(() => {});
+    trimLoaded(prevChat);
+  }
   void api.setOpen(accountId, chatId, true).catch(() => {});
   if (!get().msgs[chatKey]) await showCached(chatKey);
   if (!get().msgs[chatKey]) await loadLatest(chatKey);
@@ -626,6 +629,17 @@ async function showCached(k: string) {
  *  list[0], which can be a thread starter fillRoots pulled from weeks back (paging from
  *  there would skip everything in between). */
 const cursor = new Map<string, number>();
+
+/** Leaving a chat drops the older pages it scrolled through: every loaded message is a
+ *  mounted row (no virtualization), and nothing else ever shrank the list. */
+function trimLoaded(k: string) {
+  const list = get().msgs[k];
+  const keep = pageSize(k) * 2;
+  if (!list || list.length <= keep) return;
+  const next = list.slice(-keep);
+  cursor.set(k, next[0].sort);
+  set((s) => ({ msgs: { ...s.msgs, [k]: next }, older: { ...s.older, [k]: "idle" } }));
+}
 /** Threaded spaces: a page is mostly replies folded into a few rows, so take bigger pages. */
 const pageSize = (k: string) => (get().chats[k]?.threaded ? 100 : PAGE);
 

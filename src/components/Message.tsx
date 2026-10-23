@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { EASE } from "../lib/motion";
 import { fileSrc, isTauri, openPath, openUrl, revealPath, streamSrc } from "../lib/bridge";
@@ -29,7 +29,11 @@ interface Props {
 
 export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps, first, last, fresh, replies, threadOpen }: Props) {
   const tr = useApp((s) => s.tr[trKey(k, m.id)]);
-  const original = useApp((s) => m.replyTo ? s.msgs[k]?.find((x) => x.id === m.replyTo) : undefined);
+  // only when the platform didn't send the quote itself: an O(n) find per message on every
+  // store change made long chats crawl
+  const needOriginal = !!m.replyTo && !(m.replyName && m.replyText);
+  const list = useApp((s) => (needOriginal ? s.msgs[k] : undefined));
+  const original = useMemo(() => list?.find((x) => x.id === m.replyTo), [list, m.replyTo]);
   if (m.kind === "service") {
     return (
       <div className="service-msg" id={`m-${m.id}`}>
