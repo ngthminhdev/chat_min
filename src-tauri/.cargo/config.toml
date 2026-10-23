@@ -1,0 +1,7 @@
+# Android: tdlib-rs links TDLib statically and needs the NDK's libc++_static / libc++abi.
+# scripts/android-build.sh copies just those two archives into target/ndk-libs (the whole
+# sysroot dir on -L would pull in Bionic's static libc.a and crash at startup). The gradle
+# stage ignores this file (the Tauri CLI sets CARGO_TARGET_*_RUSTFLAGS), so the script
+# exports the same flags. Absolute path: rustc runs dependencies from their own directories.
+[target.aarch64-linux-android]
+rustflags = ["-L", "/Users/qc-bright/Project/chat_min/src-tauri/target/ndk-libs", "-C", "link-arg=-lc++abi"]

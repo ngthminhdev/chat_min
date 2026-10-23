@@ -28,5 +28,10 @@
     "dialog:allow-open",
     "dialog:allow-save",
     "notification:default"
+  ],
+  "platforms": [
+    "macOS",
+    "windows",
+    "linux"
   ]
 }

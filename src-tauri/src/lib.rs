@@ -936,8 +936,9 @@ async fn tg_stream(core: &Core, req: &tauri::http::Request<Vec<u8>>) -> Result<t
         .map_err(|e| e.to_string())
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .register_asynchronous_uri_scheme_protocol("tgstream", |ctx, req, responder| {
             let core = ctx.app_handle().try_state::<Arc<Core>>().map(|c| c.inner().clone());
             tauri::async_runtime::spawn(async move {
@@ -950,14 +951,16 @@ pub fn run() {
         })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_notification::init())
-        // remember window size/position across launches, like the other _min apps
-        // (not visibility: quitting with the window hidden must not launch hidden)
-        .plugin(
-            tauri_plugin_window_state::Builder::default()
-                .with_state_flags(tauri_plugin_window_state::StateFlags::all() & !tauri_plugin_window_state::StateFlags::VISIBLE)
-                .build(),
-        )
+        .plugin(tauri_plugin_notification::init());
+    // remember window size/position across launches, like the other _min apps
+    // (not visibility: quitting with the window hidden must not launch hidden)
+    #[cfg(desktop)]
+    let builder = builder.plugin(
+        tauri_plugin_window_state::Builder::default()
+            .with_state_flags(tauri_plugin_window_state::StateFlags::all() & !tauri_plugin_window_state::StateFlags::VISIBLE)
+            .build(),
+    );
+    builder
         // a messenger keeps running when its window closes (notifications, Dock badge);
         // ⌘Q quits, clicking the Dock icon brings the window back
         .on_window_event(|w, e| {
@@ -1128,6 +1131,7 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building ChatMin")
         .run(|app, event| match event {
+            #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen { .. } => {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.show();

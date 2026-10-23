@@ -6,7 +6,9 @@ use crate::model::{Account, Chat};
 use crate::{now_ms, Core};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+#[cfg(desktop)]
 use tauri::webview::NewWindowResponse;
+#[cfg(desktop)]
 use tauri::{LogicalPosition, LogicalSize, Manager, WebviewBuilder, WebviewUrl};
 
 /// platform → (display name, start URL)
@@ -75,6 +77,7 @@ fn title_count(title: &str) -> i32 {
 }
 
 /// Shows the account's web app at the given logical rect, creating it on first use.
+#[cfg(desktop)]
 pub fn show(core: &Arc<Core>, a: &Account, x: f64, y: f64, w: f64, h: f64) -> Result<(), String> {
     let (pos, size) = (LogicalPosition::new(x, y), LogicalSize::new(w.max(1.0), h.max(1.0)));
     if let Some(wv) = core.app.get_webview(&label(&a.id)) {
@@ -98,23 +101,38 @@ pub fn show(core: &Arc<Core>, a: &Account, x: f64, y: f64, w: f64, h: f64) -> Re
     Ok(())
 }
 
+#[cfg(desktop)]
 pub fn hide(core: &Core, account_id: &str) {
     if let Some(wv) = core.app.get_webview(&label(account_id)) {
         let _ = wv.hide();
     }
 }
 
+#[cfg(desktop)]
 pub fn close(core: &Core, account_id: &str) {
     if let Some(wv) = core.app.get_webview(&label(account_id)) {
         let _ = wv.close();
     }
 }
 
+#[cfg(desktop)]
 pub fn reload(core: &Core, account_id: &str) {
     if let Some(wv) = core.app.get_webview(&label(account_id)) {
         let _ = wv.reload();
     }
 }
+
+// ponytail: child webviews are desktop-only in Tauri; on a phone the row just explains itself
+#[cfg(mobile)]
+pub fn show(_core: &Arc<Core>, _a: &Account, _x: f64, _y: f64, _w: f64, _h: f64) -> Result<(), String> {
+    Err("Messenger/Zalo chưa hỗ trợ trên điện thoại".into())
+}
+#[cfg(mobile)]
+pub fn hide(_core: &Core, _account_id: &str) {}
+#[cfg(mobile)]
+pub fn close(_core: &Core, _account_id: &str) {}
+#[cfg(mobile)]
+pub fn reload(_core: &Core, _account_id: &str) {}
 
 #[cfg(test)]
 mod tests {

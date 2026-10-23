@@ -193,6 +193,7 @@ impl Notifier {
         let mut badge = self.badge.lock().unwrap();
         if *badge != total {
             *badge = total;
+            #[cfg(desktop)]
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.set_badge_count(if total > 0 { Some(total) } else { None });
             }
@@ -226,6 +227,7 @@ pub fn test(app: &AppHandle) {
 /// Brings the window up and opens `chat` ("account|chat"; empty: just the window).
 /// `target`: "account|chat", optionally followed by "\nmessage id\nthread id".
 fn open(app: &AppHandle, target: &str) {
+    #[cfg(desktop)]
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
         let _ = w.unminimize();
