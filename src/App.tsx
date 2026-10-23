@@ -152,7 +152,8 @@ export default function App() {
                 ) : route === "search" ? (
                   <section className="page-view"><MessageSearch /></section>
                 ) : threadTab ? (
-                  <ThreadView tab={threadTab} />
+                  // keyed: each thread tab starts with its own scroll state (stuck to the bottom)
+                  <ThreadView key={threadTab} tab={threadTab} />
                 ) : (
                   <Conversation />
                 )}
@@ -329,7 +330,8 @@ function useGlobalHandlers() {
     // coming back to the window reads whatever arrived in the open chat meanwhile
     const onFocus = () => {
       const s = useApp.getState();
-      if (s.active && !isThreadTab(s.active) && s.route === "shell" && s.atBottom && s.chats[s.active]?.unread) markRead(s.active);
+      const c = s.active ? s.chats[s.active] : undefined;
+      if (s.active && !isThreadTab(s.active) && s.route === "shell" && s.atBottom && (c?.unread || c?.mention)) markRead(s.active);
     };
     // typing indicators expire on their own
     const tick = setInterval(() => {

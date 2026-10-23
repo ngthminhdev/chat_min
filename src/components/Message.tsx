@@ -53,8 +53,8 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
           <div className="bubble deleted">
             <Icon name="trash-2" />
             <span>Tin nhắn đã bị xoá</span>
-            <Meta m={m} caps={caps} />
           </div>
+          <Meta m={m} caps={caps} />
         </div>
       </Wrap>
     );
@@ -69,6 +69,7 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
 
   return (
     <Wrap className={cls} id={`m-${m.id}`} {...anim}
+      onMouseEnter={me ? undefined : (e: React.MouseEvent) => sideActions(e.currentTarget as HTMLElement)}
       onContextMenu={(e: React.MouseEvent) => {
         if (e.defaultPrevented) return;
         e.preventDefault();
@@ -87,7 +88,7 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
         {sender}
         <div className={`bubble${m.media?.kind === "sticker" && !m.text ? " sticker" : ""}`}>
           {quote}
-          {m.media && <MediaView accountId={m.accountId} media={m.media} />}
+          {m.media && <MediaView accountId={m.accountId} media={m.media} sending={m.status === "sending"} />}
           {m.text && <div className="tx" dangerouslySetInnerHTML={{ __html: fmt(m.text) }} />}
           {tr && (tr.state !== "ok" || tr.text) && (
             <motion.div
@@ -114,8 +115,8 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
             </a>
           )}
         </div>
-        <Meta m={m} caps={caps} />
         </div>
+        <div className="message-footer">
         {caps.reactions && m.reactions.length > 0 && (
           <div className="reactions">
             {/* only reactions added while the message is on screen pop in; ones loaded with
@@ -138,6 +139,8 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
             </AnimatePresence>
           </div>
         )}
+        <Meta m={m} caps={caps} />
+        </div>
         {caps.threads && chat.threaded && <ThreadLink k={k} m={m} replies={replies} open={threadOpen} />}
         {m.status === "failed" && (
           <div className="fail-row">
@@ -193,10 +196,22 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
   );
 });
 
+/** Incoming message: the hover toolbar sits at the row's right edge (where it is for my own
+ *  messages): the bar floats above the row, so it never collides with the bubble. */
+function sideActions(row: HTMLElement) {
+  const col = row.querySelector<HTMLElement>(".msg-col");
+  if (!col) return;
+  const room = row.getBoundingClientRect().right - col.getBoundingClientRect().right;
+  row.classList.add("act-side");
+  row.style.setProperty("--act-room", `${room}px`); // the bar lives in .msg-col: push it out to the row's edge
+}
+
 function Meta({ m, caps }: { m: Msg; caps: Record<Cap, boolean> }) {
+  // an upload in flight: Rust reports it under the file's local path (tg.rs / gchat.rs)
+  const up = useApp((s) => (m.status === "sending" && m.media?.localPath ? s.progress[`${m.accountId}|${m.media.localPath}`] : undefined));
   let status: React.ReactNode = null;
   if (m.outgoing && !m.deleted) {
-    if (m.status === "sending") status = <span data-tip="Đang gửi"><Icon name="clock" /></span>;
+    if (m.status === "sending") status = up != null && up < 100 ? <span className="dl-pct" data-tip="Đang tải lên">{up}%</span> : <span data-tip="Đang gửi"><Icon name="clock" /></span>;
     else if (m.status === "failed") status = <span className="failed" data-tip="Gửi lỗi"><Icon name="circle-alert" /></span>;
     else if (m.status === "seen" && caps.readReceipts) status = <span className="seen" data-tip="Đã xem"><Icon name="check-check" /></span>;
     else status = <span data-tip={caps.readReceipts ? "Đã gửi" : `Đã gửi · ${CAP_OFF_NOTE.readReceipts}`}><Icon name="check" /></span>;
@@ -213,7 +228,9 @@ function Meta({ m, caps }: { m: Msg; caps: Record<Cap, boolean> }) {
 const FILE_ICON = (name: string): IconName =>
   /\.(zip|gz|tar|rar|7z)$/i.test(name) ? "file-archive" : /\.(js|ts|go|rs|py|json|sql|sh|yml|yaml)$/i.test(name) ? "file-code" : "file-text";
 
-function MediaView({ accountId, media }: { accountId: string; media: Media }) {
+function MediaView({ accountId, media, sending }: { accountId: string; media: Media; sending?: boolean }) {
+  // my upload in flight: progress under the file's local path (see Meta)
+  const up = useApp((s) => (sending && media.localPath ? s.progress[`${accountId}|${media.localPath}`] : undefined));
   const isImage = media.kind === "image" || (media.kind === "sticker" && !!media.fileRef);
   const isVideo = media.kind === "video";
   // GIFs, round videos and short clips play inline, muted, like Telegram
@@ -263,6 +280,7 @@ function MediaView({ accountId, media }: { accountId: string; media: Media }) {
         onContextMenu={(e) => menu(e, true)}
       >
         {src ? <img className="od-media" src={src} alt={media.name} onError={dl.path ? dl.broken : undefined} /> : <span className="veil-spinner" />}
+        {src && busy && <span className="play">{busy}</span>}
       </figure>
     );
   }
@@ -300,16 +318,16 @@ function MediaView({ accountId, media }: { accountId: string; media: Media }) {
         <span className="file-ic"><Icon name={icon} /></span>
         <span style={{ minWidth: 0 }}>
           <strong>{media.name}</strong>
-          <small>{media.url ? "Google Drive" : [fileSize(media.size), dl.path ? "đã tải" : ""].filter(Boolean).join(" · ")}</small>
+          <small>{media.url ? "Google Drive" : sending ? `Đang tải lên${up != null ? ` ${up}%` : "…"}` : [fileSize(media.size), dl.path ? "đã tải" : ""].filter(Boolean).join(" · ")}</small>
         </span>
         <button
           className="tool-btn icon-only"
           aria-label={fileActionLabel(media, !!dl.path)}
           data-tip={fileActionLabel(media, !!dl.path)}
-          disabled={dl.state === "loading"}
+          disabled={dl.state === "loading" || sending}
           onClick={act}
         >
-          {busy ?? (
+          {busy ?? (sending ? <span className="veil-spinner" /> : null) ?? (
             <Icon name={voice ? "play" : media.url ? "external-link" : dl.path ? "folder-open" : "download"} />
           )}
         </button>

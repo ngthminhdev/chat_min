@@ -201,6 +201,9 @@ button.tab-close { padding: 0; border: 0; background: transparent; font-family: 
 
 /* NEW: reactions */
 .reactions { display: flex; flex-wrap: wrap; gap: 4px; }
+.message-footer { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; min-width: 0; width: 100%; }
+.message-footer > .reactions { flex: 1; min-width: 0; }
+.message-footer > .msg-meta { flex: none; min-height: 22px; margin: 0 4px 0 auto; }
 .reaction { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 7px; border: 1px solid var(--line); border-radius: var(--radius-pill); background: var(--pane-2); color: var(--text-2); font: var(--fs-sm) var(--font-mono); }
 .reaction:hover { border-color: var(--line-2); background: var(--pane-3); }
 .reaction.mine { background: var(--accent-soft); border-color: var(--accent-soft-strong); color: var(--text); }
@@ -227,14 +230,15 @@ button.tab-close { padding: 0; border: 0; background: transparent; font-family: 
 /* Bridge the visual gap so the toolbar stays hovered while moving up from a message. */
 .msg-actions::after { content: ""; position: absolute; top: 100%; left: -4px; right: -4px; height: 8px; }
 .msg:hover .msg-actions, .msg:focus-within .msg-actions { opacity: 1; pointer-events: auto; }
-/* incoming: grow rightwards from the bubble's left edge, so a short bubble doesn't push it over the avatar */
-.msg:not(.me) .msg-actions { left: 0; right: auto; }
+/* incoming: pushed to the row's right edge, still floating above the row like for my own
+   messages (sideActions decides whether there is room). Else above the bubble's right end. */
+.msg.act-side .msg-actions { right: calc(-1 * var(--act-room, 0px)); }
 .msg-actions button { width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-2); }
 .msg-actions button:hover { background: var(--pane-3); color: var(--text); }
 .msg-actions .ic { --od-icon-size: 15px; }
 
 /* NEW: typing indicator */
-.typing { display: flex; align-items: center; gap: 10px; margin-top: 12px; color: var(--text-3); font-size: var(--fs-md); }
+.typing { display: flex; align-items: center; gap: 10px; width: fit-content; max-width: min(600px, 88%); margin-top: 12px; color: var(--text-3); font-size: var(--fs-md); }
 .typing .dots { display: inline-flex; gap: 3px; padding: 9px 11px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--pane-2); }
 .typing .dots i { width: 5px; height: 5px; border-radius: var(--radius-circle); background: var(--text-3); animation: blink 1.2s infinite var(--ease-ui); }
 .typing .dots i:nth-child(2) { animation-delay: .15s; }
@@ -1067,6 +1071,8 @@ body.light .badge.unread, body.light .chat-row.unread .badge.unread { color: #ff
 .conv-threads { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-color: transparent; color: var(--text-2); }
 .conv-threads.active { color: var(--accent-secondary); background: var(--accent-soft); }
 .conv-threads small { color: var(--text-3); font: var(--fs-xs) var(--font-mono); }
+.conv-threads.has-new { color: var(--text); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
+.conv-threads .thread-new { color: var(--orange); font: 700 var(--fs-xs) var(--font-mono); }
 .side-threads { display: grid; gap: 6px; }
 .side-thread { display: grid; gap: 4px; width: 100%; padding: 9px 10px; border: 1px solid var(--bubble-line); border-radius: var(--radius-md); background: var(--bubble); color: var(--text); font: inherit; text-align: left; cursor: pointer; transition: border-color var(--motion-fast) var(--ease-ui); }
 .side-thread:hover { border-color: color-mix(in oklab, var(--accent), transparent 50%); }
@@ -1193,9 +1199,12 @@ body.light .jump-bottom.has-new { color: #fff; }
 
 /* a run of messages reads as one block: time + status under its last bubble only;
    the others show their time beside the bubble on hover (sending/failed always show) */
-.msg:not(.last) .msg-col > .msg-meta { position: absolute; bottom: 6px; right: calc(100% + 6px); opacity: 0; transition: opacity .12s; pointer-events: none; }
-.msg:not(.me):not(.last) .msg-col > .msg-meta { right: auto; left: calc(100% + 6px); }
-.msg:not(.last):hover .msg-col > .msg-meta, .msg:not(.last) .msg-col > .msg-meta.pending { opacity: 1; }
+/* (descendant, not child: the meta sits in .message-footer inside .message-surface) */
+.msg:not(.last) .msg-col .msg-meta { position: absolute; bottom: 6px; right: calc(100% + 6px); opacity: 0; transition: opacity .12s; pointer-events: none; }
+.msg:not(.me):not(.last) .msg-col .msg-meta { right: auto; left: calc(100% + 6px); }
+.msg:not(.last):hover .msg-col .msg-meta, .msg:not(.last) .msg-col .msg-meta.pending { opacity: 1; }
+/* a footer that only held that meta takes no room in the run */
+.msg:not(.last) .message-footer:not(:has(.reactions)) { position: absolute; inset: auto 0 0; height: 0; }
 .acc-chats { overflow: hidden; }
 .sec-more { display: flex; align-items: center; gap: 4px; margin: 2px 0 6px 12px; padding: 4px 8px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--text-3); font: var(--fs-xs)/1.4 var(--font-mono); cursor: pointer; }
 .sec-more:hover { color: var(--text); background: color-mix(in oklab, var(--pane-2), transparent 40%); }
@@ -1382,7 +1391,7 @@ body:is([data-background="glass"], [data-background="clear"]) .inspector-surface
 }
 body:is([data-background="glass"], [data-background="clear"]) .inspector-surface > :first-child { margin-top: 0; }
 body:is([data-background="glass"], [data-background="clear"]) .inspector-surface > :last-child { margin-bottom: 0; }
-/* Sender, body and time share a bubble; reactions and thread links stay outside. */
+/* Only sender and body share a bubble. Metadata and interactions stay outside. */
 .message-surface { display: contents; }
 body:is([data-background="glass"], [data-background="clear"]) .message-surface {
   display: grid;
@@ -1407,9 +1416,14 @@ body:is([data-background="glass"], [data-background="clear"]) .msg .bubble {
   border-radius: 0;
 }
 body:is([data-background="glass"], [data-background="clear"]) .message-surface > .sender { padding: 0; }
-body:is([data-background="glass"], [data-background="clear"]) .msg-meta { justify-self: end; margin: 0; }
+body:is([data-background="glass"], [data-background="clear"]) .msg-meta {
+  justify-self: end;
+  margin: 0 4px 0 auto;
+  padding: 2px 6px;
+  background: var(--reading-surface);
+  border-radius: var(--radius-sm);
+}
 body:is([data-background="glass"], [data-background="clear"]) .message-surface:has(> .bubble.sticker) { padding: 0; background: transparent; box-shadow: none; }
-body:is([data-background="glass"], [data-background="clear"]) .message-surface:has(> .bubble.sticker) > .msg-meta { background: var(--bubble); border-radius: var(--radius-sm); padding: 2px 6px; }
 body:is([data-background="glass"], [data-background="clear"]) .thread-link { background: var(--reading-surface); padding-inline: 8px; }
 body:is([data-background="glass"], [data-background="clear"]) .bubble.deleted { padding: 8px 12px; background: var(--bubble); border-radius: var(--radius-md); }
 /* A single composer outline; avoid framing a box inside another box. */
@@ -1422,9 +1436,9 @@ body:is([data-background="glass"], [data-background="clear"]) .composer-inner {
 body:is([data-background="glass"], [data-background="clear"]) .composer-inner:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px var(--focus-ring); }
 body:is([data-background="glass"], [data-background="clear"]) .composer-box { background: transparent; border: 0; box-shadow: none; padding: 8px; }
 body:is([data-background="glass"], [data-background="clear"]) .composer-tools { padding: 0 8px 8px; }
-body:is([data-background="glass"], [data-background="clear"]) :is(.thread-compose, .r2-header, .settings-card, .thread-head, .summary-card, .pop, .context-menu, .palette, .prompt-dialog, .confirm-dialog, .emoji-pop, .appearance-panel, .tip, .toast, .msg-actions) { background: var(--app-bg); }
+body:is([data-background="glass"], [data-background="clear"]) :is(.thread-compose, .r2-header, .settings-card, .inbox-shell, .thread-head, .summary-card, .pop, .context-menu, .palette, .prompt-dialog, .confirm-dialog, .emoji-pop, .appearance-panel, .tip, .toast, .msg-actions) { background: var(--app-bg); }
 /* Standalone status labels have a single, compact surface. */
-body:is([data-background="glass"], [data-background="clear"]) :is(.day-sep span, .unread-sep span, .history-start, .thread-count, .service-msg, .older-loading, .typing, .conv-empty, .side-empty) {
+body:is([data-background="glass"], [data-background="clear"]) :is(.day-sep span, .unread-sep span, .history-start, .thread-count, .service-msg, .older-loading, .conv-empty, .side-empty) {
   background: var(--reading-surface);
   border-radius: var(--radius-sm);
   padding-inline: 6px;
@@ -1451,29 +1465,29 @@ body:is([data-background="glass"], [data-background="clear"]) .cmsg { background
 .crash code { max-width: 640px; color: var(--text-2, #666); font-size: 12px; white-space: pre-wrap; }
 .emoji-img { width: 1.15em; height: 1.15em; vertical-align: -0.2em; }
 
-/* titlebar bell: mentions + DMs */
-.inbox-menu { position: relative; }
-.inbox-count { position: absolute; top: 2px; right: 0; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--red); color: #fff; font: 700 10px/16px var(--font-mono); text-align: center; pointer-events: none; }
-.inbox-panel { position: absolute; top: 40px; right: 0; z-index: var(--z-menu); width: 380px; max-height: min(560px, 70vh); display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--glass); backdrop-filter: blur(20px); border: 1px solid var(--line-2); border-radius: var(--radius-lg); box-shadow: var(--shadow); overflow: hidden; }
-.inbox-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 10px 8px 12px; }
-.inbox-readall { gap: 6px; font-size: var(--fs-sm); }
-.inbox-thread { --od-icon-size: 12px; color: var(--text-3); flex: none; align-self: center; }
-.inbox-list { overflow-y: auto; padding: 0 6px 6px; }
-.inbox-empty { padding: 24px; text-align: center; color: var(--text-3); }
-.inbox-row { width: 100%; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 8px; border: 0; border-radius: var(--radius-md); background: none; color: var(--text-2); text-align: left; cursor: pointer; }
-.inbox-row:hover { background: var(--pane-3); }
-.inbox-row.new { background: color-mix(in oklab, var(--accent), transparent 88%); color: var(--text); }
-.inbox-main { display: grid; gap: 2px; min-width: 0; }
-.inbox-who { display: flex; gap: 4px; min-width: 0; white-space: nowrap; }
-.inbox-who b { color: var(--text); font-weight: 650; overflow: hidden; text-overflow: ellipsis; }
-.inbox-chat { color: var(--text-3); overflow: hidden; text-overflow: ellipsis; }
-.inbox-at { color: var(--accent); font-weight: 700; }
-.inbox-text { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: var(--fs-md); }
-.inbox-row time { color: var(--text-3); font: 500 var(--fs-xs) var(--font-mono); padding-top: 2px; }
+/* titlebar bell: mentions, DMs, thread replies, reactions (bell-*: .inbox-* is the "Tất cả hội thoại" page) */
+.bell-menu { position: relative; }
+.bell-count { position: absolute; top: 2px; right: 0; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--red); color: #fff; font: 700 10px/16px var(--font-mono); text-align: center; pointer-events: none; }
+.bell-panel { position: absolute; top: 40px; right: 0; z-index: var(--z-menu); width: 380px; max-height: min(560px, 70vh); display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--glass); backdrop-filter: blur(20px); border: 1px solid var(--line-2); border-radius: var(--radius-lg); box-shadow: var(--shadow); overflow: hidden; }
+.bell-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 10px 8px 12px; }
+.bell-readall { gap: 6px; font-size: var(--fs-sm); }
+.bell-thread { --od-icon-size: 12px; color: var(--text-3); flex: none; align-self: center; }
+.bell-list { overflow-y: auto; padding: 0 6px 6px; }
+.bell-empty { padding: 24px; text-align: center; color: var(--text-3); }
+.bell-row { width: 100%; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 8px; border: 0; border-radius: var(--radius-md); background: none; color: var(--text-2); text-align: left; cursor: pointer; }
+.bell-row:hover { background: var(--pane-3); }
+.bell-row.new { background: color-mix(in oklab, var(--accent), transparent 88%); color: var(--text); }
+.bell-main { display: grid; gap: 2px; min-width: 0; }
+.bell-who { display: flex; gap: 4px; min-width: 0; white-space: nowrap; }
+.bell-who b { color: var(--text); font-weight: 650; overflow: hidden; text-overflow: ellipsis; }
+.bell-chat { color: var(--text-3); overflow: hidden; text-overflow: ellipsis; }
+.bell-at { color: var(--accent); font-weight: 700; }
+.bell-text { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: var(--fs-md); }
+.bell-row time { color: var(--text-3); font: 500 var(--fs-xs) var(--font-mono); padding-top: 2px; }
 
 /* Telegram presence: green ring, a gap of background between it and the face */
 .avatar.online { box-shadow: 0 0 0 2px var(--app-bg), 0 0 0 3.5px var(--green); }
-.inbox-emoji { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--pane-3); font-size: 16px; }
+.bell-emoji { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--pane-3); font-size: 16px; }
 
 /* @mention picker above the composer */
 .composer-box { position: relative; }
@@ -1483,3 +1497,16 @@ body:is([data-background="glass"], [data-background="clear"]) .cmsg { background
 .mention-pop button span:not(.avatar) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mention-pop small { color: var(--text-3); font-size: var(--fs-xs); }
 .mention-all { display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+body:is([data-background="glass"], [data-background="clear"]) .inbox-shell { border-radius: var(--radius-lg); }
+
+/* composer row: the account on the left, every tool grouped on the right with Send;
+   placeholder and tools share one left edge, buttons one size */
+.main-composer { padding: 6px 8px 6px 12px; }
+.main-composer textarea { padding: 6px 0 4px 8px; } /* placeholder flush with the account dot below */
+.composer-tools { gap: 2px; }
+.composer-tools .composer-label + .composer-sep { margin-left: auto; }
+.composer-tools .composer-sep { margin: 0 6px; }
+.composer-tools .tool-btn.icon-only:not(.primary) { width: 28px; min-width: 28px; height: 28px; min-height: 28px; }
+.composer-tools .tool-btn.icon-only:not(.primary) .ic { --od-icon-size: 16px; }
+.composer-tools .lang-tag { height: 28px; }
+.composer-tools > .tool-btn.primary { width: 30px; height: 30px; margin-left: 6px; }

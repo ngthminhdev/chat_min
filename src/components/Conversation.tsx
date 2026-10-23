@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { dayKey, dayLabel, fmtCount } from "../lib/format";
 import type { Msg } from "../lib/types";
-import { capsOf, healthOf, loadLatest, loadOlder, markRead, splitKey, threadTabKey, toast, useApp, openSearch } from "../store";
+import { capsOf, healthOf, loadLatest, loadOlder, markRead, splitKey, threadTabKey, threadUnread, toast, useApp, openSearch } from "../store";
 import { api } from "../lib/bridge";
 import { startWizard } from "../views/Wizard";
 import { ChatAvatar, PersonAvatar } from "../ui/Avatar";
@@ -28,6 +28,13 @@ export function Conversation() {
   const insp = useApp((s) => s.inspTab);
   const rightOff = useApp((s) => s.rightCollapsed);
   const threadCount = useApp((s) => (s.active && chat?.threaded ? new Set((s.msgs[s.active] ?? []).filter((m) => m.threadReply).map((m) => m.threadId)).size : 0));
+  // replies I haven't caught up on, across this chat's threads (same rule as "· N mới")
+  const threadNew = useApp((s) => {
+    if (!s.active || !chat?.threaded) return 0;
+    const byThread: Record<string, Msg[]> = {};
+    for (const m of s.msgs[s.active] ?? []) if (m.threadReply) (byThread[m.threadId] ??= []).push(m);
+    return Object.entries(byThread).reduce((n, [t, rs]) => n + threadUnread(s, s.active!, t, rs), 0);
+  });
   const [, tick] = useState(0);
 
   // rate-limit countdown
@@ -73,7 +80,7 @@ export function Conversation() {
         <div className="conv-actions" role="group" aria-label="Thao tác hội thoại">
         {(chat.threaded || chat.forum) && (
           <button
-            className={`tool-btn conv-threads${insp === "threads" && !rightOff ? " active" : ""}`}
+            className={`tool-btn conv-threads${insp === "threads" && !rightOff ? " active" : ""}${threadNew ? " has-new" : ""}`}
             aria-label={chat.forum ? "Chủ đề" : "Luồng trả lời"}
             aria-pressed={insp === "threads" && !rightOff}
             data-tip={chat.forum ? "Xem các chủ đề" : "Xem các luồng trả lời"}
@@ -82,6 +89,7 @@ export function Conversation() {
             <Icon name="message-circle-reply" />
             {chat.forum ? "Chủ đề" : "Luồng trả lời"}
             {!chat.forum && threadCount > 0 && <small>{threadCount}</small>}
+            {threadNew > 0 && <b className="thread-new">{threadNew} mới</b>}
           </button>
         )}
         <SummaryButton tab={active} />
@@ -179,7 +187,8 @@ function MessageList({ k }: { k: string }) {
     const bottom = scroll.stick.current;
     if (bottom !== useApp.getState().atBottom) {
       useApp.setState({ atBottom: bottom });
-      if (bottom && useApp.getState().chats[k]?.unread) markRead(k);
+      const c = useApp.getState().chats[k];
+      if (bottom && (c?.unread || c?.mention)) markRead(k);
     }
   };
   useEffect(() => () => useApp.setState({ atBottom: true }), [k]);

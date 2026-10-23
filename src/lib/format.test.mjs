@@ -27,3 +27,16 @@ test("times relative to now", () => {
   assert.equal(listTime(new Date(2026, 9, 1).getTime(), now), "01/10");
   assert.equal(dayLabel(new Date(2026, 9, 22, 9).getTime(), now), "Hôm nay · Thứ Năm 22/10");
 });
+
+test('fuzzy: whole words, then letters in order, accents and đ ignored', async () => {
+  const { fuzzy } = await import('./format.ts');
+  assert.equal(fuzzy('backend', 'Backend Go — Mine Wallet'), 2);
+  assert.equal(fuzzy('bgo', 'Backend Go — Mine Wallet'), 1);
+  assert.equal(fuzzy('mtran', 'Minh Trần'), 1);
+  assert.equal(fuzzy('go wallet', 'Backend Go — Mine Wallet'), 4);
+  assert.equal(fuzzy('wallet go', 'Backend Go — Mine Wallet'), 4);
+  assert.equal(fuzzy('đông', 'Hội anh em đi Đồng Văn'), 2);
+  assert.equal(fuzzy('xyz', 'Backend Go'), 0);
+  assert.equal(fuzzy('gob', 'Backend Go'), 0);
+  assert.equal(fuzzy('', 'anything'), 0);
+});

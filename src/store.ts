@@ -25,10 +25,14 @@ export interface Prefs {
 /** `reacted`: someone added this emoji to my message; `ts` is then when it was seen */
 export type InboxItem = Msg & { reacted?: string };
 export const inboxKey = (m: InboxItem) => `${m.accountId}|${m.chatId}|${m.id}|${m.reacted ?? ""}`;
-/** Unread until opened, marked all read, or (a plain message) its chat was read elsewhere. */
-export function inboxUnread(s: Pick<State, "inboxSeen" | "inboxRead" | "chats">, m: InboxItem) {
+/** Unread until opened, marked all read, or read where it lives: a reply once its thread
+ *  was open after it, a plain message once its chat has nothing unread. */
+export function inboxUnread(s: Pick<State, "inboxSeen" | "inboxRead" | "chats" | "threadSeen">, m: InboxItem) {
+  const k = key(m.accountId, m.chatId);
   if (m.ts <= s.inboxSeen || s.inboxRead[inboxKey(m)]) return false;
-  return !!m.reacted || m.threadReply || (s.chats[key(m.accountId, m.chatId)]?.unread ?? 1) > 0;
+  if (m.reacted) return true;
+  if (m.threadReply) return (s.threadSeen[`${k}#${m.threadId}`] ?? -Infinity) < m.sort;
+  return (s.chats[k]?.unread ?? 1) > 0;
 }
 export interface Translation { state: "loading" | "ok" | "err"; text: string }
 export interface NotifyPrefs { enabled: boolean; mentions: boolean; quiet: boolean; from: string; to: string; preview: boolean }
@@ -385,7 +389,7 @@ export function applyEvent(e: CoreEvent) {
       }
       set((s) => ({ chats: { ...s.chats, [k]: e.chat } }));
       // the open chat stays read while it is on screen
-      if (e.chat.unread > 0 && isWatching(k)) markRead(k);
+      if ((e.chat.unread > 0 || e.chat.mention) && isWatching(k)) markRead(k);
       return;
     }
     case "chatRemoved": {
@@ -408,6 +412,11 @@ export function applyEvent(e: CoreEvent) {
           typing: e.isNew ? { ...s.typing, [k]: { who: "", until: 0 } } : s.typing,
         }));
       }
+      // arriving where I'm looking (the chat, or for a reply its open thread tab): already read
+      const here = e.msg.threadReply
+        ? get().active === threadTabKey(k, e.msg.threadId) && document.hasFocus() && !document.hidden
+        : isWatching(k);
+      if (e.inbox && here) set((s) => ({ inboxRead: { ...s.inboxRead, [inboxKey(e.msg)]: true } }));
       if (e.inbox)
         set((s) => ({ inbox: [e.msg, ...s.inbox.filter((x) => x.id !== e.msg.id || x.chatId !== e.msg.chatId)].slice(0, 100) }));
       // notifications and the Dock badge are decided in Rust (notify.rs): this webview
@@ -427,8 +436,6 @@ export function applyEvent(e: CoreEvent) {
     }
     case "open": {
       // a notification was clicked (notify.rs); a thread reply opens its thread tab
-      if (!get().chats[e.key]) return;
-      set((s) => ({ toLatest: s.toLatest + 1 }));
       return openAt(e.key, e.msg, e.thread);
     }
     case "fileProgress":
@@ -451,7 +458,8 @@ export function applyEvent(e: CoreEvent) {
     }
     case "reacted": {
       const it: InboxItem = { ...e.msg, ts: Date.now(), reacted: e.emoji };
-      set((s) => ({ inbox: [it, ...s.inbox].slice(0, 100) }));
+      const here = isWatching(key(e.msg.accountId, e.msg.chatId));
+      set((s) => ({ inbox: [it, ...s.inbox].slice(0, 100), inboxRead: here ? { ...s.inboxRead, [inboxKey(it)]: true } : s.inboxRead }));
       return;
     }
     case "presence": {
@@ -488,7 +496,7 @@ export async function openChat(k: string) {
     t.splice(s.active ? t.indexOf(s.active) + 1 : t.length, 0, k);
     return t;
   })();
-  set({ tabs, active: k, route: "shell", inspTab: s.active === k ? s.inspTab : "info", ...(window.matchMedia("(max-width: 760px)").matches ? { leftCollapsed: true } : {}) });
+  set({ tabs, active: k, route: "shell", inspTab: s.active === k ? s.inspTab : (() => { const c = s.chats[chatKeyOf(k) ?? k]; return c?.threaded || c?.forum ? "threads" : "info"; })(), ...(window.matchMedia("(max-width: 760px)").matches ? { leftCollapsed: true } : {}) });
   const chatKey = chatKeyOf(k);
   if (!chatKey) return;
   // web apps (Messenger, Zalo) live in their own webview: nothing to load or mark here
@@ -500,7 +508,8 @@ export async function openChat(k: string) {
   if (!get().msgs[chatKey]) await loadLatest(chatKey);
   else void loadLatest(chatKey);
   if (isThreadTab(k)) return void loadThread(k);
-  if (get().chats[k]?.unread) void markRead(k);
+  const c = get().chats[k];
+  if (c?.unread || c?.mention) void markRead(k);
 }
 
 /** Opens a Google Chat thread as its own workspace tab, next to its space. */
@@ -508,6 +517,7 @@ export async function openChat(k: string) {
 export function openAt(k: string, msg: string, thread: string) {
   const chat = get().chats[k];
   if (!chat) return toast("Chat này không còn trong danh sách", "info");
+  set((s) => ({ toLatest: s.toLatest + 1 })); // land on the newest message (useStickyScroll)
   if (!thread || !chat.threaded) return void openChat(k);
   const m = get().msgs[k]?.find((x) => x.id === msg);
   if (m) return openThreadTab(k, m);
@@ -803,7 +813,7 @@ export async function send(k: string, text: string, { wire, ...opts }: { replyTo
   const temp: Msg = {
     accountId, chatId, id: `local-${++localId}`, sort: Number.MAX_SAFE_INTEGER - 1000 + localId, senderId: "", senderName: "", senderPhoto: "",
     outgoing: true, ts: Date.now(), edited: false, deleted: false, kind: opts.file ? "media" : "text", text,
-    media: opts.file ? { kind: opts.voice !== undefined ? "voice" : "file", name: opts.file.split("/").pop() ?? "file", size: 0, mime: "", width: 0, height: 0, fileRef: "", localPath: "", thumb: "", url: "" } : null,
+    media: opts.file ? { kind: opts.voice !== undefined ? "voice" : "file", name: opts.file.split("/").pop() ?? "file", size: 0, mime: "", width: 0, height: 0, fileRef: "", localPath: opts.file, thumb: "", url: "" } : null, // localPath: the upload progress key
     link: null, replyTo: opts.replyTo ?? "", replyName: "", replyText: "", reactions: [], threadId: opts.threadId ?? "",
     threadReply: !!opts.threadId, status: "sending", error: "", pinned: false, mentionsMe: false, rev: "",
   };

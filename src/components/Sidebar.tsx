@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion, Reorder, useDragControls } from "motion/react";
 import { api } from "../lib/bridge";
-import { hm, listTime, norm, plain } from "../lib/format";
+import { fuzzy, hm, listTime, norm, plain } from "../lib/format";
 import { EASE } from "../lib/motion";
 import { HEALTH_LABELS, PLATFORMS } from "../lib/platforms";
 import type { Account, Chat, Msg } from "../lib/types";
@@ -64,6 +64,7 @@ export function Sidebar() {
           {total > 0 && <span className="badge unread">{total > 999 ? "999+" : total}</span>}
         </button>
         <Favorites />
+        <Latest />
         {accounts.length ? (
           <Reorder.Group axis="y" as="div" values={ordered.map((a) => a.id)} onReorder={(ids) => useApp.setState({ accountOrder: ids })}>
             {ordered.map((a, i) => (
@@ -104,7 +105,7 @@ function Favorites() {
   if (!live.length) return null;
   const shown = live.filter((k) => {
     const c = chats[k];
-    return (!q || norm(c.title).includes(q)) && (filter === "all" || (filter === "unread" ? c.unread > 0 : c.mention));
+    return (!q || fuzzy(q, c.title) > 0) && (filter === "all" || (filter === "unread" ? c.unread > 0 : c.mention));
   });
   const unread = live.reduce((s, k) => s + (chats[k].muted ? 0 : chats[k].unread), 0);
   return (
@@ -146,6 +147,56 @@ function Favorites() {
   );
 }
 
+/** The ten chats that moved last, whatever the account; pinned ones live in Favorites already. */
+function Latest() {
+  const favorites = useApp((s) => s.favorites);
+  const chats = useApp((s) => s.chats);
+  const accounts = useApp((s) => s.accounts);
+  const collapsed = useApp((s) => !!s.collapsed["latest"]);
+  const filter = useApp((s) => s.filter);
+  const q = norm(useApp((s) => s.query));
+  const rs = useRowState();
+  const rows = useMemo(
+    () =>
+      Object.entries(chats)
+        .filter(([k, c]) => !favorites.includes(k) && c.kind !== "web" && c.lastTs > 0)
+        .sort((a, b) => b[1].lastTs - a[1].lastTs)
+        .slice(0, 10),
+    [chats, favorites],
+  );
+  if (!rows.length) return null;
+  const shown = rows.filter(([, c]) => (!q || fuzzy(q, c.title) > 0) && (filter === "all" || (filter === "unread" ? c.unread > 0 : c.mention)));
+  const unread = rows.reduce((s, [, c]) => s + (c.muted ? 0 : c.unread), 0);
+  return (
+    <div className="fav-group latest-group">
+      <button
+        className={`acc-head fav-head${collapsed ? " collapsed" : ""}`}
+        aria-label="Hội thoại mới nhất"
+        aria-expanded={!collapsed}
+        onClick={() => useApp.setState((s) => ({ collapsed: { ...s.collapsed, latest: !collapsed } }))}
+      >
+        <Icon name="chevron-down" className="chev" />
+        <Icon name="clock" className="fav-ic" />
+        <span className="acc-name">Mới nhất</span>
+        {unread > 0 && <span className="badge">{unread}</span>}
+      </button>
+      {!collapsed && (
+        <div className="acc-chats">
+          {shown.map(([k, c]) => {
+            const a = accounts.find((x) => x.id === c.accountId);
+            return (
+              <div key={k} className="reorder-row" style={{ "--conn": `var(--conn-${a?.color ?? "blue"})` } as React.CSSProperties}>
+                <ChatRow chat={c} k={k} platform={a?.platform} {...rowProps(k, c, a, rs)} />
+                {rs.expanded[k] && <ThreadPeek k={k} />}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function rowProps(k: string, c: Chat, a: Account | undefined, rs: ReturnType<typeof useRowState>) {
   const t = rs.typing[k];
   return {
@@ -170,7 +221,7 @@ function AccountGroup({ account: a, index, chats, filter, query, drag: accDrag }
       sortedChats(chats, a.id).filter(
         (c) =>
           !favorites.includes(key(c.accountId, c.id)) &&
-          (!q || norm(c.title).includes(q)) &&
+          (!q || fuzzy(q, c.title) > 0) &&
           (filter === "all" || (filter === "unread" ? c.unread > 0 : c.mention)),
       ),
     [chats, a.id, q, filter, favorites],
@@ -343,7 +394,7 @@ function chatMenu(k: string, c: Chat): MenuItem[] {
       label: useApp.getState().expanded[k] ? "Ẩn" : c.forum ? "Xem nhanh chủ đề" : "Xem nhanh luồng trả lời",
       run: () => useApp.setState((s) => ({ expanded: { ...s.expanded, [k]: !s.expanded[k] } })),
     },
-    c.unread > 0 && { icon: "check-check", label: "Đánh dấu đã đọc", run: () => markRead(k) },
+    (c.unread > 0 || c.mention) && { icon: "check-check", label: "Đánh dấu đã đọc", run: () => markRead(k) },
     {
       icon: c.muted ? "bell" : "bell-off",
       label: c.muted ? "Bật thông báo" : "Tắt thông báo",
@@ -483,6 +534,8 @@ const ChatRow = memo(function ChatRow({ chat: c, k, active, draft, typing, expan
         data-tip={rail ? `${c.title}${c.unread ? ` · ${c.unread} chưa đọc` : ""}` : undefined}
         onClick={() => {
           hoverOff();
+          // the chat already on screen: a click means "take me to the newest message"
+          if (active) useApp.setState((s) => ({ toLatest: s.toLatest + 1 }));
           void openChat(k);
         }}
         onMouseEnter={(e) => !active && !rail && hoverOn(k, e.currentTarget)}

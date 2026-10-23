@@ -1,7 +1,7 @@
 //! Google Chat through the REST API with user OAuth (Workspace accounts only).
-//! Realtime is polling: `spaces.list` every 10s tells which spaces moved
+//! Realtime is polling: `spaces.list` every ~1s tells which spaces moved
 //! (`lastActiveTime`), and only those get their new messages fetched; the open space is
-//! polled every 3s. Workspace Events needs Pub/Sub + a public endpoint — no fit for a
+//! also read directly, alongside. Workspace Events needs Pub/Sub + a public endpoint — no fit for a
 //! desktop app.
 use crate::model::{Account, Chat, Event, Media, Member, Msg, Reaction};
 use crate::{now_ms, Core};
@@ -229,25 +229,34 @@ impl GChat {
                 return;
             }
             let res: R<()> = async {
-                // ~3s between space scans: how fast a message in any space shows up / rings.
-                // ~50 reads a minute in all, far under the 3000/min Chat API project quota
-                if first || tick % 3 == 0 {
-                    let n = self.poll_spaces(core, account_id, first).await?;
-                    if first {
-                        sync(1, "ok", &format!("[chats] {n} spaces"));
-                        sync(2, "ok", "[sync] recent messages synchronized");
-                        first = false;
+                // a space scan every tick (~1s + the request): how fast a message anywhere shows
+                // up / rings. The open space is read in parallel, so it adds no wait. Around
+                // 100 reads a minute in all, far under the 3000/min Chat API project quota
+                let scan = self.poll_spaces(core, account_id, first);
+                let open = async {
+                    match &focus {
+                        Some(space) if !first && tick % 2 == 0 => self.fetch_new(core, account_id, space, true).await.map(|_| ()),
+                        _ => Ok(()),
                     }
+                };
+                let t0 = std::time::Instant::now();
+                let (n, opened) = futures::future::join(scan, open).await;
+                if tick % 60 == 0 {
+                    eprintln!("[gchat] scan {}ms", t0.elapsed().as_millis()); // the cadence's other half
+                }
+                let n = n?;
+                opened?;
+                if first {
+                    sync(1, "ok", &format!("[chats] {n} spaces"));
+                    sync(2, "ok", "[sync] recent messages synchronized");
+                    first = false;
                 }
                 if tick % 60 == 30 {
                     self.sync_read(core, account_id).await?;
                 }
                 if let Some(space) = &focus {
-                    if tick % 2 == 0 {
-                        self.fetch_new(core, account_id, space, true).await?;
-                    }
-                    // edits and reactions don't move createTime: re-read the tail now and then
-                    if tick % 30 == 15 {
+                    // edits, deletions and reactions don't move createTime: re-read the tail now and then
+                    if tick % 10 == 5 {
                         self.fetch_tail(core, account_id, space, 20).await?;
                     }
                 }
@@ -697,8 +706,22 @@ impl GChat {
         if !resp.status().is_success() {
             return Err(format!("Tải file lỗi ({})", resp.status()));
         }
-        let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
-        std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+        // stream to a temp file, reporting progress the way Telegram downloads do
+        let total = resp.content_length().unwrap_or(0) as i64;
+        let tmp = path.with_extension("part");
+        let mut out = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
+        let (mut got, mut last) = (0i64, -1i64);
+        let mut resp = resp;
+        while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
+            std::io::Write::write_all(&mut out, &chunk).map_err(|e| e.to_string())?;
+            got += chunk.len() as i64;
+            if total > 300_000 && got * 100 / total != last {
+                last = got * 100 / total;
+                core.emit(Event::FileProgress { account_id: account_id.into(), file_ref: resource.into(), pct: last });
+            }
+        }
+        drop(out);
+        std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
         Ok(path.to_string_lossy().into())
     }
 
@@ -745,12 +768,24 @@ impl GChat {
         body.extend_from_slice(&bytes);
         body.extend_from_slice(format!("\r\n--{boundary}--").as_bytes());
         let token = self.token(core, account_id).await?;
+        // sent in 256 KB pieces so the pending message can show how far the upload is
+        let (total, key, acc, c) = (body.len() as i64, path.to_string(), account_id.to_string(), core.clone());
+        let chunks: Vec<Vec<u8>> = body.chunks(256 * 1024).map(<[u8]>::to_vec).collect();
+        let mut sent = 0i64;
+        let stream = futures::StreamExt::map(futures::stream::iter(chunks), move |chunk: Vec<u8>| {
+            sent += chunk.len() as i64;
+            if total > 300_000 {
+                c.emit(Event::FileProgress { account_id: acc.clone(), file_ref: key.clone(), pct: sent * 100 / total });
+            }
+            Ok::<_, std::io::Error>(chunk)
+        });
         let resp = self
             .http
             .post(format!("https://chat.googleapis.com/upload/v1/{space}/attachments:upload?uploadType=multipart"))
             .bearer_auth(token)
             .header("Content-Type", format!("multipart/related; boundary={boundary}"))
-            .body(body)
+            .header("Content-Length", total)
+            .body(reqwest::Body::wrap_stream(stream))
             .send()
             .await
             .map_err(|e| e.to_string())?;
@@ -769,7 +804,22 @@ impl GChat {
     }
 
     pub async fn delete(&self, core: &Arc<Core>, account_id: &str, space: &str, name: &str) -> Result<(), String> {
-        self.api(core, account_id, Method::DELETE, &format!("{API}/{name}"), None).await?;
+        match self.api(core, account_id, Method::DELETE, &format!("{API}/{name}"), None).await {
+            Ok(_) => {}
+            // deleted elsewhere already (Google answers PERMISSION_DENIED / NOT_FOUND for a gone
+            // message): what's left is our stale copy
+            Err(ApiErr::Other(m)) if m.starts_with("PERMISSION_DENIED") || m.starts_with("NOT_FOUND") => {
+                let gone = match self.api(core, account_id, Method::GET, &format!("{API}/{name}"), None).await {
+                    Ok(v) => !v["deletionMetadata"].is_null(),
+                    Err(ApiErr::Other(e)) => e.starts_with("NOT_FOUND"),
+                    Err(e) => return Err(e.into()),
+                };
+                if !gone {
+                    return Err(m);
+                }
+            }
+            Err(e) => return Err(e.into()),
+        }
         core.delete_msgs(account_id, space, vec![name.into()]);
         Ok(())
     }
@@ -1179,10 +1229,30 @@ fn attr<'a>(tok: &'a str, tag: &str, name: &str) -> Option<&'a str> {
 
 /// formattedText backslash-escapes punctuation that would otherwise read as markup
 /// ("4\." so it isn't a numbered list, "v7\_3"); a real backslash comes as "\\".
+/// The newer web composer also writes HTML entities ("&#9;" for a tab, "&amp;").
 fn unescape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
+        if c == '&' {
+            let ent: String = chars.clone().take(10).take_while(|&x| x != ';').collect();
+            let ch = match ent.as_str() {
+                "amp" => Some('&'),
+                "lt" => Some('<'),
+                "gt" => Some('>'),
+                "quot" => Some('"'),
+                "apos" => Some('\''),
+                "nbsp" => Some(' '),
+                e => e.strip_prefix("#x").or_else(|| e.strip_prefix("#X")).map(|h| u32::from_str_radix(h, 16))
+                    .or_else(|| e.strip_prefix('#').map(|d| d.parse::<u32>()))
+                    .and_then(|n| n.ok()).and_then(char::from_u32),
+            };
+            if let Some(ch) = ch.filter(|_| chars.clone().nth(ent.chars().count()) == Some(';')) {
+                out.push(ch);
+                chars.nth(ent.chars().count()); // the entity and its ';'
+                continue;
+            }
+        }
         match chars.peek() {
             Some(&n) if c == '\\' && n.is_ascii_punctuation() => {
                 out.push(n);
@@ -1197,6 +1267,11 @@ fn unescape(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn html_entities_decode() {
+        assert_eq!(unescape("a&#9;b &amp; c&lt;d&gt; &#x1F600; &quot;q&quot; AT&T &amp no;"), "a\tb & c<d> 😀 \"q\" AT&T &amp no;");
+    }
 
     #[test]
     fn formatted_text_to_markup() {

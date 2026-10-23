@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { api } from "../lib/bridge";
 import { useApp } from "../store";
 
 /**
@@ -33,6 +34,16 @@ export function useStickyScroll(box: React.RefObject<HTMLDivElement | null>, las
   const restore = () => {
     const el = box.current;
     if (!el) return;
+    if (pending.current && el.querySelector("[id^='m-']")) {
+      // the jump a notification asked for, done once the list is on screen: instant, so
+      // a render landing mid-animation (the chat refetching its newest page) can't leave
+      // it stranded halfway, as a smooth scroll did
+      pending.current = false;
+      stick.current = true;
+      el.scrollTop = el.scrollHeight;
+      setFresh(0);
+      return;
+    }
     if (stick.current) {
       el.scrollTop = el.scrollHeight;
       return;
@@ -60,11 +71,31 @@ export function useStickyScroll(box: React.RefObject<HTMLDivElement | null>, las
     return () => ro.disconnect();
   }, [box.current]);
 
+  // when the user last scrolled on purpose (wheel, touch, keys, scrollbar). Only such a
+  // scroll may un-stick the list: the browser also fires scroll events for its own clamps
+  // and for our programmatic moves, and those must never leave a freshly opened chat
+  // parked above its newest message. Also feeds the diagnostics in the app log.
+  const gesture = useRef(0);
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const mark = () => { gesture.current = Date.now(); };
+    for (const ev of ["wheel", "touchmove", "keydown", "mousedown"]) el.addEventListener(ev, mark, { passive: true });
+    const t = setTimeout(() => {
+      const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+      void api.logJs(`[scroll] settled dist=${Math.round(dist)} h=${el.scrollHeight} view=${el.clientHeight} stick=${stick.current} rows=${el.querySelectorAll("[id^='m-']").length}`);
+    }, 2500);
+    return () => { clearTimeout(t); for (const ev of ["wheel", "touchmove", "keydown", "mousedown"]) el.removeEventListener(ev, mark); };
+  }, []);
+
   const onScroll = () => {
     const el = box.current;
     if (!el) return;
     const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
-    stick.current = dist < 80;
+    const was = stick.current;
+    const byUser = Date.now() - gesture.current < 600;
+    stick.current = dist < 80 || (byUser ? false : stick.current);
+    if (was && !stick.current) void api.logJs(`[scroll] unstick dist=${Math.round(dist)} gesture=${gesture.current ? Date.now() - gesture.current : -1}ms h=${el.scrollHeight}`);
     setAway(dist > 400);
     if (stick.current) setFresh(0);
     capture();
@@ -84,13 +115,16 @@ export function useStickyScroll(box: React.RefObject<HTMLDivElement | null>, las
     stick.current = false;
   };
 
-  // a notification was clicked: back to the newest message, even when scrolled up reading
+  // a notification was clicked: back to the newest message, even when scrolled up reading.
+  // A list mounted by that click starts stuck to the bottom anyway (`stick`).
   const toLatest = useApp((s) => s.toLatest);
   const seen = useRef(toLatest);
-  useEffect(() => {
+  const pending = useRef(false);
+  useLayoutEffect(() => {
     if (seen.current === toLatest) return;
     seen.current = toLatest;
-    toBottom();
+    pending.current = true;
+    restore();
   }, [toLatest]);
 
   return { onScroll, toBottom, release, away, fresh, stick };

@@ -59,12 +59,13 @@ export function Inspector() {
   const imgs = msgs.filter((m) => mediaSection(m.media) === "media");
   const caps = capsOf(active);
   const tabs: [InspTab, string, number?][] = [
+    // threads lead in a space (and topics in a forum): that's what you open the panel for
+    ...(chat.threaded || chat.forum ? [["threads", chat.forum ? "Chủ đề" : "Luồng trả lời"] as [InspTab, string]] : []),
     ["info", "Thông tin"],
     ["members", "Thành viên", chat.kind === "dm" ? undefined : chat.memberCount || undefined],
     ["files", "Tệp", files.length || undefined],
     ["media", "Ảnh & video", imgs.length || undefined],
     ...(caps.pin ? [["pinned", "Ghim"] as [InspTab, string]] : []),
-    ...(chat.threaded || chat.forum ? [["threads", chat.forum ? "Chủ đề" : "Luồng trả lời"] as [InspTab, string]] : []),
   ];
   const tab = tabs.some(([k]) => k === requestedTab) ? requestedTab : "info";
 

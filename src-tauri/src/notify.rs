@@ -76,6 +76,8 @@ impl Notifier {
         }
     }
 
+    /// The chat on screen in the focused window: its messages are being read, no banner.
+    /// Other chats still ring while ChatMin is in front.
     fn watching(&self, app: &AppHandle, account_id: &str, chat_id: &str) -> bool {
         let on_screen = self.active.lock().unwrap().as_ref().is_some_and(|(a, c)| a == account_id && c == chat_id);
         on_screen && app.get_webview_window("main").is_some_and(|w| w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false))
@@ -179,11 +181,15 @@ impl Notifier {
     /// Keeps the Dock badge equal to the unread total of unmuted chats.
     pub fn track(&self, app: &AppHandle, chat: &Chat, removed: bool) {
         let n = if removed || chat.muted { 0 } else { chat.unread.max(0) };
-        let total: i64 = {
+        let (was, total): (i32, i64) = {
             let mut u = self.unread.lock().unwrap();
-            u.insert((chat.account_id.clone(), chat.id.clone()), n);
-            u.values().map(|&v| v as i64).sum()
+            let was = u.insert((chat.account_id.clone(), chat.id.clone()), n).unwrap_or(0);
+            (was, u.values().map(|&v| v as i64).sum())
         };
+        // read (here, on the phone, on the web): its banners in Notification Center go too
+        if was > 0 && n == 0 {
+            clear_delivered(app, if total == 0 { None } else { Some(chat.title.clone()) });
+        }
         let mut badge = self.badge.lock().unwrap();
         if *badge != total {
             *badge = total;
@@ -293,6 +299,28 @@ fn show(app: &AppHandle, title: &str, body: &str, chat: &str) {
         Ok(()) => eprintln!("[notify] shown"),
         Err(e) => eprintln!("[notify] {e}"),
     }
+}
+
+/// Removes delivered banners of the chat titled `title` (ours read "Who" for a DM and
+/// "Who · Chat" otherwise), or all of them.
+fn clear_delivered(app: &AppHandle, title: Option<String>) {
+    #[cfg(target_os = "macos")]
+    let _ = app.run_on_main_thread(move || {
+        #[allow(deprecated)] // NSUserNotification: what mac-notification-sys delivers through
+        {
+            let center = objc2_foundation::NSUserNotificationCenter::defaultUserNotificationCenter();
+            let Some(title) = title else { return center.removeAllDeliveredNotifications() };
+            let tail = format!(" · {title}");
+            for n in center.deliveredNotifications().iter() {
+                let t = n.title().map(|t| t.to_string()).unwrap_or_default();
+                if t == title || t.ends_with(&tail) {
+                    center.removeDeliveredNotification(&n);
+                }
+            }
+        }
+    });
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app, title);
 }
 
 /// An emoji someone else added to `new` since `old` (counts minus my own reaction).

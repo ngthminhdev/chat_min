@@ -91,6 +91,25 @@ export function plain(text: string): string {
 export const norm = (s: string) =>
   s.normalize("NFD").replace(/\p{M}/gu, "").replace(/đ/g, "d").replace(/Đ/g, "D").toLowerCase();
 
+/** Chat / command finder match: every word of `query` is in `text`, or its letters appear
+ *  in order ("bgo" finds "Backend Go", "mtran" finds "Minh Trần"). 0 = no match; higher
+ *  = tighter (a word found whole beats one found letter by letter). */
+export function fuzzy(query: string, text: string): number {
+  const t = norm(text);
+  let score = 0;
+  for (const w of norm(query).trim().split(/\s+/).filter(Boolean)) {
+    if (t.includes(w)) {
+      score += 2;
+      continue;
+    }
+    let i = 0;
+    for (const c of t) if (c === w[i] && ++i === w.length) break;
+    if (i < w.length) return 0;
+    score += 1;
+  }
+  return score;
+}
+
 export function initials(name: string, lead = false): string {
   const words = name.replace(/\(.*?\)/g, "").replace(/[^\p{L}\p{N}\s]/gu, " ").trim().split(/\s+/).filter(Boolean);
   const pick = lead ? words.slice(0, 2) : words.slice(-2);

@@ -311,14 +311,23 @@ impl Tg {
                     self.patch_chat(core, c, id, |ch| ch.muted = on);
                 }
             }
-            // progress of big downloads (videos, files); small ones finish before anyone looks
+            // progress of downloads (keyed by file id) and uploads (keyed by the local path the
+            // composer sent, which is what the pending message carries); tiny ones finish
+            // before anyone looks
             Update::File(u) => {
                 let f = &u.file;
                 let total = if f.size > 0 { f.size } else { f.expected_size };
-                if f.local.is_downloading_active && total > 4_000_000 {
-                    let pct = f.local.downloaded_size * 100 / total;
+                let (done, key) = if f.local.is_downloading_active {
+                    (f.local.downloaded_size, f.id.to_string())
+                } else if f.remote.is_uploading_active {
+                    (f.remote.uploaded_size, f.local.path.clone())
+                } else {
+                    return;
+                };
+                if total > 300_000 && !key.is_empty() {
+                    let pct = done * 100 / total;
                     if self.with(c, |a| a.progress.insert(f.id, pct) != Some(pct)).unwrap_or(false) {
-                        core.emit(crate::model::Event::FileProgress { account_id, file_ref: f.id.to_string(), pct });
+                        core.emit(crate::model::Event::FileProgress { account_id, file_ref: key, pct });
                     }
                 }
             }
@@ -894,7 +903,10 @@ impl Tg {
     pub async fn mark_read(&self, account_id: &str, chat_id: &str, msg_ids: Vec<String>) -> R<()> {
         let c = self.client(account_id)?;
         let ids = msg_ids.iter().filter_map(|i| i.parse().ok()).collect();
-        f::view_messages(chat_id.parse().unwrap_or(0), ids, None, true, c).await.map_err(err)
+        let chat = chat_id.parse().unwrap_or(0);
+        f::view_messages(chat, ids, None, true, c).await.map_err(err)?;
+        // the UI zeroes the whole chat; replies to me count as mentions and may sit outside `ids`
+        f::read_all_chat_mentions(chat, c).await.map_err(err)
     }
 
     pub async fn set_open(&self, account_id: &str, chat_id: &str, open: bool) -> R<()> {
@@ -1298,13 +1310,17 @@ fn to_msg(a: &Acc, m: &t::Message) -> Msg {
         }
         MessageContent::MessageSticker(x) => {
             out.kind = "media".into();
-            out.text = x.sticker.emoji.clone();
-            let mut media = file_media("sticker", "sticker", "", &x.sticker.sticker, x.sticker.width, x.sticker.height, None);
-            // only static WebP stickers render as images; animated ones fall back to the emoji
-            if !matches!(x.sticker.format, enums::StickerFormat::Webp) {
-                media.file_ref.clear();
+            let s = &x.sticker;
+            // static WebP renders as-is; animated (TGS/WebM) shows the static thumbnail, like the picker
+            let file = match (&s.format, &s.thumbnail) {
+                (enums::StickerFormat::Webp, _) => Some(&s.sticker),
+                (_, Some(th)) if matches!(th.format, enums::ThumbnailFormat::Webp | enums::ThumbnailFormat::Png | enums::ThumbnailFormat::Jpeg) => Some(&th.file),
+                _ => None,
+            };
+            match file {
+                Some(file) => out.media = Some(file_media("sticker", "Sticker", "", file, s.width, s.height, None)),
+                None => out.text = s.emoji.clone(), // nothing renderable: the emoji stands in
             }
-            out.media = Some(media);
         }
         MessageContent::MessageChatAddMembers(x) => {
             out.kind = "service".into();

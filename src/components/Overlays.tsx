@@ -1,10 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { api } from "../lib/bridge";
-import { esc, hm, norm, plain } from "../lib/format";
+import { esc, fuzzy, hm, norm, plain } from "../lib/format";
 import { bare, EMOJI, nextEmojiIndex, searchEmoji } from "../lib/micro-ux";
 import { COLORS, COLOR_LABELS } from "../lib/platforms";
-import type { Msg } from "../lib/types";
+import type { Chat, Msg } from "../lib/types";
 import { forwardMsg, key, openChat, splitKey, useApp, openSearch, type Pop } from "../store";
 import { removeAccount, renameAccount } from "../App";
 import { startWizard } from "../views/Wizard";
@@ -148,12 +148,15 @@ function PaletteBody({ mode, scope, forward }: { mode: "chats" | "msgs"; scope?:
     if (mode === "chats") {
       const recent = [...tabs.map((k) => chats[k]).filter(Boolean), ...Object.values(chats).sort((a, b) => b.lastTs - a.lastTs)];
       const seen = new Set<string>();
+      const score = (c: Chat) => (nq ? Math.max(fuzzy(nq, c.title), fuzzy(nq, acc(c.accountId)?.name ?? "")) : 1);
       const matched = recent.filter((c) => {
         const k = key(c.accountId, c.id);
         if (seen.has(k)) return false;
         seen.add(k);
-        return !nq || norm(c.title).includes(nq) || norm(acc(c.accountId)?.name ?? "").includes(nq);
+        return score(c) > 0;
       });
+      // typed: whole-word hits first, recency within (stable sort)
+      if (nq) matched.sort((a, b) => score(b) - score(a));
       matched.filter((c) => !forward || c.canSend).slice(0, nq || forward ? 14 : 6).forEach((c, i) => {
         const a = acc(c.accountId);
         out.push({
@@ -175,7 +178,7 @@ function PaletteBody({ mode, scope, forward }: { mode: "chats" | "msgs"; scope?:
           ),
         });
       });
-      if (!forward) COMMANDS.filter(([, l]) => !nq || norm(l).includes(nq)).forEach(([ic, l, kbd, run], i) =>
+      if (!forward) COMMANDS.filter(([, l]) => !nq || fuzzy(nq, l) > 0).forEach(([ic, l, kbd, run], i) =>
         out.push({
           group: i === 0 ? "Lệnh" : undefined,
           run,

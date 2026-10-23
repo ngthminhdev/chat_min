@@ -106,43 +106,42 @@ function Inbox() {
   }, [open]);
 
   return (
-    <div className="inbox-menu" ref={box}>
+    <div className="bell-menu" ref={box}>
       <button className="tool-btn icon-only lg" type="button" aria-label="Thông báo" aria-expanded={open} data-tip="Nhắc tới bạn, tin riêng, trả lời trong thread của bạn" onClick={() => setOpen(!open)}>
         <Icon name="bell" />
-        {unread.length > 0 && <span className="inbox-count">{unread.length > 99 ? "99+" : unread.length}</span>}
+        {unread.length > 0 && <span className="bell-count">{unread.length > 99 ? "99+" : unread.length}</span>}
       </button>
       {open && (
-        <div className="inbox-panel" role="dialog" aria-label="Thông báo">
-          <div className="inbox-head">
-            <span className="mini-tabs inbox-filter" role="tablist">
+        <div className="bell-panel" role="dialog" aria-label="Thông báo">
+          <div className="bell-head">
+            <span className="mini-tabs bell-filter" role="tablist">
               <button role="tab" aria-selected={!all} onClick={() => setAll(false)}>Chưa đọc{unread.length ? ` · ${unread.length}` : ""}</button>
               <button role="tab" aria-selected={all} onClick={() => setAll(true)}>Tất cả</button>
             </span>
-            <button className="tool-btn inbox-readall" disabled={!unread.length} onClick={() => useApp.setState({ inboxSeen: Date.now(), inboxRead: {} })}>
+            <button className="tool-btn bell-readall" disabled={!unread.length} onClick={() => useApp.setState({ inboxSeen: Date.now(), inboxRead: {} })}>
               <Icon name="check-check" /> Đã đọc hết
             </button>
           </div>
-          <div className="inbox-list">
-            {shown.length === 0 && <div className="inbox-empty">{all ? "Chưa có gì" : "Không còn gì chưa đọc"}</div>}
+          <div className="bell-list">
+            {shown.length === 0 && <div className="bell-empty">{all ? "Chưa có gì" : "Không còn gì chưa đọc"}</div>}
             {shown.map((m) => {
               const chat = chats[key(m.accountId, m.chatId)];
               const k = inboxKey(m);
               return (
-                <button key={`${k}|${m.ts}`} className={`inbox-row${isNew.has(k) ? " new" : ""}`} onClick={() => {
+                <button key={`${k}|${m.ts}`} className={`bell-row${isNew.has(k) ? " new" : ""}`} onClick={() => {
                   setOpen(false);
                   useApp.setState((s) => ({ inboxRead: { ...s.inboxRead, [k]: true } }));
                   openAt(key(m.accountId, m.chatId), m.id, m.threadReply ? m.threadId : "");
-                  useApp.setState({ jumpTo: m.id });
                 }}>
-                  {m.reacted ? <span className="avatar inbox-emoji">{m.reacted}</span> : <PersonAvatar name={m.senderName} accountId={m.accountId} photo={m.senderPhoto} userId={m.senderId} />}
-                  <span className="inbox-main">
-                    <span className="inbox-who">
+                  {m.reacted ? <span className="avatar bell-emoji">{m.reacted}</span> : <PersonAvatar name={m.senderName} accountId={m.accountId} photo={m.senderPhoto} userId={m.senderId} />}
+                  <span className="bell-main">
+                    <span className="bell-who">
                       <b>{m.reacted ? `Thả ${m.reacted} vào tin của bạn` : m.senderName}</b>
-                      {chat && (chat.kind !== "dm" || m.reacted) && <span className="inbox-chat">· {chat.title}</span>}
-                      {m.mentionsMe && !m.reacted && <span className="inbox-at">@</span>}
-                      {m.threadReply && !m.reacted && <Icon name="message-circle-reply" className="inbox-thread" />}
+                      {chat && (chat.kind !== "dm" || m.reacted) && <span className="bell-chat">· {chat.title}</span>}
+                      {m.mentionsMe && !m.reacted && <span className="bell-at">@</span>}
+                      {m.threadReply && !m.reacted && <Icon name="message-circle-reply" className="bell-thread" />}
                     </span>
-                    <span className="inbox-text">{plain(m.text) || m.media?.name || "Tệp đính kèm"}</span>
+                    <span className="bell-text">{plain(m.text) || m.media?.name || "Tệp đính kèm"}</span>
                   </span>
                   <time>{listTime(m.ts)}</time>
                 </button>

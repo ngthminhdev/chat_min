@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { listTime, norm } from "../lib/format";
+import { fuzzy, listTime, norm } from "../lib/format";
 import { key, openChat, useApp } from "../store";
 import { ChatAvatar } from "../ui/Avatar";
 import { Icon } from "../ui/Icon";
@@ -18,7 +18,7 @@ export function Inbox() {
           (c) =>
             (!account || c.accountId === account) &&
             (filter === "all" || (filter === "unread" ? c.unread > 0 : c.mention)) &&
-            norm(`${c.title} ${c.preview}`).includes(norm(q)),
+            (!q.trim() || fuzzy(q, c.title) > 0 || norm(c.preview).includes(norm(q))),
         )
         .sort((a, b) => b.lastTs - a.lastTs),
     [chats, account, filter, q],
