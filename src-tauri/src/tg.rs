@@ -1356,13 +1356,18 @@ fn to_msg(a: &Acc, m: &t::Message) -> Msg {
         MessageContent::MessageSticker(x) => {
             out.kind = "media".into();
             let s = &x.sticker;
-            // static WebP renders as-is; animated (TGS/WebM) shows the static thumbnail, like the picker
+            // static WebP renders as-is; WebM plays inline as a (muted, looping) video; TGS (Lottie)
+            // shows the static thumbnail — no Lottie player here
             let file = match (&s.format, &s.thumbnail) {
+                (enums::StickerFormat::Webm, _) => None,
                 (enums::StickerFormat::Webp, _) => Some(&s.sticker),
                 (_, Some(th)) if matches!(th.format, enums::ThumbnailFormat::Webp | enums::ThumbnailFormat::Png | enums::ThumbnailFormat::Jpeg) => Some(&th.file),
                 _ => None,
             };
             match file {
+                _ if matches!(s.format, enums::StickerFormat::Webm) => {
+                    out.media = Some(with_thumb(file_media("video", "Sticker", "video/webm", &s.sticker, s.width, s.height, None), s.thumbnail.as_ref()))
+                }
                 Some(file) => out.media = Some(file_media("sticker", "Sticker", "", file, s.width, s.height, None)),
                 None => out.text = s.emoji.clone(), // nothing renderable: the emoji stands in
             }

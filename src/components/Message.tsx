@@ -93,7 +93,7 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
       <div className="msg-col">
         <div className="message-surface">
         {sender}
-        <div className={`bubble${m.media?.kind === "sticker" && !m.text ? " sticker" : ""}`}>
+        <div className={`bubble${(m.media?.kind === "sticker" || m.media?.name === "Sticker") && !m.text ? " sticker" : ""}`}>
           {quote}
           {m.media && <MediaView accountId={m.accountId} media={m.media} sending={m.status === "sending"} />}
           {m.text && <div className="tx" dangerouslySetInnerHTML={{ __html: fmt(m.text) }} />}
@@ -246,7 +246,7 @@ function MediaView({ accountId, media, sending }: { accountId: string; media: Me
   const isImage = media.kind === "image" || (media.kind === "sticker" && !!media.fileRef);
   const isVideo = media.kind === "video";
   // GIFs, round videos and short clips play inline, muted, like Telegram
-  const inline = isVideo && (media.name === "GIF" || media.name === "Video tròn" || (media.size > 0 && media.size < 5e6));
+  const inline = isVideo && (media.name === "GIF" || media.name === "Sticker" || media.name === "Video tròn" || (media.size > 0 && media.size < 5e6));
   const dl = useDownload(accountId, media, (isImage && (media.size === 0 || media.size < 15e6)) || inline);
   const [playing, setPlaying] = useState(false);
   const ratio = media.width && media.height ? `${media.width}/${media.height}` : undefined;
@@ -300,7 +300,7 @@ function MediaView({ accountId, media, sending }: { accountId: string; media: Me
     const live = inline && dl.path;
     return (
       <figure
-        className={`img-msg video${media.name === "Video tròn" ? " round" : ""}`}
+        className={`img-msg video${media.name === "Video tròn" ? " round" : ""}${media.name === "Sticker" ? " sticker" : ""}`}
         style={{ aspectRatio: ratio ?? "16/9" }}
         onClick={() => void view()}
         onContextMenu={(e) => menu(e, true)}
@@ -328,7 +328,7 @@ function MediaView({ accountId, media, sending }: { accountId: string; media: Me
           <img className="od-media" src={poster} alt={media.name} />
         ) : null}
         {!live && <span className="play">{busy ?? <Icon name="play" />}</span>}
-        <span className="media-badge">{media.name === "GIF" ? "GIF" : media.size > 0 ? fileSize(media.size) : "Video"}</span>
+        {media.name !== "Sticker" && <span className="media-badge">{media.name === "GIF" ? "GIF" : media.size > 0 ? fileSize(media.size) : "Video"}</span>}
       </figure>
     );
   }
