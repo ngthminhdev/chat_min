@@ -230,8 +230,9 @@ button.tab-close { padding: 0; border: 0; background: transparent; font-family: 
 /* Bridge the visual gap so the toolbar stays hovered while moving up from a message. */
 .msg-actions::after { content: ""; position: absolute; top: 100%; left: -4px; right: -4px; height: 8px; }
 .msg:hover .msg-actions, .msg:focus-within .msg-actions { opacity: 1; pointer-events: auto; }
-/* the bar is a child of the row (not the bubble column): it floats above the row at the
-   chat's right edge for every message, incoming or mine */
+/* the bar hangs above the bubble's right end for every message; an incoming bubble narrower
+   than the bar gets it above its left end instead (fitActions) */
+.msg.act-left .msg-actions { left: 0; right: auto; }
 .msg-actions button { width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-2); }
 .msg-actions button:hover { background: var(--pane-3); color: var(--text); }
 .msg-actions .ic { --od-icon-size: 15px; }

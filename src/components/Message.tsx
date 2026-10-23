@@ -69,6 +69,7 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
 
   return (
     <Wrap className={cls} id={`m-${m.id}`} {...anim}
+      onMouseEnter={me ? undefined : (e: React.MouseEvent) => fitActions(e.currentTarget as HTMLElement)}
       onContextMenu={(e: React.MouseEvent) => {
         if (e.defaultPrevented) return;
         e.preventDefault();
@@ -150,7 +151,6 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
             </button>
           </div>
         )}
-      </div>
       <div className="msg-actions" role="toolbar" aria-label="Thao tác tin nhắn">
         <button aria-label="Trả lời" data-tip="Trả lời" onClick={() => setReply(tab, m)}>
           <Icon name="reply" />
@@ -191,9 +191,18 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
           <Icon name="ellipsis" />
         </button>
       </div>
+      </div>
     </Wrap>
   );
 });
+
+/** Incoming message: the toolbar hangs above the bubble's right end; a bubble narrower than
+ *  the toolbar would push it over the avatar, so it starts at the bubble's left end instead. */
+function fitActions(row: HTMLElement) {
+  const col = row.querySelector<HTMLElement>(".msg-col");
+  const bar = row.querySelector<HTMLElement>(".msg-actions");
+  if (col && bar) row.classList.toggle("act-left", col.offsetWidth < bar.offsetWidth);
+}
 
 function Meta({ m, caps }: { m: Msg; caps: Record<Cap, boolean> }) {
   // an upload in flight: Rust reports it under the file's local path (tg.rs / gchat.rs)
