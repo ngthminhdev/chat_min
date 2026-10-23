@@ -1556,3 +1556,5 @@ body:is([data-background="glass"], [data-background="clear"]) .inbox-shell { bor
 .mobile .welcome-view p { font-size: var(--fs-md); }
 .mobile .app-frame { min-width: 0; grid-template-rows: 48px 1fr 0; }
 .mobile body .main > .inspector { width: auto; max-width: none; }
+.img-msg.sticker .tgs { width: 100%; height: 100%; }
+.img-msg.sticker .tgs svg { display: block; width: 100%; height: 100%; }

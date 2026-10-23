@@ -1,4 +1,4 @@
-import { memo, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { EASE } from "../lib/motion";
 import { fileSrc, isTauri, openPath, openUrl, revealPath, streamSrc } from "../lib/bridge";
@@ -10,6 +10,7 @@ import { api } from "../lib/bridge";
 import { PersonAvatar, useAvatar } from "../ui/Avatar";
 import { Icon, type IconName } from "../ui/Icon";
 import { useDownload } from "./Conversation";
+import lottie from "lottie-web/build/player/lottie_light";
 import { translateMsg, trKey } from "../ai";
 import { fileActionLabel } from "../lib/micro-ux";
 
@@ -240,6 +241,36 @@ function Meta({ m, caps }: { m: Msg; caps: Record<Cap, boolean> }) {
 const FILE_ICON = (name: string): IconName =>
   /\.(zip|gz|tar|rar|7z)$/i.test(name) ? "file-archive" : /\.(js|ts|go|rs|py|json|sql|sh|yml|yaml)$/i.test(name) ? "file-code" : "file-text";
 
+/** Telegram animated sticker: gzipped Lottie JSON, inflated by the browser and looped. */
+function TgsSticker({ path, poster }: { path: string; poster: string }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    let anim: ReturnType<typeof lottie.loadAnimation> | undefined;
+    let gone = false;
+    (async () => {
+      try {
+        const res = await fetch(fileSrc(path));
+        const json = await new Response(res.body!.pipeThrough(new DecompressionStream("gzip"))).json();
+        if (gone) return;
+        anim = lottie.loadAnimation({ container: el, renderer: "svg", loop: true, autoplay: true, animationData: json });
+        setReady(true);
+      } catch (e) {
+        void api.logJs(`tgs error ${String(e)} ${path}`);
+      }
+    })();
+    return () => { gone = true; anim?.destroy(); };
+  }, [path]);
+  return (
+    <>
+      {!ready && poster && <img className="od-media" src={poster} alt="Sticker" />}
+      <div className="od-media tgs" ref={box} style={ready ? undefined : { position: "absolute", inset: 0, opacity: 0 }} />
+    </>
+  );
+}
+
 function MediaView({ accountId, media, sending }: { accountId: string; media: Media; sending?: boolean }) {
   // my upload in flight: progress under the file's local path (see Meta)
   const up = useApp((s) => (sending && media.localPath ? s.progress[`${accountId}|${media.localPath}`] : undefined));
@@ -282,6 +313,13 @@ function MediaView({ accountId, media, sending }: { accountId: string; media: Me
     useApp.setState({ pop: { kind: "menu", x: e.clientX, y: e.clientY, top: e.clientY, items } });
   };
 
+  if (media.mime === "application/x-tgsticker") {
+    return (
+      <figure className="img-msg sticker" style={{ aspectRatio: ratio }} onContextMenu={(e) => menu(e, false)}>
+        {dl.path ? <TgsSticker path={dl.path} poster={poster} /> : poster ? <img className="od-media" src={poster} alt="Sticker" /> : <span className="veil-spinner" />}
+      </figure>
+    );
+  }
   if (isImage) {
     const src = dl.path ? fileSrc(dl.path) : poster;
     return (
