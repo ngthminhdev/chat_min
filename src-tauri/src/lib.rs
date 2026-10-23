@@ -1,5 +1,7 @@
 mod ai;
 mod gchat;
+#[cfg(any(target_os = "android", test))]
+mod google_android;
 mod model;
 mod store;
 mod tg;
@@ -329,7 +331,7 @@ fn app_state(core: C) -> Res<AppState> {
         health,
         chats,
         tg_configured: c.tg_api_id != 0 && !c.tg_api_hash.is_empty(),
-        gchat_configured: !c.gchat_client_id.is_empty(),
+        gchat_configured: cfg!(target_os = "android") || !c.gchat_client_id.is_empty(),
         muted_threads: c.muted_threads,
     })
 }
@@ -977,6 +979,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init());
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(google_android::init());
     // remember window size/position across launches, like the other _min apps
     // (not visibility: quitting with the window hidden must not launch hidden)
     #[cfg(desktop)]

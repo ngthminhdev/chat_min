@@ -5,16 +5,19 @@
 //! desktop app.
 use crate::model::{Account, Chat, Event, Media, Member, Msg, Reaction};
 use crate::{now_ms, Core};
+#[cfg(not(target_os = "android"))]
 use base64::Engine;
 use reqwest::{Method, StatusCode};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+#[cfg(not(target_os = "android"))]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Notify;
 
 const API: &str = "https://chat.googleapis.com/v1";
+#[cfg(not(target_os = "android"))]
 const SCOPES: &str = "openid email profile \
     https://www.googleapis.com/auth/chat.spaces.readonly \
     https://www.googleapis.com/auth/chat.messages \
@@ -27,11 +30,16 @@ pub struct GChat {
     http: reqwest::Client,
     accs: Mutex<HashMap<String, Acc>>,
     cancel_login: Notify,
+    #[cfg(target_os = "android")]
+    token_refresh: tokio::sync::Mutex<()>,
+    #[cfg(target_os = "android")]
+    login_cancellation: crate::google_android::LoginCancellation,
 }
 
 #[derive(Default, Clone)]
 struct Acc {
     me: String,
+    #[cfg(not(target_os = "android"))]
     refresh_token: String,
     access_token: String,
     expires_at: i64,
@@ -71,6 +79,7 @@ type R<T> = Result<T, ApiErr>;
 impl GChat {
     // ── auth ────────────────────────────────────────────────────────────────
     /// Loopback OAuth: open the consent page, wait for Google to redirect back with a code.
+    #[cfg(not(target_os = "android"))]
     pub async fn login(&self, core: &Arc<Core>) -> Result<Account, String> {
         let (client_id, client_secret) = core.gchat_client().ok_or("Chưa cấu hình OAuth client Google")?;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.map_err(|e| e.to_string())?;
@@ -170,7 +179,79 @@ impl GChat {
         Ok(account)
     }
 
+    /// On-device authorization: Google Play services handles account selection and consent.
+    #[cfg(target_os = "android")]
+    pub async fn login(&self, core: &Arc<Core>) -> Result<Account, String> {
+        use tauri::Manager;
+        // Register once before dispatching native auth; reuse this future through
+        // UserInfo so notify_waiters cannot be lost between the two phases.
+        let cancelled = self.cancel_login.notified();
+        tokio::pin!(cancelled);
+        cancelled.as_mut().enable();
+        let attempt = self.login_cancellation.begin();
+        let google = core.app.state::<crate::google_android::GoogleAuth>();
+        let authorization = google.authorize(true, None, None);
+        tokio::pin!(authorization);
+        // Dispatch once before selecting cancellation. A cancelled, never-polled
+        // native future must not be drained by accidentally starting a fresh login.
+        let immediate = futures::poll!(authorization.as_mut());
+        let result = match immediate {
+            std::task::Poll::Ready(result) => result,
+            std::task::Poll::Pending => tokio::select! {
+                biased;
+                _ = &mut cancelled => {
+                    google.cancel().await;
+                    // Tauri's native response callback must retain a live receiver.
+                    let _ = authorization.await;
+                    return Err("cancelled".into());
+                }
+                result = &mut authorization => result,
+            },
+        };
+        let token = result.map_err(crate::google_android::login_error)?.access_token;
+        let identity = {
+            let identity = self.android_identity(&token);
+            tokio::pin!(identity);
+            tokio::select! {
+                biased;
+                _ = &mut cancelled => return Err("cancelled".into()),
+                result = &mut identity => result,
+            }
+        };
+        if matches!(identity, Err(ApiErr::Expired)) { google.invalidate(&token).await; }
+        let account = identity.map_err(String::from)?;
+        self.login_cancellation.commit(attempt, || {
+            core.add_account(account.clone())?;
+            let mut accs = self.accs.lock().unwrap();
+            let acc = accs.entry(account.id.clone()).or_default();
+            acc.me = account.self_id.clone();
+            acc.access_token = token;
+            // The native result has no expiry field. Refresh conservatively, and clear
+            // the Google SDK token cache before renewing or after a rejected token.
+            acc.expires_at = now_ms() + 45 * 60_000;
+            Ok(())
+        })?;
+        Ok(account)
+    }
+
+    #[cfg(target_os = "android")]
+    async fn android_identity(&self, token: &str) -> R<Account> {
+        let response = self.http.get("https://www.googleapis.com/oauth2/v3/userinfo")
+            .bearer_auth(token).timeout(Duration::from_secs(30)).send().await
+            .map_err(|_| ApiErr::Offline)?;
+        if matches!(response.status(), StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
+            return Err(ApiErr::Expired);
+        }
+        if !response.status().is_success() {
+            return Err(ApiErr::Other("Google chưa cho phép đọc thông tin tài khoản".into()));
+        }
+        let info: Value = response.json().await.map_err(|_| ApiErr::Other("Thông tin tài khoản Google không hợp lệ".into()))?;
+        crate::google_android::account_from_userinfo(&info).map_err(ApiErr::Other)
+    }
+
     pub fn cancel_login(&self) {
+        #[cfg(target_os = "android")]
+        self.login_cancellation.cancel();
         self.cancel_login.notify_waiters();
     }
 
@@ -181,6 +262,7 @@ impl GChat {
             let acc = accs.entry(account.id.clone()).or_default();
             acc.me = account.self_id.clone();
             acc.stopped = false;
+            #[cfg(not(target_os = "android"))]
             if acc.refresh_token.is_empty() {
                 acc.refresh_token = load_token(&core, &account.id).unwrap_or_default();
             }
@@ -872,6 +954,7 @@ impl GChat {
         self.accs.lock().unwrap().get(account_id).map(|a| a.me.clone()).unwrap_or_default()
     }
 
+    #[cfg(not(target_os = "android"))]
     async fn token(&self, core: &Arc<Core>, account_id: &str) -> R<String> {
         let (tok, exp, refresh) = self
             .accs
@@ -910,10 +993,44 @@ impl GChat {
         Ok(tok)
     }
 
+    #[cfg(target_os = "android")]
+    async fn token(&self, core: &Arc<Core>, account_id: &str) -> R<String> {
+        use tauri::Manager;
+        // A space scan requests many tokens concurrently; one renewal covers the scan.
+        let _refresh = self.token_refresh.lock().await;
+        let (token, expires, stopped) = self.accs.lock().unwrap().get(account_id)
+            .map(|a| (a.access_token.clone(), a.expires_at, a.stopped)).ok_or(ApiErr::Expired)?;
+        if stopped { return Err(ApiErr::Expired); }
+        if !token.is_empty() && now_ms() < expires { return Ok(token); }
+        let account = core.store().accounts().map_err(|_| ApiErr::Expired)?
+            .into_iter().find(|a| a.id == account_id).ok_or(ApiErr::Expired)?;
+        let google = core.app.state::<crate::google_android::GoogleAuth>();
+        let result = google.authorize(false, Some(&account.handle), (!token.is_empty()).then_some(token.as_str())).await
+            .map_err(|error| {
+                if crate::google_android::is_authorization_required(&error) { ApiErr::Expired }
+                else { ApiErr::Other(error.to_string()) }
+            })?;
+        // Never attach a token for a different Google account to cached chats.
+        let identity = self.android_identity(&result.access_token).await;
+        if matches!(identity, Err(ApiErr::Expired)) {
+            google.invalidate(&result.access_token).await;
+        }
+        let identity = identity?;
+        if identity.id != account_id {
+            google.invalidate(&result.access_token).await;
+            return Err(ApiErr::Expired);
+        }
+        let mut accs = self.accs.lock().unwrap();
+        let acc = accs.get_mut(account_id).filter(|a| !a.stopped).ok_or(ApiErr::Expired)?;
+        acc.access_token = result.access_token.clone();
+        acc.expires_at = now_ms() + 45 * 60_000;
+        Ok(result.access_token)
+    }
+
     async fn api(&self, core: &Arc<Core>, account_id: &str, method: Method, url: &str, body: Option<Value>) -> R<Value> {
         for attempt in 0..2 {
             let token = self.token(core, account_id).await?;
-            let mut req = self.http.request(method.clone(), url).bearer_auth(token).timeout(Duration::from_secs(30));
+            let mut req = self.http.request(method.clone(), url).bearer_auth(&token).timeout(Duration::from_secs(30));
             if let Some(b) = &body {
                 req = req.json(b);
             }
@@ -922,9 +1039,16 @@ impl GChat {
             if status == StatusCode::UNAUTHORIZED && attempt == 0 {
                 // stale access token: drop it and refresh once
                 if let Some(a) = self.accs.lock().unwrap().get_mut(account_id) {
+                    #[cfg(not(target_os = "android"))]
                     a.access_token.clear();
+                    a.expires_at = 0;
                 }
                 continue;
+            }
+            #[cfg(target_os = "android")]
+            if status == StatusCode::UNAUTHORIZED {
+                use tauri::Manager;
+                core.app.state::<crate::google_android::GoogleAuth>().invalidate(&token).await;
             }
             let v: Value = resp.json().await.unwrap_or(Value::Null);
             return match status {
@@ -1103,6 +1227,7 @@ fn token_path(core: &Core, account_id: &str) -> std::path::PathBuf {
     core.data_dir.join("secrets").join(format!("{account_id}.json"))
 }
 
+#[cfg(not(target_os = "android"))]
 fn save_token(core: &Core, account_id: &str, refresh: &str) -> std::io::Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
     let path = token_path(core, account_id);
@@ -1111,11 +1236,13 @@ fn save_token(core: &Core, account_id: &str, refresh: &str) -> std::io::Result<(
     std::io::Write::write_all(&mut f, json!({ "refresh_token": refresh }).to_string().as_bytes())
 }
 
+#[cfg(not(target_os = "android"))]
 fn load_token(core: &Core, account_id: &str) -> Option<String> {
     let v: Value = serde_json::from_str(&std::fs::read_to_string(token_path(core, account_id)).ok()?).ok()?;
     v["refresh_token"].as_str().map(String::from)
 }
 
+#[cfg(not(target_os = "android"))]
 fn open_browser(url: &str) {
     // the user's default browser may not be the one signed in to Workspace; prefer Chrome
     let chrome = std::process::Command::new("open").args(["-a", "Google Chrome", url]).status();
@@ -1124,6 +1251,7 @@ fn open_browser(url: &str) {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 fn jwt_claims(jwt: &str) -> Value {
     let payload = jwt.split('.').nth(1).unwrap_or("");
     base64::engine::general_purpose::URL_SAFE_NO_PAD

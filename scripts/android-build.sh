@@ -22,6 +22,21 @@ T=src-tauri/gen/android/app/src/main/res/values/themes.xml
 # targetSdk 36+ ignores that opt-out, so the generated project targets 35
 sed -i '' 's/^\([[:space:]]*\)targetSdk = 3[6-9]$/\1targetSdk = 35/' src-tauri/gen/android/app/build.gradle.kts
 M=src-tauri/gen/android/app/src/main/java/com/chatmin/app/MainActivity.kt
+cp scripts/android/MainActivity.kt "$M"
+cp scripts/android/GoogleAuthPlugin.kt src-tauri/gen/android/app/src/main/java/com/chatmin/app/GoogleAuthPlugin.kt
+python3 - <<'PY'
+from pathlib import Path
+p = Path('src-tauri/gen/android/app/build.gradle.kts')
+source = p.read_text()
+dependency = '    implementation("com.google.android.gms:play-services-auth:22.0.0")'
+if 'com.google.android.gms:play-services-auth:' not in source:
+    p.write_text(source.replace('dependencies {', 'dependencies {\n' + dependency, 1))
+manifest = Path('src-tauri/gen/android/app/src/main/AndroidManifest.xml')
+source = manifest.read_text()
+permission = '    <uses-permission android:name="android.permission.RECORD_AUDIO" />'
+if 'android.permission.RECORD_AUDIO' not in source:
+    manifest.write_text(source.replace('    <uses-permission android:name="android.permission.INTERNET" />', '    <uses-permission android:name="android.permission.INTERNET" />\n' + permission, 1))
+PY
 sed -i '' '/enableEdgeToEdge/d' "$M"
 grep -q statusBarColor "$T" || sed -i '' 's|<!-- Customize your theme here. -->|&\n        <item name="android:statusBarColor">#141821</item>\n        <item name="android:navigationBarColor">#141821</item>\n        <item name="android:windowLightStatusBar">false</item>|' "$T"
 grep -q windowOptOutEdgeToEdgeEnforcement "$T" || sed -i '' 's|<!-- Customize your theme here. -->|&\n        <item name="android:windowOptOutEdgeToEdgeEnforcement" tools:targetApi="35">true</item>|' "$T"
