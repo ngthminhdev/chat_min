@@ -354,7 +354,7 @@ fn show(app: &AppHandle, title: &str, body: &str, chat: &str) {
     {
         let n = app.notification().builder().title(title).body(body).sound("default").extra("chat", chat);
         #[cfg(mobile)]
-        let n = n.channel_id(CHANNEL);
+        let n = n.channel_id(CHANNEL).icon("ic_stat_chatmin");
         match n.show() {
             Ok(()) => eprintln!("[notify] shown"),
             Err(e) => eprintln!("[notify] {e}"),

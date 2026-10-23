@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status-bar icon: Android draws only the alpha, so one white silhouette of the two bubbles. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M4,3h9a2,2 0,0 1,2 2v4.5h-5.5a3.5,3.5 0,0 0,-3.5 3.5v2H7.2L4.5,17.2V15H4a2,2 0,0 1,-2 -2V5a2,2 0,0 1,2 -2z"/>
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M10.5,11h9.5a2,2 0,0 1,2 2v5a2,2 0,0 1,-2 2h-0.5v2.2L16.3,20H10.5a2,2 0,0 1,-2 -2v-5a2,2 0,0 1,2 -2zM12,15.5a1,1 0,1 0,0 0.01zM15.3,15.5a1,1 0,1 0,0 0.01zM18.6,15.5a1,1 0,1 0,0 0.01z"/>
+</vector>
