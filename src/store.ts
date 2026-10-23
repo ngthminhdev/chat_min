@@ -142,6 +142,8 @@ interface State {
   viewer: { media: Media; path: string; src?: string; accountId?: string } | null;
   /** `${accountId}|${fileRef}` → percent of a big download in progress */
   progress: Record<string, number>;
+  /** Android notification permission: "granted" | "denied" | "prompt" (desktop: granted) */
+  notifyPermission: string;
   /** the open chat is scrolled to its newest message: only then does a new one count as seen */
   atBottom: boolean;
   /** inline translations, keyed "chatKey#msgId" — never persisted */
@@ -208,6 +210,7 @@ export const useApp = create<State>(() => ({
   pop: null,
   dialog: null,
   toasts: [],
+  notifyPermission: "granted",
   prefs: { size: 13, theme: "", uiFont: "", monoFont: "", compact: false, aiMe: "Vietnamese", aiTo: "English", ...saved.prefs,
     backgroundMode: windowAppearance(saved.prefs ?? {}).mode,
     backgroundTransparency: windowAppearance(saved.prefs ?? {}).transparency },

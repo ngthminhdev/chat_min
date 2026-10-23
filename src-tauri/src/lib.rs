@@ -931,6 +931,18 @@ fn search(core: C, query: String, account_id: Option<String>, chat_id: Option<St
 fn notify_test(app: tauri::AppHandle) {
     notify::test(&app);
 }
+
+/// Android: current notification permission, asking the system when `ask` and not yet decided.
+#[tauri::command]
+fn notify_permission(app: tauri::AppHandle, ask: bool) -> String {
+    notify::permission(&app, ask)
+}
+
+/// Phone: the webview went to / came back from the background (notification rules).
+#[tauri::command]
+fn set_foreground(core: C<'_>, fg: bool) {
+    core.notifier.set_foreground(fg);
+}
 #[tauri::command]
 fn notify_prefs(core: C<'_>, prefs: HashMap<String, notify::Prefs>) {
     core.notifier.set_prefs(prefs);
@@ -1036,6 +1048,8 @@ pub fn run() {
             }
             #[cfg(target_os = "macos")]
             show_on_activate(app.handle().clone());
+            #[cfg(mobile)]
+            notify::setup_channel(app.handle());
             notify::on_click(app.handle());
             let accounts = core.store().accounts()?;
             for a in accounts {
@@ -1157,6 +1171,8 @@ pub fn run() {
             search,
             notify_prefs,
             notify_test,
+            notify_permission,
+            set_foreground,
         ])
         .build(tauri::generate_context!())
         .expect("error while building ChatMin")

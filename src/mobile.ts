@@ -54,6 +54,12 @@ export function useAndroidNavigation() {
   useEffect(() => {
     if (!isMobile) return;
     window.__chatminBack = mobileBack;
-    return () => { delete window.__chatminBack; };
+    // Rust mutes the open chat only while the app is on screen; Android 13+ needs the
+    // notification permission asked once
+    const visibility = () => void api.setForeground(document.visibilityState === "visible").catch(() => {});
+    document.addEventListener("visibilitychange", visibility);
+    visibility();
+    void api.notifyPermission(true).then((state) => useApp.setState({ notifyPermission: state })).catch(() => {});
+    return () => { delete window.__chatminBack; document.removeEventListener("visibilitychange", visibility); };
   }, []);
 }

@@ -46,6 +46,7 @@ export function Settings() {
   const accounts = useApp((s) => s.accounts);
   const health = useApp((s) => s.health);
   const notif = useApp((s) => s.notif);
+  const permission = useApp((s) => s.notifyPermission);
   const setPrefs = (p: Partial<typeof prefs>) => useApp.setState((s) => ({ prefs: { ...s.prefs, ...p } }));
   const setNotif = (id: string, p: Partial<NotifyPrefs>) =>
     useApp.setState((s) => ({ notif: { ...s.notif, [id]: { ...DEFAULT_NOTIFY, ...s.notif[id], ...p } } }));
@@ -171,6 +172,13 @@ export function Settings() {
 
         <section className="settings-card">
           <h3>Thông báo</h3>
+          {isMobile && permission !== "granted" && (
+            <Row title="Quyền thông báo" help={permission === "denied" ? "Android đang chặn thông báo của ChatMin. Mở Cài đặt → Ứng dụng → ChatMin → Thông báo để bật." : "ChatMin chưa được phép gửi thông báo."} icon="bell-off">
+              <button className="tool-btn primary" onClick={() => void api.notifyPermission(true).then((state) => useApp.setState({ notifyPermission: state })).catch(fail)}>
+                Cho phép thông báo
+              </button>
+            </Row>
+          )}
           <Row
             title="Kiểm tra thông báo"
             help={isMobile ? "Gửi một thông báo thử. Nếu không thấy, kiểm tra quyền Thông báo của ChatMin trong Cài đặt Android." : "Gửi một thông báo macOS ngay. Không thấy thì mở System Settings → Notifications → ChatMin. Space Google Chat báo khi có @nhắc tên, thread mới, hoặc trả lời trong thread bạn đã nhắn — như Google Chat."}

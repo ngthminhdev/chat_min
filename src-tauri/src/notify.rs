@@ -60,9 +60,15 @@ pub struct Notifier {
     badge: Mutex<i64>,
     /// (chat title, "account|chat") waiting for the summary
     missed: Mutex<Vec<(String, String)>>,
+    /// phone: the app left the screen (the webview reports `visibilitychange`, mobile.ts)
+    background: std::sync::atomic::AtomicBool,
 }
 
 impl Notifier {
+    pub fn set_foreground(&self, fg: bool) {
+        self.background.store(!fg, std::sync::atomic::Ordering::Relaxed);
+    }
+
     pub fn set_prefs(&self, prefs: HashMap<String, Prefs>) {
         *self.prefs.lock().unwrap() = prefs;
     }
@@ -80,7 +86,12 @@ impl Notifier {
     /// Other chats still ring while ChatMin is in front.
     fn watching(&self, app: &AppHandle, account_id: &str, chat_id: &str) -> bool {
         let on_screen = self.active.lock().unwrap().as_ref().is_some_and(|(a, c)| a == account_id && c == chat_id);
-        on_screen && app.get_webview_window("main").is_some_and(|w| w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false))
+        #[cfg(desktop)]
+        let in_front = app.get_webview_window("main").is_some_and(|w| w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false));
+        // the Android window has no focus/visibility answer: trust the webview's own report
+        #[cfg(mobile)]
+        let in_front = { let _ = app; !self.background.load(std::sync::atomic::Ordering::Relaxed) };
+        on_screen && in_front
     }
 
     /// Whether a just-arrived message should ring, given its chat and the account's prefs.
@@ -224,6 +235,49 @@ pub fn test(app: &AppHandle) {
     show(app, "ChatMin", "Thông báo đang hoạt động. Bấm vào để mở ChatMin.", "");
 }
 
+/// Android: a high-importance channel (heads-up banner, sound) for messages. Android 8+
+/// ignores a notification whose channel doesn't exist; the user tunes it in system settings.
+#[cfg(mobile)]
+pub const CHANNEL: &str = "messages";
+#[cfg(mobile)]
+pub fn setup_channel(app: &AppHandle) {
+    use tauri_plugin_notification::{Channel, Importance};
+    let channel = Channel::builder(CHANNEL, "Tin nhắn").description("Tin nhắn mới, nhắc tên, biểu cảm").importance(Importance::High).vibration(true).build();
+    if let Err(e) = app.notification().create_channel(channel) {
+        eprintln!("[notify] channel: {e}");
+    }
+}
+
+/// Android 13+ asks the user before the first notification; `granted` / `denied` / `prompt`.
+/// Desktop reports `granted` (the OS decides at delivery).
+pub fn permission(app: &AppHandle, ask: bool) -> String {
+    #[cfg(mobile)]
+    {
+        use tauri_plugin_notification::PermissionState;
+        let state = app.notification().permission_state();
+        let state = match state {
+            Ok(PermissionState::Granted) => PermissionState::Granted,
+            Ok(_) if ask => app.notification().request_permission().unwrap_or(PermissionState::Denied),
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[notify] permission: {e}");
+                PermissionState::Denied
+            }
+        };
+        match state {
+            PermissionState::Granted => "granted",
+            PermissionState::Denied => "denied",
+            _ => "prompt",
+        }
+        .into()
+    }
+    #[cfg(desktop)]
+    {
+        let _ = (app, ask);
+        "granted".into()
+    }
+}
+
 /// Brings the window up and opens `chat` ("account|chat"; empty: just the window).
 /// `target`: "account|chat", optionally followed by "\nmessage id\nthread id".
 fn open(app: &AppHandle, target: &str) {
@@ -297,9 +351,14 @@ fn show(app: &AppHandle, title: &str, body: &str, chat: &str) {
         }
     }
     #[cfg(not(target_os = "macos"))]
-    match app.notification().builder().title(title).body(body).sound("default").extra("chat", chat).show() {
-        Ok(()) => eprintln!("[notify] shown"),
-        Err(e) => eprintln!("[notify] {e}"),
+    {
+        let n = app.notification().builder().title(title).body(body).sound("default").extra("chat", chat);
+        #[cfg(mobile)]
+        let n = n.channel_id(CHANNEL);
+        match n.show() {
+            Ok(()) => eprintln!("[notify] shown"),
+            Err(e) => eprintln!("[notify] {e}"),
+        }
     }
 }
 

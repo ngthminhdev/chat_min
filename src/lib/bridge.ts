@@ -91,6 +91,10 @@ export const api = {
   /** per-account notification settings: Rust decides and sends notifications (notify.rs) */
   notifyPrefs: (prefs: Record<string, unknown>) => (isTauri ? call<void>("notify_prefs", { prefs }) : Promise.resolve()),
   notifyTest: () => (isTauri ? call<void>("notify_test") : Promise.resolve()),
+  /** Android: "granted" | "denied" | "prompt"; `ask` shows the system dialog when undecided */
+  notifyPermission: (ask: boolean) => (isTauri ? call<string>("notify_permission", { ask }) : Promise.resolve("granted")),
+  /** phone: app on screen or not — Rust mutes the open chat only while it is actually visible */
+  setForeground: (fg: boolean) => (isTauri ? call<void>("set_foreground", { fg }) : Promise.resolve()),
 };
 
 export const fileSrc = (path: string) => (isTauri && path && !path.startsWith("data:") ? convertFileSrc(path) : path);
