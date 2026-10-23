@@ -239,10 +239,16 @@ button.tab-close { padding: 0; border: 0; background: transparent; font-family: 
 
 /* NEW: typing indicator */
 .typing { display: flex; align-items: center; gap: 10px; width: fit-content; max-width: min(600px, 88%); margin-top: 12px; color: var(--text-3); font-size: var(--fs-md); }
-.typing .dots { display: inline-flex; gap: 3px; padding: 9px 11px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--pane-2); }
-.typing .dots i { width: 5px; height: 5px; border-radius: var(--radius-circle); background: var(--text-3); animation: blink 1.2s infinite var(--ease-ui); }
-.typing .dots i:nth-child(2) { animation-delay: .15s; }
-.typing .dots i:nth-child(3) { animation-delay: .3s; }
+.typing-indicator { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0; vertical-align: bottom; }
+.typing-copy { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.typing-dots { display: inline-flex; align-items: center; gap: 3px; height: 12px; flex: none; }
+.typing-dots i { display: block; width: 4px; height: 4px; border-radius: 50%; background: currentColor; animation: typing-hop 1.1s ease-in-out infinite; }
+.typing-dots i:nth-child(2) { animation-delay: 120ms; }
+.typing-dots i:nth-child(3) { animation-delay: 240ms; }
+.typing-indicator.compact .typing-dots { gap: 2px; }
+.typing-indicator.compact .typing-dots i { width: 3px; height: 3px; }
+.preview-state { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+@keyframes typing-hop { 0%, 55%, 100% { transform: translateY(0); opacity: .45; } 27% { transform: translateY(-2px); opacity: 1; } }
 @keyframes blink { 0%, 60%, 100% { opacity: .3; } 30% { opacity: 1; } }
 
 .conv-empty { display: grid; place-items: center; align-content: center; gap: 10px; height: 100%; color: var(--text-3); text-align: center; padding: 24px; }
@@ -457,7 +463,6 @@ button.tab-close { padding: 0; border: 0; background: transparent; font-family: 
 .link-card { color: var(--text); text-decoration: none; }
 .reaction { border-color: transparent; background: var(--surface-hover); }
 .reaction.mine { border-color: var(--accent-soft-strong); }
-.typing .dots { background: transparent; border: 0; padding: 8px 0; }
 .typing { gap: 8px; margin-top: 16px; }
 .composer { background: var(--app-bg); border-top: 0; padding: 8px 24px 8px; }
 /* empty composer = one input line + one tool row; the sending account lives in the tool row */
@@ -718,9 +723,9 @@ body.inspector-unavailable .main.r2-tab .inspector, body.inspector-unavailable .
 .media-grid figure { cursor: pointer; }
 .media-ph { aspect-ratio: 1; background: var(--pane-3); }
 
-/* unread badge pops when the count changes */
-.badge.pop { animation: badge-pop .28s var(--ease-ui); }
-@keyframes badge-pop { 0% { transform: scale(.6); } 60% { transform: scale(1.12); } 100% { transform: scale(1); } }
+/* Only a live unread increase receives emphasis; mounting history stays quiet. */
+.badge.pop { animation: badge-pop .22s var(--ease-ui); }
+@keyframes badge-pop { 0% { transform: scale(.88); } 60% { transform: scale(1.06); } 100% { transform: scale(1); } }
 
 .composer-readonly { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px; color: var(--text-3); font-size: var(--fs-md); border: 1px dashed var(--line-2); border-radius: var(--radius-md); }
 .composer-readonly .ic { --od-icon-size: 14px; }
@@ -737,6 +742,9 @@ body.inspector-unavailable .main.r2-tab .inspector, body.inspector-unavailable .
 /* toasts stack bottom-right; motion animates them */
 .toast-stack { position: fixed; right: 24px; bottom: 46px; display: grid; gap: 8px; justify-items: end; z-index: var(--z-toast); pointer-events: none; }
 .toast-stack .toast { position: static; animation: none; pointer-events: auto; }
+.toast-body { flex: 1; min-width: 0; }
+.toast .toast-dismiss { flex: none; align-self: flex-start; margin: -3px -3px -3px 0; }
+.toast .toast-dismiss .ic { color: var(--text-2); margin: 0; --od-icon-size: 13px; }
 .toast.error .ic { color: var(--red); }
 
 .palette .cmd .snip mark { background: transparent; color: var(--accent-secondary); font-weight: 650; }
@@ -1287,6 +1295,9 @@ body :is(.settings-copy > span, .r2-header p, .r2-muted, .field-hint,
   color: var(--text); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--cm-control-border);
 }
 .reaction.mine { color: var(--text); border-color: var(--cm-control-border); }
+.reaction { min-height: 26px; padding-inline: 8px; cursor: pointer; font-variant-numeric: tabular-nums; transition: color 100ms var(--ease-ui), background-color 100ms var(--ease-ui), border-color 100ms var(--ease-ui); }
+.reaction .e { transition: scale 100ms var(--ease-ui), translate 100ms var(--ease-ui); }
+.reaction:active .e { scale: .9; translate: 0 1px; }
 .lang-tag { min-height: 26px; min-width: 30px; color: var(--text); border-color: var(--cm-control-border); }
 .mini-tabs button[aria-selected="true"] { color: var(--text); background: var(--accent-soft); border-color: var(--cm-control-border); box-shadow: none; }
 .inspector-tabbar { display: flex; align-items: center; gap: 2px; min-width: 0; padding: 0 6px; border-bottom: 1px solid var(--line); }
@@ -1345,6 +1356,8 @@ input::placeholder, textarea::placeholder { color: var(--cm-muted); opacity: 1; 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
   .tool-btn:active > .ic, .msg-actions button:active > .ic, .context-item:active > .ic, .tab-close:active, .lang-tag:active, .emoji-grid button:active { scale: none !important; translate: none !important; }
+  .reaction:active .e { scale: none !important; translate: none !important; }
+  .typing-dots i { opacity: .8; }
 }
 
 /* footer: quiet when all is well */

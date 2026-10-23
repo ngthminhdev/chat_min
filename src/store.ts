@@ -2,6 +2,8 @@ import { create } from "zustand";
 import { api, onEvent, saveFile } from "./lib/bridge";
 import { plain } from "./lib/format";
 import { windowAppearance, type BackgroundMode } from "./lib/appearance";
+import { reconcileMessage } from "./lib/message-identity";
+import { queueToast } from "./lib/toast-queue";
 import { PLATFORMS, type Cap } from "./lib/platforms";
 import type { Account, Chat, CoreEvent, Health, Media, Msg, Topic } from "./lib/types";
 import type { IconName } from "./ui/Icon";
@@ -72,7 +74,7 @@ interface State {
   loadErr: Record<string, string>;
   /** sort key of the first unread message when the chat was opened → "N tin chưa đọc" line */
   unreadMark: Record<string, { sort: number; count: number }>;
-  /** ids that arrived live (not from history) — they animate in */
+  /** ids that arrived live (not from history), also used by thread unread */
   fresh: Record<string, true>;
   /** latest reply sort seen per thread (`chatKey#threadId`): clears its "N mới" */
   threadSeen: Record<string, number>;
@@ -297,9 +299,9 @@ export async function saveMedia(path: string, name: string, ask: boolean) {
 let toastId = 0;
 export function toast(text: string, icon: IconName = "check") {
   const id = ++toastId;
-  set((s) => ({ toasts: [...s.toasts.slice(-2), { id, text, icon }] }));
-  setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), 2800);
+  set((s) => ({ toasts: queueToast(s.toasts, { id, text, icon }) }));
 }
+export const dismissToast = (id: number) => set(s => ({ toasts: s.toasts.filter(t => t.id !== id) }));
 export const confirmDialog = (title: string, message: string, ok: string, onOk: () => void) =>
   set({ dialog: { kind: "confirm", title, message, ok, onOk } });
 export const promptDialog = (title: string, value: string, onOk: (v: string) => void) =>
@@ -340,15 +342,7 @@ async function bootOnce() {
 }
 
 function upsert(list: Msg[], m: Msg): Msg[] {
-  const i = list.findIndex((x) => x.id === m.id);
-  if (i >= 0) {
-    const next = list.slice();
-    next[i] = m;
-    return next;
-  }
-  const next = [...list, m];
-  if (list.length && list[list.length - 1].sort > m.sort) next.sort((a, b) => a.sort - b.sort);
-  return next;
+  return reconcileMessage(list, m);
 }
 
 export function applyEvent(e: CoreEvent) {
@@ -436,8 +430,7 @@ export function applyEvent(e: CoreEvent) {
       set((s) => {
         const list = s.msgs[k];
         if (!list) return {};
-        const without = list.filter((m) => m.id !== e.oldId && m.id !== e.msg.id);
-        return { msgs: { ...s.msgs, [k]: upsert(without, e.msg) }, fresh: { ...s.fresh, [e.msg.id]: true } };
+        return { msgs: { ...s.msgs, [k]: reconcileMessage(list, e.msg, e.oldId) }, fresh: { ...s.fresh, [e.msg.id]: true } };
       });
       return;
     }
@@ -849,8 +842,7 @@ export async function send(k: string, text: string, { wire, ...opts }: { replyTo
   try {
     const real = await api.send({ accountId, chatId, text: wire ?? text, ...opts });
     set((s) => {
-      const list = (s.msgs[k] ?? []).filter((m) => m.id !== temp.id);
-      return { msgs: { ...s.msgs, [k]: list.some((m) => m.id === real.id) ? list : upsert(list, real) }, fresh: { ...s.fresh, [real.id]: true } };
+      return { msgs: { ...s.msgs, [k]: reconcileMessage(s.msgs[k] ?? [], real, temp.id) }, fresh: { ...s.fresh, [real.id]: true } };
     });
   } catch (e) {
     set((s) => ({ msgs: { ...s.msgs, [k]: (s.msgs[k] ?? []).map((m) => (m.id === temp.id ? { ...m, status: "failed", error: String(e) } : m)) } }));

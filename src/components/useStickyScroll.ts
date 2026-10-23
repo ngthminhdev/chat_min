@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "../lib/bridge";
 import { useApp } from "../store";
+import { preferredScrollBehavior } from "../lib/motion";
 
 /**
  * Scroll behaviour for a message list:
@@ -17,10 +18,14 @@ export function useStickyScroll(box: React.RefObject<HTMLDivElement | null>, las
   const prevLast = useRef(lastId);
   const [away, setAway] = useState(false);
   const [fresh, setFresh] = useState(0);
+  const travelling = useRef<"bottom" | "message" | null>(null);
+  const settle = useRef<ReturnType<typeof setTimeout>>();
 
   const capture = () => {
     const el = box.current;
     if (!el) return;
+    // Native smooth scrolling owns the viewport until it settles or the user interrupts.
+    if (travelling.current) return;
     const top = el.getBoundingClientRect().top;
     for (const node of el.querySelectorAll<HTMLElement>("[id^='m-']")) {
       const r = node.getBoundingClientRect();
@@ -34,6 +39,7 @@ export function useStickyScroll(box: React.RefObject<HTMLDivElement | null>, las
   const restore = () => {
     const el = box.current;
     if (!el) return;
+    if (travelling.current) return;
     if (pending.current && el.querySelector("[id^='m-']")) {
       // the jump a notification asked for, done once the list is on screen: instant, so
       // a render landing mid-animation (the chat refetching its newest page) can't leave
@@ -53,6 +59,25 @@ export function useStickyScroll(box: React.RefObject<HTMLDivElement | null>, las
     if (!a || !node) return;
     const delta = node.getBoundingClientRect().top - el.getBoundingClientRect().top - a.top;
     if (Math.abs(delta) > 0.5) el.scrollTop += delta;
+  };
+
+  const endTravel = () => {
+    if (!travelling.current) return;
+    const bottom = travelling.current === "bottom";
+    travelling.current = null;
+    clearTimeout(settle.current);
+    stick.current = bottom;
+    if (bottom) restore();
+    capture();
+  };
+  const startTravel = (to: "bottom" | "message") => {
+    clearTimeout(settle.current);
+    const behavior = preferredScrollBehavior();
+    travelling.current = behavior === "smooth" ? to : null;
+    stick.current = to === "bottom";
+    // scrollend is not available in every supported WKWebView. Scroll events reset this.
+    if (travelling.current) settle.current = setTimeout(endTravel, 1400);
+    return behavior;
   };
 
   // every render that changed the list: re-anchor, and count arrivals at the bottom
@@ -79,19 +104,39 @@ export function useStickyScroll(box: React.RefObject<HTMLDivElement | null>, las
   useEffect(() => {
     const el = box.current;
     if (!el) return;
-    const mark = () => { gesture.current = Date.now(); };
+    const mark = () => {
+      gesture.current = Date.now();
+      if (travelling.current) {
+        travelling.current = null;
+        clearTimeout(settle.current);
+        stick.current = false;
+        el.scrollTo({ top: el.scrollTop, behavior: "auto" });
+        capture();
+      }
+    };
     for (const ev of ["wheel", "touchmove", "keydown", "mousedown"]) el.addEventListener(ev, mark, { passive: true });
+    el.addEventListener("scrollend", endTravel);
     const t = setTimeout(() => {
       const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
       void api.logJs(`[scroll] settled dist=${Math.round(dist)} h=${el.scrollHeight} view=${el.clientHeight} stick=${stick.current} rows=${el.querySelectorAll("[id^='m-']").length}`);
     }, 2500);
-    return () => { clearTimeout(t); for (const ev of ["wheel", "touchmove", "keydown", "mousedown"]) el.removeEventListener(ev, mark); };
+    return () => {
+      clearTimeout(t); clearTimeout(settle.current);
+      el.removeEventListener("scrollend", endTravel);
+      for (const ev of ["wheel", "touchmove", "keydown", "mousedown"]) el.removeEventListener(ev, mark);
+    };
   }, []);
 
   const onScroll = () => {
     const el = box.current;
     if (!el) return;
     const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (travelling.current) {
+      setAway(dist > 400);
+      clearTimeout(settle.current);
+      settle.current = setTimeout(endTravel, 140);
+      return;
+    }
     const was = stick.current;
     const byUser = Date.now() - gesture.current < 600;
     stick.current = dist < 80 || (byUser ? false : stick.current);
@@ -105,14 +150,16 @@ export function useStickyScroll(box: React.RefObject<HTMLDivElement | null>, las
   const toBottom = () => {
     const el = box.current;
     if (!el) return;
-    stick.current = true;
-    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    const behavior = startTravel("bottom");
+    el.scrollTo({ top: el.scrollHeight, behavior });
     setFresh(0);
   };
 
   /** call when the user jumps elsewhere on purpose (search hit, quote) */
-  const release = () => {
-    stick.current = false;
+  const toMessage = (node: HTMLElement) => {
+    const behavior = startTravel("message");
+    node.scrollIntoView({ block: "center", behavior });
+    if (behavior === "auto") capture();
   };
 
   // a notification was clicked: back to the newest message, even when scrolled up reading.
@@ -123,9 +170,11 @@ export function useStickyScroll(box: React.RefObject<HTMLDivElement | null>, las
   useLayoutEffect(() => {
     if (seen.current === toLatest) return;
     seen.current = toLatest;
+    travelling.current = null;
+    clearTimeout(settle.current);
     pending.current = true;
     restore();
   }, [toLatest]);
 
-  return { onScroll, toBottom, release, away, fresh, stick };
+  return { onScroll, toBottom, toMessage, away, fresh, stick };
 }

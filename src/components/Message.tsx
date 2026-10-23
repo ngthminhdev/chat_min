@@ -1,5 +1,5 @@
-import { memo, useMemo, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { memo, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { EASE } from "../lib/motion";
 import { fileSrc, isTauri, openPath, openUrl, revealPath, streamSrc } from "../lib/bridge";
 import { fileSize, fmt, hm, plain } from "../lib/format";
@@ -34,6 +34,8 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
   const needOriginal = !!m.replyTo && !(m.replyName && m.replyText);
   const list = useApp((s) => (needOriginal ? s.msgs[k] : undefined));
   const original = useMemo(() => list?.find((x) => x.id === m.replyTo), [list, m.replyTo]);
+  const enter = useRef(fresh).current;
+  const reduceMotion = useReducedMotion();
   if (m.kind === "service") {
     return (
       <div className="service-msg" id={`m-${m.id}`}>
@@ -46,8 +48,9 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
   const cls = `msg${me ? " me" : ""}${first ? " first" : ""}${last ? " last" : ""}${m.mentionsMe ? " mentions-me" : ""}`;
   const side = me ? null : first ? <PersonAvatar name={m.senderName} accountId={m.accountId} photo={m.senderPhoto} userId={m.senderId} /> : <span className="avatar-gap" />;
   const sender = !me && first && chat.kind !== "dm" ? <span className="sender">{m.senderName}</span> : null;
-  const Wrap = fresh ? motion.div : "div";
-  const anim = fresh ? { initial: { opacity: 0, y: 8 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.2, ease: EASE } } : {};
+  // Decide once for this bubble. History stays plain DOM; ACKs never switch its type.
+  const Wrap = enter ? motion.div : "div";
+  const anim = enter ? { initial: { opacity: 0, y: 6 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.18, ease: EASE } } : {};
 
   if (m.deleted) {
     return (
@@ -94,12 +97,15 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
           {quote}
           {m.media && <MediaView accountId={m.accountId} media={m.media} sending={m.status === "sending"} />}
           {m.text && <div className="tx" dangerouslySetInnerHTML={{ __html: fmt(m.text) }} />}
+          <AnimatePresence initial={false}>
           {tr && (tr.state !== "ok" || tr.text) && (
             <motion.div
+              key="translation"
               className={`tx-tr${tr.state === "err" ? " err" : ""}`}
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              transition={{ duration: 0.18, ease: EASE }}
+              initial={reduceMotion ? false : { opacity: 0, height: 0, marginTop: 0, paddingTop: 0, borderTopWidth: 0 }}
+              animate={{ opacity: 1, height: "auto", marginTop: 6, paddingTop: 6, borderTopWidth: 1 }}
+              exit={{ opacity: 0, height: 0, marginTop: 0, paddingTop: 0, borderTopWidth: 0, transition: { duration: reduceMotion ? 0 : 0.1, ease: EASE } }}
+              transition={{ duration: reduceMotion ? 0 : 0.16, ease: EASE }}
             >
               <Icon name="languages" />
               {tr.state === "loading" ? (
@@ -111,6 +117,7 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
               )}
             </motion.div>
           )}
+          </AnimatePresence>
           {m.link && (
             <a className="link-card" href={m.link.url}>
               <span className="site">{m.link.site}</span>
@@ -121,8 +128,9 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
         </div>
         </div>
         <div className="message-footer">
+        <AnimatePresence initial={false}>
         {caps.reactions && m.reactions.length > 0 && (
-          <div className="reactions">
+          <motion.div key="reactions" className="reactions" initial={{ opacity: 1 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.1 }}>
             {/* only reactions added while the message is on screen pop in; ones loaded with
                 history don't (no `layout` either: it slid them around whenever the list
                 scrolled or older pages landed above) */}
@@ -132,6 +140,7 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
                 key={r.emoji}
                 initial={{ scale: 0.6, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.94, opacity: 0, transition: { duration: 0.1 } }}
                 className={`reaction${r.mine ? " mine" : ""}`}
                 aria-pressed={r.mine}
                 onClick={() => void toggleReaction(k, m, r.emoji)}
@@ -141,8 +150,9 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
               </motion.button>
             ))}
             </AnimatePresence>
-          </div>
+          </motion.div>
         )}
+        </AnimatePresence>
         <Meta m={m} caps={caps} />
         </div>
         {caps.threads && chat.threaded && <ThreadLink k={k} m={m} replies={replies} open={threadOpen} />}

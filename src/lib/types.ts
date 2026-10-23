@@ -62,6 +62,9 @@ export interface Msg {
   chatId: string;
   id: string;
   sort: number;
+  /** Frontend-only identity and retired provider IDs; never sent to a provider. */
+  uiKey?: string;
+  uiPreviousIds?: string[];
   senderId: string;
   senderName: string;
   /** local path, https URL, or TDLib file id */

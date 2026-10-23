@@ -5,7 +5,7 @@ import { esc, fuzzy, hm, norm, plain } from "../lib/format";
 import { bare, EMOJI, nextEmojiIndex, searchEmoji } from "../lib/micro-ux";
 import { COLORS, COLOR_LABELS } from "../lib/platforms";
 import type { Chat, Msg } from "../lib/types";
-import { forwardMsg, key, loadLatest, loadTopics, openChat, splitKey, useApp, openSearch, type Pop } from "../store";
+import { dismissToast, forwardMsg, key, loadLatest, loadTopics, openChat, splitKey, useApp, openSearch, type Pop, type Toast } from "../store";
 import { removeAccount, renameAccount } from "../App";
 import { startWizard } from "../views/Wizard";
 import { ChatAvatar, PersonAvatar } from "../ui/Avatar";
@@ -622,23 +622,39 @@ function Toasts() {
   return (
     <div className="toast-stack" role="status" aria-live="polite" aria-atomic="false">
       <AnimatePresence>
-        {toasts.map((t) => (
-          <motion.div
-            key={t.id}
-            layout
-            className={`toast ${t.icon === "circle-alert" ? "error" : t.icon === "info" ? "info" : "ok"}`}
-            role="status"
-            initial={{ opacity: 0, y: 12, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 6, transition: { duration: 0.15 } }}
-          >
-            <Icon name={t.icon} />
-            <div className="toast-body">{t.text}</div>
-          </motion.div>
-        ))}
+        {toasts.map(t => <ToastItem key={t.id} value={t} />)}
       </AnimatePresence>
     </div>
   );
+}
+
+function ToastItem({ value: t }: { value: Toast }) {
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const remaining = useRef(Math.min(10000, Math.max(t.icon === "circle-alert" ? 8000 : 2800, t.text.length * 55)));
+  useEffect(() => {
+    if (hovered || focused) return;
+    const started = Date.now();
+    const timer = setTimeout(() => dismissToast(t.id), remaining.current);
+    return () => { clearTimeout(timer); remaining.current = Math.max(0, remaining.current - (Date.now() - started)); };
+  }, [t.id, hovered, focused]);
+  const close = (root: HTMLElement) => {
+    const restoreFocus = root.contains(document.activeElement);
+    dismissToast(t.id);
+    if (restoreFocus) requestAnimationFrame(() => {
+      const next = [...document.querySelectorAll<HTMLButtonElement>(".toast-dismiss")].find(button => !root.contains(button));
+      (next ?? document.querySelector<HTMLTextAreaElement>("#composer-input"))?.focus();
+    });
+  };
+  return <motion.div layout className={`toast ${t.icon === "circle-alert" ? "error" : t.icon === "info" ? "info" : "ok"}`}
+    initial={{ opacity: 0, y: 8, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }}
+    exit={{ opacity: 0, y: 4, transition: { duration: 0.12 } }}
+    onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
+    onFocusCapture={() => setFocused(true)} onBlurCapture={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false); }}
+    onKeyDown={e => { if (e.key === "Escape") { e.stopPropagation(); close(e.currentTarget); } }}>
+    <Icon name={t.icon} /><div className="toast-body">{t.text}</div>
+    <button className="tool-btn icon-only toast-dismiss" aria-label="Đóng thông báo" onClick={e => close(e.currentTarget.parentElement!)}><Icon name="x" /></button>
+  </motion.div>;
 }
 
 /** [data-tip] + optional [data-kbd] → one glass tooltip, like the prototype. */

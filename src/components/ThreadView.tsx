@@ -8,6 +8,9 @@ import { MessageItem } from "./Message";
 import { JumpBottom, TranslateAllButton, useViewportTranslate } from "./Conversation";
 import { useStickyScroll } from "./useStickyScroll";
 import { SummaryButton, SummaryCard } from "./Summary";
+import { useMessageArrivals } from "./useMessageArrivals";
+import { messageRenderKey } from "../lib/message-identity";
+import { DelayedLoading } from "./DelayedLoading";
 
 /** A Google Chat thread in its own workspace tab: root, replies, and a composer that answers in-thread. */
 export function ThreadView({ tab }: { tab: string }) {
@@ -19,6 +22,7 @@ export function ThreadView({ tab }: { tab: string }) {
   const muted = useApp((s) => (meta ? !!s.mutedThreads[`${meta.chatKey}|${meta.threadId}`] : false));
   const jumpTo = useApp((s) => s.jumpTo);
   const box = useRef<HTMLDivElement>(null);
+  const arrival = useMessageArrivals(list, fresh);
 
   const root = list?.find((m) => m.id === meta?.rootId);
   // a Telegram topic is a plain timeline of its messages; a Google Chat thread is root + replies
@@ -33,7 +37,8 @@ export function ThreadView({ tab }: { tab: string }) {
   useEffect(() => {
     if (meta && last !== undefined) seenThread(meta.chatKey, meta.threadId, last);
   }, [meta?.chatKey, meta?.threadId, last]);
-  const scroll = useStickyScroll(box, replies[replies.length - 1]?.id ?? root?.id);
+  const lastShown = replies[replies.length - 1] ?? root;
+  const scroll = useStickyScroll(box, lastShown ? messageRenderKey(lastShown) : undefined);
   useEffect(() => {
     scroll.stick.current = true;
   }, [tab]);
@@ -41,8 +46,7 @@ export function ThreadView({ tab }: { tab: string }) {
     if (!jumpTo) return;
     const el = document.getElementById(`m-${jumpTo}`);
     if (el && box.current?.contains(el)) {
-      scroll.release();
-      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      scroll.toMessage(el);
       el.classList.remove("flash");
       void el.offsetWidth;
       el.classList.add("flash");
@@ -99,17 +103,17 @@ export function ThreadView({ tab }: { tab: string }) {
               <MessageItem k={meta.chatKey} tab={tab} m={root} chat={chat} caps={caps} first last fresh={false} threadOpen={false} />
             </div>
           ) : !meta.error ? (
-            <div className="section-veil on" role="status"><span className="veil-spinner" /><span>Đang tải luồng trả lời…</span></div>
+            <DelayedLoading label="Đang tải luồng trả lời…" />
           ) : null}
           {!meta.topic && <div className="day-sep" role="separator"><span>{replies.length ? `${replies.length} trả lời` : "Chưa có trả lời"}</span></div>}
-          {meta.topic && !replies.length && !meta.error && <div className="section-veil on" role="status"><span className="veil-spinner" /><span>Đang tải chủ đề…</span></div>}
+          {meta.topic && !replies.length && !meta.error && <DelayedLoading label="Đang tải chủ đề…" />}
           {replies.map((m, i) => {
             const prev = replies[i - 1];
             const next = replies[i + 1];
             const same = (a?: typeof m, b?: typeof m) => !!a && !!b && a.senderId === b.senderId && Math.abs(a.ts - b.ts) < 5 * 60e3;
             return (
               <MessageItem
-                key={m.id}
+                key={messageRenderKey(m)}
                 k={meta.chatKey}
                 tab={tab}
                 m={m}
@@ -117,7 +121,7 @@ export function ThreadView({ tab }: { tab: string }) {
                 caps={caps}
                 first={!same(prev, m)}
                 last={!same(m, next)}
-                fresh={!!fresh[m.id]}
+                fresh={arrival(m)}
                 threadOpen={false}
               />
             );

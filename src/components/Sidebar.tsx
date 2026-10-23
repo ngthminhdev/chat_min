@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, Reorder, useDragControls } from "motion/react";
 import { api } from "../lib/bridge";
 import { fuzzy, hm, listTime, norm, plain } from "../lib/format";
@@ -11,6 +11,7 @@ import {
 } from "../store";
 import { ChatAvatar } from "../ui/Avatar";
 import { Glyph, Icon } from "../ui/Icon";
+import { TypingIndicator } from "./TypingIndicator";
 
 /** Rows slide only while the user drags. Otherwise collapsing a section makes every
  *  Reorder.Item around it run a layout animation: scale-squished text, siblings jumping. */
@@ -35,6 +36,28 @@ export function Sidebar() {
   const total = totalUnread(chats);
   const ordered = orderedAccounts(accounts, order);
   const accDrag = useDragAnim();
+  useEffect(() => {
+    const off = useApp.subscribe((state, previous) => {
+      if (state.active !== previous.active || state.route !== previous.route || state.chats !== previous.chats ||
+          state.leftCollapsed !== previous.leftCollapsed || state.pop !== previous.pop || state.dialog !== previous.dialog ||
+          state.palette !== previous.palette || state.query !== previous.query || state.filter !== previous.filter || state.collapsed !== previous.collapsed) hoverOff();
+    });
+    document.addEventListener("scroll", hoverOff, true);
+    document.addEventListener("pointerdown", hoverOff, true);
+    document.addEventListener("keydown", hoverOff, true);
+    document.addEventListener("visibilitychange", hoverOff);
+    window.addEventListener("resize", hoverOff);
+    window.addEventListener("blur", hoverOff);
+    return () => {
+      off(); hoverOff();
+      document.removeEventListener("scroll", hoverOff, true);
+      document.removeEventListener("pointerdown", hoverOff, true);
+      document.removeEventListener("keydown", hoverOff, true);
+      document.removeEventListener("visibilitychange", hoverOff);
+      window.removeEventListener("resize", hoverOff);
+      window.removeEventListener("blur", hoverOff);
+    };
+  }, []);
 
   return (
     <aside className="sidebar" aria-label="Hội thoại">
@@ -455,16 +478,26 @@ function removeItems(k: string, c: Chat): MenuItem[] {
 
 // hover preview: rest on a row ~0.5s → the last messages of that chat beside the sidebar
 let hoverT: ReturnType<typeof setTimeout> | undefined;
-function hoverOn(k: string, el: HTMLElement) {
+let hoverCandidate: { el: HTMLElement; x: number; y: number } | null = null;
+function hoverOn(k: string, el: HTMLElement, x: number, y: number) {
+  if (useApp.getState().hoverPeek?.k === k) return;
+  if (hoverCandidate?.el === el && Math.hypot(x - hoverCandidate.x, y - hoverCandidate.y) < 6) return;
   clearTimeout(hoverT);
+  hoverCandidate = { el, x, y };
+  const before = el.getBoundingClientRect();
   hoverT = setTimeout(() => {
     const r = el.getBoundingClientRect();
+    const state = useApp.getState();
+    if (!el.isConnected || !el.matches(":hover") || document.hidden || !document.hasFocus() ||
+        Math.abs(r.top - before.top) > 1 || Math.abs(r.left - before.left) > 1 || state.route !== "shell" ||
+        state.leftCollapsed || state.pop || state.dialog || state.palette) return;
     useApp.setState({ hoverPeek: { k, x: r.right + 8, y: r.top } });
     if (!useApp.getState().msgs[k]) void loadLatest(k);
   }, 500);
 }
 function hoverOff() {
   clearTimeout(hoverT);
+  hoverCandidate = null;
   if (useApp.getState().hoverPeek) useApp.setState({ hoverPeek: null });
 }
 
@@ -522,15 +555,21 @@ interface RowProps {
 
 const ChatRow = memo(function ChatRow({ chat: c, k, active, draft, typing, expanded, platform }: RowProps) {
   const rail = useApp((s) => s.leftCollapsed);
+  const unreadBefore = useRef(c.unread);
+  const [pulse, setPulse] = useState(0);
+  useEffect(() => {
+    if (c.unread > unreadBefore.current) setPulse(c.unread);
+    unreadBefore.current = c.unread;
+  }, [c.unread]);
   let preview: React.ReactNode =
     (c.previewFrom && c.kind !== "dm") || c.previewFrom === "Bạn" ? `${c.previewFrom}: ${c.preview}` : c.preview || "Chưa có tin nhắn";
   if (draft.trim()) preview = <><span className="draft-label">Nháp:</span> {draft}</>;
-  else if (typing) preview = <span className="typing-label">{c.kind === "dm" || !typing.trim() ? "" : `${typing.split(" ")[0]} `}đang gõ…</span>;
+  else if (typing) preview = <span className="typing-label"><TypingIndicator compact label={`${c.kind === "dm" || !typing.trim() ? "" : `${typing.split(" ")[0]} `}đang gõ`} /></span>;
   return (
     <div className={`chat-row-wrap${expanded ? " expanded" : ""}`}>
       <button
         className={`chat-row${active ? " active" : ""}${c.unread ? " unread" : ""}`}
-        aria-label={`${c.title}${c.unread ? `, ${c.unread} chưa đọc` : ""}`}
+        aria-label={`${c.title}${c.unread ? `, ${c.unread} chưa đọc` : ""}${typing && !draft.trim() ? ", đang gõ" : ""}`}
         data-tip={rail ? `${c.title}${c.unread ? ` · ${c.unread} chưa đọc` : ""}` : undefined}
         onClick={() => {
           hoverOff();
@@ -538,7 +577,7 @@ const ChatRow = memo(function ChatRow({ chat: c, k, active, draft, typing, expan
           if (active) useApp.setState((s) => ({ toLatest: s.toLatest + 1 }));
           void openChat(k);
         }}
-        onMouseEnter={(e) => !active && !rail && hoverOn(k, e.currentTarget)}
+        onPointerMove={(e) => e.pointerType !== "touch" && !active && !rail && hoverOn(k, e.currentTarget, e.clientX, e.clientY)}
         onMouseLeave={hoverOff}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -555,10 +594,13 @@ const ChatRow = memo(function ChatRow({ chat: c, k, active, draft, typing, expan
             <span className="time">{listTime(c.lastTs)}</span>
           </span>
           <span className="line">
-            <span className="preview">{preview}</span>
+            <span className="preview"><AnimatePresence initial={false} mode="wait">
+              <motion.span className="preview-state" key={draft.trim() ? "draft" : typing ? "typing" : "message"}
+                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.08 }}>{preview}</motion.span>
+            </AnimatePresence></span>
             {c.mention && <Icon name="at-sign" className="mention-ic" />}
             {c.unread > 0 && (
-              <span key={c.unread} className={`badge ${c.muted ? "idle" : "unread"} pop`}>
+              <span key={c.unread} className={`badge ${c.muted ? "idle" : "unread"}${pulse === c.unread ? " pop" : ""}`}>
                 {c.unread > 99 ? "99+" : c.unread}
               </span>
             )}

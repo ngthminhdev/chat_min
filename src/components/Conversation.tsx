@@ -11,6 +11,10 @@ import { Composer } from "./Composer";
 import { MessageItem } from "./Message";
 import { SummaryButton, SummaryCard } from "./Summary";
 import { useStickyScroll } from "./useStickyScroll";
+import { useMessageArrivals } from "./useMessageArrivals";
+import { messageRenderKey } from "../lib/message-identity";
+import { TypingIndicator } from "./TypingIndicator";
+import { DelayedLoading } from "./DelayedLoading";
 import { langLabel, toggleAutoTranslate, translateMissing } from "../ai";
 
 const HEALTH_MSG: Record<string, string> = {
@@ -159,6 +163,7 @@ function MessageList({ k }: { k: string }) {
   const jumpTo = useApp((s) => s.jumpTo);
   const caps = capsOf(k);
   const box = useRef<HTMLDivElement>(null);
+  const arrival = useMessageArrivals(list, fresh);
 
   // threaded spaces show thread starters with their replies folded underneath; a thread
   // whose starter isn't loaded (older page, deleted) is led by its earliest reply instead
@@ -180,7 +185,8 @@ function MessageList({ k }: { k: string }) {
 
   useViewportTranslate(box, k, k, visible);
 
-  const scroll = useStickyScroll(box, visible[visible.length - 1]?.id, () => void loadOlder(k));
+  const lastVisible = visible[visible.length - 1];
+  const scroll = useStickyScroll(box, lastVisible ? messageRenderKey(lastVisible) : undefined, () => void loadOlder(k));
   // back at the newest message: what arrived meanwhile is now seen
   const onScroll = () => {
     scroll.onScroll();
@@ -197,8 +203,7 @@ function MessageList({ k }: { k: string }) {
     if (!jumpTo) return;
     const el = document.getElementById(`m-${jumpTo}`);
     if (el) {
-      scroll.release();
-      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      scroll.toMessage(el);
       el.classList.remove("flash");
       void el.offsetWidth;
       el.classList.add("flash");
@@ -214,10 +219,7 @@ function MessageList({ k }: { k: string }) {
   let body: React.ReactNode;
   if (!list) {
     body = (
-      <div className="section-veil on" role="status">
-        <span className="veil-spinner" />
-        <span>Đang tải tin nhắn…</span>
-      </div>
+      <DelayedLoading label="Đang tải tin nhắn…" />
     );
   } else if (!visible.length) {
     body = err ? (
@@ -250,7 +252,7 @@ function MessageList({ k }: { k: string }) {
             !!a && !!b && a.kind !== "service" && b.kind !== "service" && a.senderId === b.senderId && a.outgoing === b.outgoing && Math.abs(a.ts - b.ts) < 5 * 60e3 && dayKey(a.ts) === dayKey(b.ts);
           const showUnread = mark && m.sort === mark.sort;
           return (
-            <Fragment key={m.id}>
+            <Fragment key={messageRenderKey(m)}>
               {newDay && (
                 <div className="day-sep" role="separator">
                   <span>{dayLabel(m.ts)}</span>
@@ -268,7 +270,7 @@ function MessageList({ k }: { k: string }) {
                 caps={caps}
                 first={!group(prev, m) || !!showUnread || newDay}
                 last={!group(m, next)}
-                fresh={!!fresh[m.id]}
+                fresh={arrival(m)}
                 replies={m.threadId ? replies[m.threadId] : undefined}
                 threadOpen={!!m.threadId && threadTabs.includes(threadTabKey(k, m.threadId))}
               />
@@ -279,8 +281,7 @@ function MessageList({ k }: { k: string }) {
           {caps.typing && typing?.until ? (
             <motion.div className="typing" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
               <PersonAvatar name={typing.who || chat?.title || "?"} size="sm" accountId={chat?.accountId} photo={chat?.kind === "dm" ? chat.photo || chat.photoRef : ""} />
-              <span className="dots" aria-hidden="true"><i /><i /><i /></span>
-              <span>{typing.who || chat?.title} đang gõ…</span>
+              <TypingIndicator label={`${typing.who || chat?.title} đang gõ`} />
             </motion.div>
           ) : null}
         </AnimatePresence>
