@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { dayKey, dayLabel, fmtCount } from "../lib/format";
 import type { Msg } from "../lib/types";
 import { capsOf, healthOf, loadLatest, loadOlder, markRead, splitKey, threadTabKey, threadUnread, toast, useApp, openSearch } from "../store";
-import { api } from "../lib/bridge";
+import { api, openUrl } from "../lib/bridge";
 import { startWizard } from "../views/Wizard";
 import { ChatAvatar, PersonAvatar } from "../ui/Avatar";
 import { Icon } from "../ui/Icon";
@@ -318,7 +318,7 @@ function WebConversation({ chatKey }: { chatKey: string }) {
   const id = chat?.accountId ?? "";
   useEffect(() => {
     const el = host.current;
-    if (!el || !id) return;
+    if (!el || !id || isMobile) return;
     if (covered) {
       void api.webHide(id);
       return;
@@ -338,6 +338,18 @@ function WebConversation({ chatKey }: { chatKey: string }) {
     };
   }, [id, covered]);
   if (!chat) return null;
+  // phone: no child webview in Tauri Android — hand the site to the system (its app, if installed)
+  if (isMobile) return (
+    <div className="content empty">
+      <div className="conv-empty">
+        <span className="ring"><Icon name="external-link" /></span>
+        <strong>{chat.title} mở bằng ứng dụng riêng</strong>
+        <p>Trên điện thoại, {account?.name ?? chat.title} dùng app hoặc trình duyệt của máy. Tin nhắn không hiện trong ChatMin.</p>
+        <button className="tool-btn primary" onClick={() => void openUrl(chat.description)}><Icon name="external-link" /> Mở {chat.title}</button>
+        <button className="tool-btn" onClick={showMobileList}><Icon name="chevron-left" /> Về danh sách</button>
+      </div>
+    </div>
+  );
   return (
     <div className="content web-content">
       <div className="conv-head">
