@@ -24,6 +24,8 @@ sed -i '' 's/^\([[:space:]]*\)targetSdk = 3[6-9]$/\1targetSdk = 35/' src-tauri/g
 M=src-tauri/gen/android/app/src/main/java/com/chatmin/app/MainActivity.kt
 cp scripts/android/MainActivity.kt "$M"
 cp scripts/android/GoogleAuthPlugin.kt src-tauri/gen/android/app/src/main/java/com/chatmin/app/GoogleAuthPlugin.kt
+# launcher icons: `tauri android init` leaves its placeholder; ours live in src-tauri/icons/android
+cp -R src-tauri/icons/android/. src-tauri/gen/android/app/src/main/res/
 python3 - <<'PY'
 from pathlib import Path
 p = Path('src-tauri/gen/android/app/build.gradle.kts')
