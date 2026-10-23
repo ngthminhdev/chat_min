@@ -142,3 +142,8 @@ Spec: `docs/superpowers/specs/2026-10-22-chatmin-design.md`. Prototype export: `
 - `Info.plist` `NSAppSleepDisabled` (App Nap kéo dài poll khi cửa sổ ẩn). App active (click thông báo, ⌘Tab, Dock) mà cửa sổ ẩn → hiện lại (`show_on_activate`, NSApplicationDidBecomeActiveNotification). Phiên hết hạn → thông báo macOS "cần đăng nhập lại".
 - Settings → Thông báo → "Gửi thông báo thử". Log stderr: `[recv] <platform> +<ms> <kind> [muted] [reply] rang=<bool>` (không tên/nội dung), `[notify] shown`.
 - Telegram: TDLib chỉ nhận live update của supergroup/channel khi chat "open" → `Tg::watch` mở ngầm ≤30 nhóm/kênh bật tiếng (cập nhật 5 phút; `set_open` không close chat đang watch). Google Chat lỗi tạm thời (500 INTERNAL): bỏ qua space lỗi, thử lại sau 3s, chỉ báo offline sau 3 lần liên tiếp.
+
+## 2026-10-23 (tối) — GIF gửi đi + sheet chuyển tiếp
+- GIF gửi đi không chạy: `.gif` đi đường `InputMessageDocument` (đúng, TDLib tự nhận là animation), server trả `MessageAnimation` mime `video/mp4` nhưng TDLib giữ file `.gif` gốc làm bản local → `<video src=x.gif>` lỗi, chỉ thấy poster. `MediaView` giờ render path `.gif` bằng `<img>`.
+- Chuyển tiếp: palette chọn chat → state `forward` → `ForwardSheet` (Overlays.tsx): preview tin, chat đích (nút Đổi mở lại palette), chọn Chủ đề (TG forum, `loadTopics`) / Luồng (GChat space, từ `msgs` đã tải — `loadLatest` nếu chưa), ô "Nhắn kèm" gửi trước thành tin riêng (giống Telegram), ⌘↵ gửi, Esc đóng. `forwardMsg(m, to, {comment, threadId})`; Rust `forward` nhận `topic` → `forward_messages(chat, Some(MessageTopicForum))`.
+- Chưa verify bằng mắt (không build). Working tree lúc đó còn WIP motion-polish của session khác (Conversation/ThreadView/Sidebar/useStickyScroll/message-identity…) — KHÔNG thuộc 2 commit này.
