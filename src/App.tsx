@@ -4,7 +4,7 @@ import { api, openUrl } from "./lib/bridge";
 import { PLATFORMS } from "./lib/platforms";
 import { themeBase } from "./lib/themes";
 import {
-  boot, chatKeyOf, closeTab, confirmDialog, isThreadTab, cycleTab, jumpUnread, markRead, promptDialog, toast, totalUnread, useApp,
+  boot, chatKeyOf, closeTab, confirmDialog, isThreadTab, cycleTab, jumpUnread, markRead, promptDialog, toast, useApp, DEFAULT_NOTIFY,
   openChat, openSearch,
 } from "./store";
 import { Titlebar } from "./components/Titlebar";
@@ -30,7 +30,6 @@ export default function App() {
   const prefs = useApp((s) => s.prefs);
   const left = useApp((s) => s.leftCollapsed);
   const right = useApp((s) => s.rightCollapsed);
-  const unread = useApp((s) => totalUnread(s.chats));
   const threadTab = useApp((s) => (isThreadTab(s.active) ? s.active : null));
   const [bootError, setBootError] = useState("");
   const retryBoot = () => {
@@ -82,9 +81,12 @@ export default function App() {
     cls.toggle("inspector-unavailable", tabPage);
   }, [left, right, page, tabPage]);
 
+  // Rust sends the notifications (and keeps the Dock badge): it needs every account's settings
+  const notif = useApp((s) => s.notif);
+  const accountIds = useApp((s) => s.accounts.map((a) => a.id).join("|"));
   useEffect(() => {
-    void api.setBadge(unread);
-  }, [unread]);
+    void api.notifyPrefs(Object.fromEntries(useApp.getState().accounts.map((a) => [a.id, { ...DEFAULT_NOTIFY, ...notif[a.id] }])));
+  }, [notif, accountIds]);
 
   useGlobalHandlers();
 

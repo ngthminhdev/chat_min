@@ -221,6 +221,7 @@ impl GChat {
         sync(1, "run", "[chats] listing spaces");
         let mut tick: u64 = 0;
         let mut backoff = 0u64;
+        let mut fails = 0u32;
         let mut first = true;
         loop {
             let (stopped, focus) = self.accs.lock().unwrap().get(account_id).map(|a| (a.stopped, a.focus.clone())).unwrap_or((true, None));
@@ -228,7 +229,9 @@ impl GChat {
                 return;
             }
             let res: R<()> = async {
-                if first || tick % 10 == 0 {
+                // ~3s between space scans: how fast a message in any space shows up / rings.
+                // ~50 reads a minute in all, far under the 3000/min Chat API project quota
+                if first || tick % 3 == 0 {
                     let n = self.poll_spaces(core, account_id, first).await?;
                     if first {
                         sync(1, "ok", &format!("[chats] {n} spaces"));
@@ -236,8 +239,11 @@ impl GChat {
                         first = false;
                     }
                 }
+                if tick % 60 == 30 {
+                    self.sync_read(core, account_id).await?;
+                }
                 if let Some(space) = &focus {
-                    if tick % 3 == 0 {
+                    if tick % 2 == 0 {
                         self.fetch_new(core, account_id, space, true).await?;
                     }
                     // edits and reactions don't move createTime: re-read the tail now and then
@@ -250,17 +256,25 @@ impl GChat {
             .await;
             match res {
                 Ok(()) => {
-                    if backoff > 0 || tick == 0 {
+                    if backoff > 0 || fails > 0 || tick == 0 {
                         core.set_health(account_id, "ok", "Đã đồng bộ", 0);
                     }
                     backoff = 0;
+                    fails = 0;
                 }
                 Err(e) => {
                     if first {
                         sync(1, "err", &format!("[chats] {}", String::from(e.clone())));
                     }
+                    fails += 1;
                     backoff = (backoff * 2).clamp(5, 120);
                     match e {
+                        // Google's transient 500s ("INTERNAL"): retry soon, and only call the
+                        // account offline when it keeps happening
+                        ApiErr::Other(m) if !first && fails < 3 => {
+                            eprintln!("[gchat] transient error, retrying: {m}");
+                            backoff = 3;
+                        }
                         ApiErr::Offline => core.set_health(account_id, "offline", "Mất kết nối", 0),
                         ApiErr::Expired => {
                             core.set_health(account_id, "expired", "Phiên hết hạn", 0);
@@ -301,18 +315,24 @@ impl GChat {
             let existing = core.store().chat(account_id, &name).ok().flatten();
             core.put_chat(space_chat(account_id, s, existing.as_ref()));
             let untitled = existing.as_ref().is_some_and(|c| c.kind != "space" && c.title.is_empty());
-            if !untitled && (seen.as_deref() == Some(active.as_str()) || (first && i >= 25 && existing.is_some())) {
-                // untouched since last time, or a cold space on first run: leave for later
+            // on the first scan after launch, compare with the newest message we hold — not
+            // chat.last_ts, which follows lastActiveTime even when nothing was fetched — so a
+            // space that moved while the app was closed is caught up, wherever it ranks
+            let newest = core.store().msgs(account_id, &name, 0, 1).ok().and_then(|v| v.into_iter().next()).map_or(0, |m| m.ts);
+            let caught_up = existing.is_some() && (rfc3339_ms(&active) <= newest || (newest == 0 && i >= 25));
+            if !untitled && (seen.as_deref() == Some(active.as_str()) || (first && caught_up)) {
+                // untouched since last time, or a cold never-opened space on first run: leave for later
                 self.mark_seen(account_id, &name, &active);
                 continue;
             }
-            moved.push((name, active, seen.is_some()));
+            // first scan rings too: notify.rs drops anything older than a few minutes
+            moved.push((name, active, seen.is_some() || first));
         }
         // ponytail: 8 spaces in flight keeps the first sync of ~100 spaces under a minute
         // without tripping Chat API per-user quotas
         for chunk in moved.chunks(8) {
             let jobs = chunk.iter().map(|(name, active, known)| async move {
-                self.fetch_new(core, account_id, name, *known).await?;
+                let complete = self.fetch_new(core, account_id, name, *known).await?;
                 let chat = core.store().chat(account_id, name).ok().flatten();
                 if let Some(mut chat) = chat.filter(|c| c.kind != "space" && c.title.is_empty()) {
                     if let Ok(t) = self.dm_title(core, account_id, name).await {
@@ -321,11 +341,18 @@ impl GChat {
                         core.put_chat(chat);
                     }
                 }
-                self.mark_seen(account_id, name, active);
+                if complete {
+                    self.mark_seen(account_id, name, active);
+                }
                 Ok::<(), ApiErr>(())
             });
             for r in futures::future::join_all(jobs).await {
-                r?;
+                match r {
+                    // a 500 on one space mustn't stall every other space: it stays unseen
+                    // and is retried on the next scan
+                    Err(ApiErr::Other(e)) => eprintln!("[gchat] space skipped this scan: {e}"),
+                    r => r?,
+                }
             }
         }
         let known = core.store().chats().unwrap_or_default();
@@ -337,14 +364,30 @@ impl GChat {
         Ok(n)
     }
 
+    /// Reading on the phone or the web doesn't move lastActiveTime, so a space's unread
+    /// count would stick here: re-read the read state of the spaces that still show unread.
+    async fn sync_read(&self, core: &Arc<Core>, account_id: &str) -> R<()> {
+        let unread: Vec<String> = core.store().chats().unwrap_or_default().into_iter().filter(|c| c.account_id == account_id && c.unread > 0).map(|c| c.id).collect();
+        for space in unread {
+            if let Some(a) = self.accs.lock().unwrap().get_mut(account_id) {
+                a.read.remove(&space);
+            }
+            self.refresh_chat(core, account_id, &space).await?;
+        }
+        Ok(())
+    }
+
     fn mark_seen(&self, account_id: &str, space: &str, active: &str) {
         if let Some(a) = self.accs.lock().unwrap().get_mut(account_id) {
             a.seen.insert(space.into(), active.into());
         }
     }
 
-    /// Messages newer than the newest cached one (or the last 30 for a cold space).
-    async fn fetch_new(&self, core: &Arc<Core>, account_id: &str, space: &str, notify: bool) -> R<()> {
+    /// Messages newer than the newest cached one (or the last 30 for a cold space). Follows
+    /// pages so a burst of more than one page isn't cut off: the space is marked seen after.
+    /// Returns false when the backlog didn't fit: the caller leaves the space unseen so the
+    /// next scan carries on from the newest message saved now.
+    async fn fetch_new(&self, core: &Arc<Core>, account_id: &str, space: &str, notify: bool) -> R<bool> {
         let newest = core.store().msgs(account_id, space, 0, 1).ok().and_then(|v| v.into_iter().next());
         let url = match &newest {
             Some(m) => format!(
@@ -353,9 +396,24 @@ impl GChat {
             ),
             None => format!("{API}/{space}/messages?pageSize=30&orderBy=createTime%20desc&showDeleted=true"),
         };
-        let v = self.api(core, account_id, Method::GET, &url, None).await?;
         let me = self.me(account_id);
-        let mut msgs: Vec<Msg> = v["messages"].as_array().cloned().unwrap_or_default().iter().map(|m| to_msg(account_id, &me, m)).collect();
+        let mut raw: Vec<Value> = vec![];
+        let mut token = String::new();
+        // ponytail: 5 pages (500 messages) per scan; a bigger backlog continues next scan
+        let mut complete = true;
+        for i in 0..5 {
+            let page_url = if token.is_empty() { url.clone() } else { format!("{url}&pageToken={token}") };
+            let v = self.api(core, account_id, Method::GET, &page_url, None).await?;
+            raw.extend(v["messages"].as_array().cloned().unwrap_or_default());
+            match v["nextPageToken"].as_str() {
+                Some(t) if !t.is_empty() && newest.is_some() => {
+                    token = t.to_string();
+                    complete = i < 4;
+                }
+                _ => break,
+            }
+        }
+        let mut msgs: Vec<Msg> = raw.iter().map(|m| to_msg(account_id, &me, m)).collect();
         self.fill_photos(core, account_id, &mut msgs, true).await;
         if !msgs.is_empty() {
             let fresh = newest.is_some() && notify;
@@ -363,7 +421,8 @@ impl GChat {
                 core.put_msg(m.clone(), fresh && !m.outgoing);
             }
         }
-        self.refresh_chat(core, account_id, space).await
+        self.refresh_chat(core, account_id, space).await?;
+        Ok(complete)
     }
 
     async fn fetch_tail(&self, core: &Arc<Core>, account_id: &str, space: &str, n: usize) -> R<()> {

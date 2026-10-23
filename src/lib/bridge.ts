@@ -71,7 +71,9 @@ export const api = {
   /** translate/translate_to/translate_many → string[]; suggest → Suggestion[] */
   aiRun: <T = string>(task: string, texts: string[], me: string, to: string) => call<T[]>("ai_run", { task, texts, me, to }),
   emojiPalette: () => call<void>("emoji_palette"),
-  setBadge: (count: number) => (isTauri ? call<void>("set_badge", { count }) : Promise.resolve()),
+  /** per-account notification settings: Rust decides and sends notifications (notify.rs) */
+  notifyPrefs: (prefs: Record<string, unknown>) => (isTauri ? call<void>("notify_prefs", { prefs }) : Promise.resolve()),
+  notifyTest: () => (isTauri ? call<void>("notify_test") : Promise.resolve()),
 };
 
 export const fileSrc = (path: string) => (isTauri && path && !path.startsWith("data:") ? convertFileSrc(path) : path);
@@ -118,10 +120,3 @@ export async function saveFile(src: string, name: string, ask: boolean): Promise
   return invoke<string>("save_file", { src, name, dest });
 }
 
-export async function notify(title: string, body: string) {
-  if (!isTauri) return;
-  const n = await import("@tauri-apps/plugin-notification");
-  let ok = await n.isPermissionGranted();
-  if (!ok) ok = (await n.requestPermission()) === "granted";
-  if (ok) n.sendNotification({ title, body });
-}

@@ -1,8 +1,7 @@
 import { create } from "zustand";
-import { api, notify, onEvent, saveFile } from "./lib/bridge";
+import { api, onEvent, saveFile } from "./lib/bridge";
 import { plain } from "./lib/format";
 import { PLATFORMS, type Cap } from "./lib/platforms";
-import { createNotificationDeduper } from "./lib/notification-deduper";
 import type { Account, Chat, CoreEvent, Health, Media, Msg, Topic } from "./lib/types";
 import type { IconName } from "./ui/Icon";
 
@@ -305,7 +304,6 @@ function upsert(list: Msg[], m: Msg): Msg[] {
   return next;
 }
 
-const claimNotification = createNotificationDeduper();
 export function applyEvent(e: CoreEvent) {
   switch (e.type) {
     case "accounts": {
@@ -349,10 +347,7 @@ export function applyEvent(e: CoreEvent) {
           return { hidden };
         });
       }
-      const before = get().chats[k];
       set((s) => ({ chats: { ...s.chats, [k]: e.chat } }));
-      // web apps only report a count: tell the user when it grows
-      if (e.chat.kind === "web" && e.chat.unread > (before?.unread ?? 0)) maybeNotifyWeb(k, e.chat.unread);
       // the open chat stays read while it is on screen
       if (e.chat.unread > 0 && isWatching(k)) markRead(k);
       return;
@@ -370,7 +365,6 @@ export function applyEvent(e: CoreEvent) {
     case "message": {
       const k = key(e.msg.accountId, e.msg.chatId);
       const known = get().msgs[k]?.some((m) => m.id === e.msg.id) ?? false;
-      const firstDelivery = claimNotification(e.msg.accountId, e.msg.chatId, e.msg.id);
       if (get().msgs[k]) {
         set((s) => ({
           msgs: { ...s.msgs, [k]: upsert(s.msgs[k], e.msg) },
@@ -378,10 +372,9 @@ export function applyEvent(e: CoreEvent) {
           typing: e.isNew ? { ...s.typing, [k]: { who: "", until: 0 } } : s.typing,
         }));
       }
-      if (e.isNew) {
-        if (firstDelivery && !known) maybeNotify(k, e.msg);
-        if (isWatching(k)) void markRead(k);
-      }
+      // notifications and the Dock badge are decided in Rust (notify.rs): this webview
+      // can be throttled while the window is hidden
+      if (e.isNew && isWatching(k)) void markRead(k);
       return;
     }
     case "messageIdChanged": {
@@ -394,6 +387,10 @@ export function applyEvent(e: CoreEvent) {
       });
       return;
     }
+    case "open":
+      // a notification was clicked (notify.rs)
+      if (get().chats[e.key]) void openChat(e.key);
+      return;
     case "fileProgress":
       set((s) => ({ progress: { ...s.progress, [`${e.accountId}|${e.fileRef}`]: e.pct } }));
       return;
@@ -422,33 +419,6 @@ export function applyEvent(e: CoreEvent) {
 
 /** The user is looking at this chat right now: new messages count as read. */
 const isWatching = (k: string) => chatKeyOf(get().active) === k && get().route === "shell" && document.hasFocus() && !document.hidden;
-
-function quiet(p: NotifyPrefs) {
-  if (!p.quiet) return false;
-  const d = new Date();
-  const now = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-  return p.from <= p.to ? now >= p.from && now < p.to : now >= p.from || now < p.to;
-}
-
-function maybeNotify(k: string, m: Msg) {
-  const chat = get().chats[k];
-  if (!chat || chat.muted || m.outgoing || isWatching(k)) return;
-  const p = get().notif[m.accountId] ?? DEFAULT_NOTIFY;
-  if (!p.enabled || quiet(p) || (p.mentions && !m.mentionsMe)) return;
-  const who = m.senderName || chat.title;
-  const title = chat.kind === "dm" ? who : `${who} · ${chat.title}`;
-  const body = p.preview ? plain(m.text) || (m.media ? m.media.name : "Tin nhắn mới") : "Bạn có tin nhắn mới";
-  void notify(title, body);
-}
-
-function maybeNotifyWeb(k: string, n: number) {
-  const chat = get().chats[k];
-  if (!chat || chat.muted || isWatching(k)) return;
-  const p = get().notif[chat.accountId] ?? DEFAULT_NOTIFY;
-  if (!p.enabled || quiet(p) || p.mentions) return;
-  const name = get().accounts.find((a) => a.id === chat.accountId)?.name ?? chat.title;
-  void notify(name, `${n} tin nhắn chưa đọc`);
-}
 
 // ── chats & messages ────────────────────────────────────────────────────────
 const PAGE = 50;

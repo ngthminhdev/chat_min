@@ -3,6 +3,7 @@ mod gchat;
 mod model;
 mod store;
 mod tg;
+mod notify;
 mod web;
 
 use gchat::GChat;
@@ -49,6 +50,7 @@ pub struct Core {
     pub health: Mutex<HashMap<String, Health>>,
     pub tg: Tg,
     pub gchat: GChat,
+    pub notifier: notify::Notifier,
 }
 
 impl Core {
@@ -83,10 +85,12 @@ impl Core {
             }
         }
         let _ = self.store().put_chat(&chat);
+        self.notifier.track(&self.app, &chat, false);
         self.emit(Event::Chat { chat });
     }
     pub fn remove_chat(&self, account_id: &str, chat_id: &str) {
         let _ = self.store().remove_chat(account_id, chat_id);
+        self.notifier.track(&self.app, &Chat { account_id: account_id.into(), id: chat_id.into(), ..Default::default() }, true);
         self.emit(Event::ChatRemoved { account_id: account_id.into(), chat_id: chat_id.into() });
     }
     pub fn put_msg(&self, msg: Msg, is_new: bool) {
@@ -94,6 +98,28 @@ impl Core {
         // and history loads must agree on whether this ID is a first delivery.
         let first_delivery = self.store().put_msg_if_new(&msg).unwrap_or(false);
         let is_new = is_new && first_delivery && !msg.deleted;
+        if is_new {
+            let (chat, followed) = {
+                let s = self.store();
+                let chat = s.chat(&msg.account_id, &msg.chat_id).ok().flatten();
+                let followed = msg.thread_reply
+                    && !msg.thread_id.is_empty()
+                    && s.thread_msgs(&msg.account_id, &msg.chat_id, &msg.thread_id).is_ok_and(|t| t.iter().any(|m| m.outgoing));
+                (chat, followed)
+            };
+            let rang = self.notifier.message(&self.app, chat.as_ref(), &msg, followed);
+            // how long a message took to reach us (what the polling cadence is tuned by), and
+            // why it did or didn't ring — no names or content
+            let c = chat.as_ref();
+            eprintln!(
+                "[recv] {} +{}ms {}{}{} rang={rang}",
+                msg.account_id.split('-').next().unwrap_or(""),
+                now_ms() - msg.ts,
+                c.map_or("?", |c| c.kind.as_str()),
+                if c.is_some_and(|c| c.muted) { " muted" } else { "" },
+                if msg.thread_reply { " reply" } else { "" },
+            );
+        }
         self.emit(Event::Message { msg, is_new });
     }
     pub fn replace_msg(&self, old_id: &str, msg: Msg) {
@@ -116,7 +142,12 @@ impl Core {
     pub fn set_health(&self, account_id: &str, health: &str, text: &str, until: i64) {
         eprintln!("[health] {account_id} {health} {text}");
         let h = Health { health: health.into(), text: text.into(), until };
-        self.health.lock().unwrap().insert(account_id.into(), h);
+        let was = self.health.lock().unwrap().insert(account_id.into(), h).map(|h| h.health);
+        // with the official apps' alerts turned off, a dead session must not go unnoticed
+        if health == "expired" && was.as_deref() != Some("expired") {
+            let name = self.store().accounts().ok().and_then(|v| v.into_iter().find(|a| a.id == account_id)).map(|a| a.name);
+            notify::alert(&self.app, &format!("{} cần đăng nhập lại", name.as_deref().unwrap_or("Tài khoản")), "ChatMin đã ngừng nhận tin của tài khoản này. Mở Settings → Đăng nhập lại.");
+        }
         self.emit(Event::Health { account_id: account_id.into(), health: health.into(), text: text.into(), until });
     }
 
@@ -168,7 +199,11 @@ impl Core {
             } else if n == 0 {
                 chat.preview = String::new();
             }
+            let grew = n > chat.unread;
             chat.unread = n;
+            if grew {
+                self.notifier.web(&self.app, &chat, n);
+            }
             self.put_chat(chat);
         }
     }
@@ -397,6 +432,31 @@ fn emoji_palette(app: tauri::AppHandle) {
         }
     });
 }
+/// Clicking a notification (or ⌘Tab / the Dock) activates the app, but the window may be
+/// hidden after a close: bring it back whenever the app becomes active, like Slack does.
+#[cfg(target_os = "macos")]
+fn show_on_activate(app: tauri::AppHandle) {
+    use objc2_foundation::{NSNotification, NSNotificationCenter};
+    let block = block2::RcBlock::new(move |_: std::ptr::NonNull<NSNotification>| {
+        if let Some(w) = app.get_webview_window("main") {
+            if !w.is_visible().unwrap_or(true) {
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }
+    });
+    // the observer lives as long as the app: keep it registered by never dropping it
+    let observer = unsafe {
+        NSNotificationCenter::defaultCenter().addObserverForName_object_queue_usingBlock(
+            Some(objc2_app_kit::NSApplicationDidBecomeActiveNotification),
+            None,
+            None,
+            &block,
+        )
+    };
+    std::mem::forget(observer);
+}
+
 /// The newest cached page, instantly: shown while `messages` fetches the live one.
 #[tauri::command]
 fn cached_messages(core: C<'_>, account_id: String, chat_id: String, limit: i64) -> Res<Vec<Msg>> {
@@ -495,6 +555,7 @@ async fn mark_read(core: C<'_>, account_id: String, chat_id: String, msg_ids: Ve
 }
 #[tauri::command]
 async fn set_open(core: C<'_>, account_id: String, chat_id: String, open: bool) -> Res<()> {
+    core.notifier.set_open(&account_id, &chat_id, open);
     if core.platform(&account_id) == "telegram" {
         core.tg.set_open(&account_id, &chat_id, open).await
     } else {
@@ -632,10 +693,12 @@ fn search(core: C, query: String, account_id: Option<String>, chat_id: Option<St
     core.store().search(&query, scope, limit)
 }
 #[tauri::command]
-fn set_badge(app: tauri::AppHandle, count: i64) {
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.set_badge_count(if count > 0 { Some(count) } else { None });
-    }
+fn notify_test(app: tauri::AppHandle) {
+    notify::test(&app);
+}
+#[tauri::command]
+fn notify_prefs(core: C<'_>, prefs: HashMap<String, notify::Prefs>) {
+    core.notifier.set_prefs(prefs);
 }
 
 /// `tgstream://localhost/<account>/<file id>?<mime>`: Telegram videos play while they
@@ -715,8 +778,15 @@ pub fn run() {
                 health: Mutex::new(HashMap::new()),
                 tg: Tg::default(),
                 gchat: GChat::default(),
+                notifier: Default::default(),
             });
             app.manage(core.clone());
+            for c in core.store().chats()? {
+                core.notifier.track(&core.app, &c, false);
+            }
+            #[cfg(target_os = "macos")]
+            show_on_activate(app.handle().clone());
+            notify::on_click(app.handle());
             let accounts = core.store().accounts()?;
             for a in accounts {
                 core.health.lock().unwrap().insert(a.id.clone(), Health { health: "reconnecting".into(), text: "Đang kết nối".into(), until: 0 });
@@ -824,7 +894,8 @@ pub fn run() {
             set_muted,
             download,
             search,
-            set_badge,
+            notify_prefs,
+            notify_test,
         ])
         .build(tauri::generate_context!())
         .expect("error while building ChatMin")

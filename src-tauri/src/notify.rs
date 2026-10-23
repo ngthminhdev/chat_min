@@ -1,0 +1,265 @@
+//! Desktop notifications and the Dock badge, decided in Rust where messages arrive. When
+//! the window is hidden (close only hides it) WebKit throttles or suspends its webview, so
+//! deciding this in JS made alerts late or missing exactly when they matter most.
+use crate::model::{Chat, Msg};
+use serde::Deserialize;
+use std::collections::HashMap;
+use std::sync::Mutex;
+use tauri::{AppHandle, Emitter, Manager};
+#[cfg(not(target_os = "macos"))]
+use tauri_plugin_notification::NotificationExt;
+
+/// Per-account settings, mirrored from the Settings screen (store.ts `NotifyPrefs`).
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Prefs {
+    pub enabled: bool,
+    pub mentions: bool,
+    pub quiet: bool,
+    pub from: String,
+    pub to: String,
+    pub preview: bool,
+}
+
+impl Default for Prefs {
+    fn default() -> Self {
+        Self { enabled: true, mentions: false, quiet: false, from: "22:00".into(), to: "08:00".into(), preview: true }
+    }
+}
+
+impl Prefs {
+    /// "HH:MM" strings compare correctly as text; a window like 22:00–08:00 wraps midnight.
+    fn quiet_at(&self, now: &str) -> bool {
+        self.quiet && if self.from <= self.to { now >= self.from.as_str() && now < self.to.as_str() } else { now >= self.from.as_str() || now < self.to.as_str() }
+    }
+}
+
+/// Messages older than this when they reach us (catch-up after sleep or a reconnect)
+/// update the chat but don't ring.
+const STALE_MS: i64 = 10 * 60 * 1000;
+
+#[derive(Default)]
+pub struct Notifier {
+    prefs: Mutex<HashMap<String, Prefs>>,
+    /// (account id, chat id) open on screen
+    active: Mutex<Option<(String, String)>>,
+    /// unread per chat, muted chats as 0; their sum is the Dock badge
+    unread: Mutex<HashMap<(String, String), i32>>,
+    badge: Mutex<i64>,
+}
+
+impl Notifier {
+    pub fn set_prefs(&self, prefs: HashMap<String, Prefs>) {
+        *self.prefs.lock().unwrap() = prefs;
+    }
+
+    pub fn set_open(&self, account_id: &str, chat_id: &str, open: bool) {
+        let mut a = self.active.lock().unwrap();
+        if open {
+            *a = Some((account_id.into(), chat_id.into()));
+        } else if a.as_ref().is_some_and(|(x, y)| x == account_id && y == chat_id) {
+            *a = None;
+        }
+    }
+
+    fn watching(&self, app: &AppHandle, account_id: &str, chat_id: &str) -> bool {
+        let on_screen = self.active.lock().unwrap().as_ref().is_some_and(|(a, c)| a == account_id && c == chat_id);
+        on_screen && app.get_webview_window("main").is_some_and(|w| w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false))
+    }
+
+    /// Whether a just-arrived message should ring, given its chat and the account's prefs.
+    /// Google Chat spaces ring like Chat's own default ("All"): @mentions, the first message
+    /// of a thread, and replies in threads you've posted in — not every reply everywhere.
+    fn rings(p: &Prefs, chat: &Chat, m: &Msg, followed: bool, watching: bool, now_ms: i64, now_hm: &str) -> bool {
+        // Telegram still rings for @mentions and replies to you in a muted chat (its default)
+        let muted = chat.muted && !(m.mentions_me && chat.account_id.starts_with("tg-"));
+        if m.outgoing || m.deleted || muted || watching || now_ms - m.ts > STALE_MS {
+            return false;
+        }
+        if chat.kind == "space" && m.thread_reply && !m.mentions_me && !followed {
+            return false;
+        }
+        p.enabled && !p.quiet_at(now_hm) && (!p.mentions || m.mentions_me)
+    }
+
+    /// `followed`: you have posted in this message's thread.
+    /// Returns whether it rang.
+    pub fn message(&self, app: &AppHandle, chat: Option<&Chat>, m: &Msg, followed: bool) -> bool {
+        let Some(chat) = chat else { return false };
+        let now_hm = chrono::Local::now().format("%H:%M").to_string();
+        let p = self.prefs.lock().unwrap().get(&m.account_id).cloned().unwrap_or_default();
+        let watching = self.watching(app, &m.account_id, &m.chat_id);
+        if !Self::rings(&p, chat, m, followed, watching, crate::now_ms(), &now_hm) {
+            return false;
+        }
+        let who = if m.sender_name.is_empty() { chat.title.clone() } else { m.sender_name.clone() };
+        let title = if chat.kind == "dm" { who } else { format!("{who} · {}", chat.title) };
+        let body = if p.preview {
+            let t = crate::tg::plain(&m.text, m.media.as_ref());
+            if t.is_empty() { "Tin nhắn mới".into() } else { t }
+        } else {
+            "Bạn có tin nhắn mới".into()
+        };
+        show(app, &title, &body, &format!("{}|{}", m.account_id, m.chat_id));
+        true
+    }
+
+    /// Messenger / Zalo only report a count (from the page title).
+    pub fn web(&self, app: &AppHandle, chat: &Chat, grew_to: i32) {
+        if chat.muted || self.watching(app, &chat.account_id, &chat.id) {
+            return;
+        }
+        let p = self.prefs.lock().unwrap().get(&chat.account_id).cloned().unwrap_or_default();
+        let now_hm = chrono::Local::now().format("%H:%M").to_string();
+        if p.enabled && !p.mentions && !p.quiet_at(&now_hm) {
+            show(app, &chat.title, &format!("{grew_to} tin nhắn chưa đọc"), &format!("{}|{}", chat.account_id, chat.id));
+        }
+    }
+
+    /// Keeps the Dock badge equal to the unread total of unmuted chats.
+    pub fn track(&self, app: &AppHandle, chat: &Chat, removed: bool) {
+        let n = if removed || chat.muted { 0 } else { chat.unread.max(0) };
+        let total: i64 = {
+            let mut u = self.unread.lock().unwrap();
+            u.insert((chat.account_id.clone(), chat.id.clone()), n);
+            u.values().map(|&v| v as i64).sum()
+        };
+        let mut badge = self.badge.lock().unwrap();
+        if *badge != total {
+            *badge = total;
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_badge_count(if total > 0 { Some(total) } else { None });
+            }
+        }
+    }
+}
+
+/// Account-level problems (session expired): always shown, whatever the message settings.
+pub fn alert(app: &AppHandle, title: &str, body: &str) {
+    show(app, title, body, "");
+}
+
+/// Settings → "Gửi thông báo thử": the same path a message takes, minus the rules.
+pub fn test(app: &AppHandle) {
+    show(app, "ChatMin", "Thông báo đang hoạt động. Bấm vào để mở ChatMin.", "");
+}
+
+/// Brings the window up and opens `chat` ("account|chat"; empty: just the window).
+fn open(app: &AppHandle, chat: &str) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+    if !chat.is_empty() {
+        let _ = app.emit("chatmin", crate::model::Event::Open { key: chat.into() });
+    }
+}
+
+/// Clicking a notification opens its chat. Elsewhere the plugin reports the click; on macOS
+/// it can't (notify-rust sends without wait_for_click), so `show` handles macOS itself.
+pub fn on_click(app: &AppHandle) {
+    #[cfg(not(target_os = "macos"))]
+    {
+        let handle = app.clone();
+        let _ = app.notification().on_action(move |a| {
+            if a.action_id() == "tap" {
+                let key = a.notification().and_then(|n| n.extra().get("chat")).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                open(&handle, &key);
+            }
+        });
+    }
+    #[cfg(target_os = "macos")]
+    let _ = mac_notification_sys::set_application(&app.config().identifier);
+}
+
+/// Notifications still waiting for a click on macOS, one small thread each. An ignored
+/// notification keeps its thread until it leaves Notification Center, so past this many
+/// they're sent without waiting (a click then only brings ChatMin forward).
+#[cfg(target_os = "macos")]
+static WAITING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+#[cfg(target_os = "macos")]
+const MAX_WAITING: usize = 200;
+
+/// `chat`: "account|chat", the key the frontend opens when the notification is clicked.
+fn show(app: &AppHandle, title: &str, body: &str, chat: &str) {
+    #[cfg(target_os = "macos")]
+    {
+        use std::sync::atomic::Ordering::SeqCst;
+        let (app, title, body, chat) = (app.clone(), title.to_string(), body.to_string(), chat.to_string());
+        let wait = WAITING.fetch_add(1, SeqCst) < MAX_WAITING;
+        let spawned = std::thread::Builder::new().name("notify".into()).stack_size(128 * 1024).spawn(move || {
+            let mut n = mac_notification_sys::Notification::new();
+            n.sound(mac_notification_sys::Sound::Default).wait_for_click(wait);
+            let res = mac_notification_sys::send_notification(&title, None, &body, Some(&n));
+            WAITING.fetch_sub(1, SeqCst);
+            match res {
+                Ok(mac_notification_sys::NotificationResponse::Click) => {
+                    eprintln!("[notify] clicked");
+                    let h = app.clone();
+                    let _ = app.run_on_main_thread(move || open(&h, &chat));
+                }
+                Ok(_) => {}
+                Err(e) => eprintln!("[notify] {e}"),
+            }
+        });
+        match spawned {
+            Ok(_) => eprintln!("[notify] shown"),
+            Err(e) => {
+                WAITING.fetch_sub(1, SeqCst);
+                eprintln!("[notify] {e}");
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    match app.notification().builder().title(title).body(body).sound("default").extra("chat", chat).show() {
+        Ok(()) => eprintln!("[notify] shown"),
+        Err(e) => eprintln!("[notify] {e}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn who_rings() {
+        let now = 1_000_000_000_000;
+        let p = Prefs::default();
+        let space = Chat { kind: "space".into(), ..Default::default() };
+        let dm = Chat { kind: "dm".into(), ..Default::default() };
+        let msg = |f: fn(&mut Msg)| {
+            let mut m = Msg { ts: now - 1000, ..Default::default() };
+            f(&mut m);
+            m
+        };
+        let ring = |p: &Prefs, c: &Chat, m: &Msg, followed: bool| Notifier::rings(p, c, m, followed, false, now, "12:00");
+        assert!(ring(&p, &dm, &msg(|_| {}), false));
+        assert!(ring(&p, &dm, &msg(|m| m.thread_reply = true), false), "DMs ring for everything");
+        assert!(ring(&p, &space, &msg(|_| {}), false), "first message of a thread");
+        assert!(!ring(&p, &space, &msg(|m| m.thread_reply = true), false), "reply in a thread you're not in");
+        assert!(ring(&p, &space, &msg(|m| m.thread_reply = true), true), "reply in a thread you posted in");
+        assert!(ring(&p, &space, &msg(|m| { m.thread_reply = true; m.mentions_me = true }), false));
+        assert!(!ring(&p, &dm, &msg(|m| m.outgoing = true), false));
+        assert!(!ring(&p, &dm, &Msg { ts: now - STALE_MS - 1, ..Default::default() }, false), "catch-up after sleep stays silent");
+        assert!(!ring(&p, &Chat { muted: true, ..dm.clone() }, &msg(|_| {}), false));
+        let muted_tg = Chat { muted: true, account_id: "tg-1".into(), kind: "group".into(), ..Default::default() };
+        assert!(ring(&p, &muted_tg, &msg(|m| m.mentions_me = true), false), "Telegram: mention in a muted group");
+        assert!(!ring(&p, &muted_tg, &msg(|_| {}), false));
+        assert!(!ring(&p, &Chat { muted: true, account_id: "gc-1".into(), ..space.clone() }, &msg(|m| m.mentions_me = true), false), "muted space stays silent");
+        assert!(!Notifier::rings(&p, &dm, &msg(|_| {}), false, true, now, "12:00"), "chat on screen");
+        let only = Prefs { mentions: true, ..Default::default() };
+        assert!(!ring(&only, &dm, &msg(|_| {}), false) && ring(&only, &dm, &msg(|m| m.mentions_me = true), false));
+        assert!(!ring(&Prefs { enabled: false, ..Default::default() }, &dm, &msg(|_| {}), false));
+        assert!(!Notifier::rings(&Prefs { quiet: true, ..Default::default() }, &dm, &msg(|_| {}), false, false, now, "23:00"));
+    }
+
+    #[test]
+    fn quiet_hours() {
+        let p = Prefs { quiet: true, ..Default::default() }; // 22:00–08:00
+        assert!(p.quiet_at("23:30") && p.quiet_at("07:59") && !p.quiet_at("08:00") && !p.quiet_at("12:00"));
+        let day = Prefs { quiet: true, from: "12:00".into(), to: "13:00".into(), ..Default::default() };
+        assert!(day.quiet_at("12:30") && !day.quiet_at("13:00") && !day.quiet_at("11:59"));
+        assert!(!Prefs::default().quiet_at("23:30"));
+    }
+}

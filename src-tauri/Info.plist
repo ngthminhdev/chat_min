@@ -4,5 +4,9 @@
 <dict>
   <key>NSMicrophoneUsageDescription</key>
   <string>ChatMin cần micro để ghi tin nhắn thoại.</string>
+  <!-- a messenger works in the background: App Nap would stretch the Google Chat poll
+       and delay notifications by minutes once the window is hidden -->
+  <key>NSAppSleepDisabled</key>
+  <true/>
 </dict>
 </plist>

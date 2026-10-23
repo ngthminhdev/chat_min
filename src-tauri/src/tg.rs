@@ -34,6 +34,15 @@ struct Acc {
     forums: HashSet<i64>,
     /// file id → last reported download percent
     progress: HashMap<i32, i64>,
+    /// Telegram's per-kind defaults ("mute all channels"): kind ("dm"/"group"/"channel") → muted
+    scope_muted: HashMap<String, bool>,
+    /// chats that follow those defaults instead of their own mute setting
+    default_mute: HashSet<i64>,
+    /// unmuted groups/channels kept open in TDLib so their messages arrive live (`watch`)
+    watched: HashSet<i64>,
+    /// chats open on screen (set_open)
+    ui_open: HashSet<i64>,
+    watching: bool,
 }
 
 type R<T> = Result<T, String>;
@@ -184,6 +193,9 @@ impl Tg {
                         chat.forum = a.forums.contains(&sg.supergroup_id);
                     }
                     a.read_outbox.insert(u.chat.id, u.chat.last_read_outbox_message_id);
+                    if u.chat.notification_settings.use_default_mute_for {
+                        a.default_mute.insert(u.chat.id);
+                    }
                     a.chats.insert(u.chat.id, chat.clone());
                     chat
                 });
@@ -224,7 +236,37 @@ impl Tg {
                 self.patch_chat(core, c, u.chat_id, |ch| ch.mention = u.unread_mention_count > 0)
             }
             Update::ChatNotificationSettings(u) => {
-                self.patch_chat(core, c, u.chat_id, |ch| ch.muted = is_muted(&u.notification_settings))
+                let muted = self
+                    .with(c, |a| {
+                        let s = &u.notification_settings;
+                        if s.use_default_mute_for {
+                            a.default_mute.insert(u.chat_id);
+                        } else {
+                            a.default_mute.remove(&u.chat_id);
+                        }
+                        let kind = a.chats.get(&u.chat_id).map(|ch| ch.kind.clone()).unwrap_or_default();
+                        is_muted(a, &kind, s)
+                    })
+                    .unwrap_or(false);
+                self.patch_chat(core, c, u.chat_id, |ch| ch.muted = muted)
+            }
+            // "mute all channels / groups / private chats": every chat on the defaults follows
+            Update::ScopeNotificationSettings(u) => {
+                let kind = match u.scope {
+                    enums::NotificationSettingsScope::PrivateChats => "dm",
+                    enums::NotificationSettingsScope::GroupChats => "group",
+                    enums::NotificationSettingsScope::ChannelChats => "channel",
+                };
+                let on = u.notification_settings.mute_for > 0;
+                let ids: Vec<i64> = self
+                    .with(c, |a| {
+                        a.scope_muted.insert(kind.into(), on);
+                        a.default_mute.iter().copied().filter(|id| a.chats.get(id).is_some_and(|ch| ch.kind == kind && ch.muted != on)).collect()
+                    })
+                    .unwrap_or_default();
+                for id in ids {
+                    self.patch_chat(core, c, id, |ch| ch.muted = on);
+                }
             }
             // progress of big downloads (videos, files); small ones finish before anyone looks
             Update::File(u) => {
@@ -440,6 +482,10 @@ impl Tg {
         }
         let n = self.with(c, |a| a.chats.values().filter(|ch| ch.order > 0).count()).unwrap_or(0);
         step(1, "ok", &format!("[chats] {n} chats"));
+        if self.with(c, |a| !std::mem::replace(&mut a.watching, true)).unwrap_or(false) {
+            let core = core.clone();
+            tauri::async_runtime::spawn(async move { core.tg.watch(c).await });
+        }
         if pending {
             // warm the search index with recent messages of the busiest chats
             step(2, "run", "[sync] recent messages");
@@ -778,7 +824,57 @@ impl Tg {
     pub async fn set_open(&self, account_id: &str, chat_id: &str, open: bool) -> R<()> {
         let c = self.client(account_id)?;
         let chat = chat_id.parse().unwrap_or(0);
-        if open { f::open_chat(chat, c).await } else { f::close_chat(chat, c).await }.map_err(err)
+        let watched = self
+            .with(c, |a| {
+                if open {
+                    a.ui_open.insert(chat);
+                } else {
+                    a.ui_open.remove(&chat);
+                }
+                a.watched.contains(&chat)
+            })
+            .unwrap_or(false);
+        if open {
+            f::open_chat(chat, c).await.map_err(err)
+        } else if watched {
+            Ok(()) // stays open in the background for live updates
+        } else {
+            f::close_chat(chat, c).await.map_err(err)
+        }
+    }
+
+    /// TDLib: "in supergroups and channels all updates are received only for opened chats" —
+    /// otherwise they trickle in by polling, up to a minute late. Unmuted groups and channels
+    /// are the ones that ring, so the busiest of them stay open in the background; the set
+    /// follows mutes and activity every few minutes. Opening doesn't mark anything read.
+    async fn watch(&self, c: i32) {
+        // ponytail: 30 chats, every 5 min; raise WATCH if an unmuted group still lags
+        const WATCH: usize = 30;
+        loop {
+            let Some((open, close)) = self.with(c, |a| {
+                let mut busy: Vec<(i64, i64)> = a
+                    .chats
+                    .iter()
+                    .filter(|(_, ch)| ch.order > 0 && !ch.muted && (ch.kind == "group" || ch.kind == "channel"))
+                    .map(|(id, ch)| (*id, ch.order))
+                    .collect();
+                busy.sort_by(|x, y| y.1.cmp(&x.1));
+                let want: HashSet<i64> = busy.into_iter().take(WATCH).map(|x| x.0).collect();
+                let open: Vec<i64> = want.difference(&a.watched).copied().collect();
+                let close: Vec<i64> = a.watched.difference(&want).filter(|id| !a.ui_open.contains(id)).copied().collect();
+                a.watched = want;
+                (open, close)
+            }) else {
+                return; // client closed
+            };
+            for id in open {
+                let _ = f::open_chat(id, c).await;
+            }
+            for id in close {
+                let _ = f::close_chat(id, c).await;
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+        }
     }
 
     /// Telegram's "delete chat": private chats are cleared and dropped from the list
@@ -835,8 +931,13 @@ fn status_text(s: &enums::UserStatus) -> String {
     .into()
 }
 
-fn is_muted(s: &t::ChatNotificationSettings) -> bool {
-    !s.use_default_mute_for && s.mute_for > 0
+/// A chat's own mute, or its kind's default when it follows the defaults.
+fn is_muted(a: &Acc, kind: &str, s: &t::ChatNotificationSettings) -> bool {
+    if s.use_default_mute_for {
+        a.scope_muted.get(kind).copied().unwrap_or(false)
+    } else {
+        s.mute_for > 0
+    }
 }
 
 fn to_chat(a: &Acc, account_id: &str, c: &t::Chat) -> Chat {
@@ -858,7 +959,7 @@ fn to_chat(a: &Acc, account_id: &str, c: &t::Chat) -> Chat {
         preview_from,
         unread: c.unread_count,
         mention: c.unread_mention_count > 0,
-        muted: is_muted(&c.notification_settings),
+        muted: is_muted(a, kind, &c.notification_settings),
         order: main.map(|p| p.order).unwrap_or(0),
         pinned: main.map(|p| p.is_pinned).unwrap_or(false),
         can_send: c.permissions.can_send_basic_messages || kind == "dm",

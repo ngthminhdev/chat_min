@@ -174,6 +174,8 @@ pub enum Event {
     MessageIdChanged { old_id: String, msg: Msg },
     #[serde(rename_all = "camelCase")]
     MessagesDeleted { account_id: String, chat_id: String, ids: Vec<String> },
+    /// a notification was clicked: open this chat ("account|chat")
+    Open { key: String },
     /// a big download in progress, in whole percent
     #[serde(rename_all = "camelCase")]
     FileProgress { account_id: String, file_ref: String, pct: i64 },

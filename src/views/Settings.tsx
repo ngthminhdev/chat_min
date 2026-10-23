@@ -151,6 +151,15 @@ export function Settings() {
 
         <section className="settings-card">
           <h3>Thông báo</h3>
+          <Row
+            title="Kiểm tra thông báo"
+            help="Gửi một thông báo macOS ngay. Không thấy thì mở System Settings → Notifications → ChatMin. Space Google Chat báo khi có @nhắc tên, thread mới, hoặc trả lời trong thread bạn đã nhắn — như Google Chat."
+            icon="bell"
+          >
+            <button className="tool-btn" onClick={() => void api.notifyTest().then(() => toast("Đã gửi thông báo thử", "bell")).catch(fail)}>
+              Gửi thông báo thử
+            </button>
+          </Row>
           {accounts.map((a) => {
             const p = { ...DEFAULT_NOTIFY, ...notif[a.id] };
             return (
