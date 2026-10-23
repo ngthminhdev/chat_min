@@ -843,6 +843,23 @@ async fn delete_chat(core: C<'_>, account_id: String, chat_id: String, revoke: b
 }
 /// Copies a downloaded file out of ChatMin's folders: to `dest` (from a save dialog) or,
 /// when empty, into ~/Downloads without overwriting anything. Returns where it landed.
+/// Open a file with its app, or reveal it in Finder: files the app downloaded, and files one
+/// of my messages was sent from (their local copy stays at the original path, outside the
+/// opener plugin's scope). Nothing else: the webview must not open arbitrary paths.
+#[tauri::command]
+fn open_local(core: C, path: String, reveal: bool) -> Res<()> {
+    let real = std::fs::canonicalize(&path).map_err(|e| e.to_string())?;
+    let inside = |d: &PathBuf| std::fs::canonicalize(d).map(|d| real.starts_with(d)).unwrap_or(false);
+    let known = inside(&core.data_dir) || inside(&core.cache_dir) || core.store().knows_local_path(&path);
+    if !known {
+        return Err("File không thuộc ChatMin".into());
+    }
+    if reveal {
+        tauri_plugin_opener::reveal_item_in_dir(&real).map_err(|e| e.to_string())
+    } else {
+        tauri_plugin_opener::open_path(&real, None::<&str>).map_err(|e| e.to_string())
+    }
+}
 #[tauri::command]
 fn save_file(core: C, src: String, name: String, dest: Option<String>) -> Res<String> {
     let src = std::fs::canonicalize(&src).map_err(|e| e.to_string())?;
@@ -1092,6 +1109,7 @@ pub fn run() {
             web_reload,
             topic_history,
             save_file,
+            open_local,
             tg_login_start,
             tg_phone,
             tg_code,

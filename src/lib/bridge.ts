@@ -104,16 +104,15 @@ export async function openUrl(url: string) {
   await openUrl(url);
 }
 
+// through Rust: files I sent live at their original path, outside the opener plugin's scope
 export async function openPath(path: string) {
   if (!isTauri) return;
-  const { openPath } = await import("@tauri-apps/plugin-opener");
-  await openPath(path);
+  await call<void>("open_local", { path, reveal: false });
 }
 
 export async function revealPath(path: string) {
   if (!isTauri) return;
-  const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
-  await revealItemInDir(path);
+  await call<void>("open_local", { path, reveal: true });
 }
 
 export async function pickFile(filters?: { name: string; extensions: string[] }[]): Promise<string | null> {

@@ -152,6 +152,15 @@ impl Store {
     }
 
     /// Newest `limit` messages strictly older than `before` (0 = from the end), oldest first.
+    /// A file one of my messages was sent from (its local copy outside the app's folders).
+    pub fn knows_local_path(&self, path: &str) -> bool {
+        self.db
+            .query_row("SELECT 1 FROM messages WHERE json_extract(data, '$.media.localPath') = ?1 LIMIT 1", [path], |_| Ok(()))
+            .optional()
+            .map(|r| r.is_some())
+            .unwrap_or(false)
+    }
+
     pub fn msgs(&self, account_id: &str, chat_id: &str, before: i64, limit: i64) -> R<Vec<Msg>> {
         let before = if before <= 0 { i64::MAX } else { before };
         let mut st = self
