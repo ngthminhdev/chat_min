@@ -204,8 +204,14 @@ html.mobile body .main .content .conv-head .title strong { font-size: 16px; line
 .mobile .wizard-wrap .create-card { padding: 16px; }
 .mobile .wizard-summary { display: none; }
 .mobile .wizard-form { gap: 16px; }
-.mobile .engine-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.mobile .engine-card { min-height: 88px; }
+/* Platform cards stack as rows: logo · name + line · radio. Back in the app bar cancels. */
+.mobile .wizard-header .r2-actions { display: none; }
+.mobile .wizard-form .engine-cards { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.mobile .wizard-form .engine-card { grid-template-columns: 40px minmax(0, 1fr) 24px; grid-template-rows: auto auto; align-items: center; gap: 2px 14px; min-height: 76px; padding: 12px 14px; }
+.mobile .wizard-form .engine-card .provider-logo { grid-row: 1 / 3; width: 40px; height: 40px; }
+.mobile .wizard-form .engine-card .glyph { --od-icon-size: 34px; }
+.mobile .wizard-form .engine-card strong, .mobile .wizard-form .engine-card .provider-description { grid-column: 2; }
+.mobile .wizard-form .engine-card .provider-selection { grid-column: 3; grid-row: 1 / 3; width: 22px; height: 22px; margin: 0; }
 .mobile .wizard-form .r2-muted, .mobile .wizard-form p { font-size: 14px; line-height: 1.6; }
 .mobile .command { padding: 12px; }
 .mobile .palette { width: 100%; max-height: calc(100dvh - 24px); }
@@ -236,3 +242,4 @@ html.mobile body .main .content .conv-head .title strong { font-size: 16px; line
 /* No hover on a phone: every message carries its time, like Telegram (desktop shows it on hover for grouped ones). */
 .mobile .msg:not(.last) .msg-col .msg-meta { position: static; opacity: 1; pointer-events: auto; }
 .mobile .msg:not(.last) .msg-col .message-footer { position: static; height: auto; }
+.mobile .thread-content .back-btn .ic { transform: none; }
