@@ -4,7 +4,9 @@ import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { Account, AiView, AppState, CoreEvent, Member, Msg, StickerPack, Topic } from "./types";
 
-export const isTauri = "__TAURI_INTERNALS__" in window;
+// `?demo`: the in-memory backend even inside a Tauri webview — the Android webview pointed at
+// the vite server (dev-only) still gets Tauri's IPC injected, which refuses a foreign origin
+export const isTauri = "__TAURI_INTERNALS__" in window && !new URLSearchParams(location.search).has("demo");
 export type Staged = { path: string; name: string; size: number };
 export type StorageView = { downloadDir: string; cacheMb: number; keepDays: number; tgBytes: number; localBytes: number };
 

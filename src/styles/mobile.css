@@ -246,3 +246,5 @@ html.mobile body .main .content .conv-head .title strong { font-size: 16px; line
 /* Android WebView 124 (emulator, both GPU backends) painted a light band across the Welcome
    hero whenever the second brand logo rastered in the main layer; its own layer fixes it. */
 .mobile .welcome-platforms .glyph { will-change: transform; }
+/* Long-press opens the sheet; Android must not also start a text selection (Copy is in the sheet). */
+.mobile .msg .bubble, .mobile .msg .sender { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
