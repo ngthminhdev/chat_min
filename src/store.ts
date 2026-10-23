@@ -46,7 +46,8 @@ export interface MenuItem { icon: IconName; label: string; kbd?: string; danger?
 /** Popovers anchor below `y` (an element's bottom) and flip above `top` when they don't fit. */
 export type Pop = { x: number; y: number; top: number } & (
   | { kind: "emoji"; onPick: (emoji: string) => void; only?: string[] }
-  | { kind: "menu"; items: MenuItem[] }
+  /** `quick`: phone long-press sheet — a row of reactions above the items, `more` opens the full picker */
+  | { kind: "menu"; items: MenuItem[]; quick?: { pick: (emoji: string) => void; more: () => void } }
   | { kind: "color"; accountId: string }
 );
 export const anchor = (el: Element) => {

@@ -13,6 +13,7 @@ import { useDownload } from "./Conversation";
 import lottie from "lottie-web/build/player/lottie_light";
 import { translateMsg, trKey } from "../ai";
 import { fileActionLabel } from "../lib/micro-ux";
+import { isMobile } from "../lib/mobile";
 
 interface Props {
   k: string;
@@ -81,7 +82,11 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
       onContextMenu={(e: React.MouseEvent) => {
         if (e.defaultPrevented) return;
         e.preventDefault();
-        useApp.setState({ pop: { kind: "menu", x: e.clientX, y: e.clientY, top: e.clientY, items: menuFor(k, tab, m, caps) } });
+        // phone: long-press → bottom sheet with a quick reaction row
+        const quick = isMobile && caps.reactions && !m.deleted
+          ? { pick: (emoji: string) => void toggleReaction(k, m, emoji), more: () => void pickReaction(k, m, { x: 0, y: 0, top: 0 }) }
+          : undefined;
+        useApp.setState({ pop: { kind: "menu", x: e.clientX, y: e.clientY, top: e.clientY, items: menuFor(k, tab, m, caps), quick } });
       }}
       onKeyDown={(e: React.KeyboardEvent) => {
         if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {

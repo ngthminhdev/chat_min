@@ -10,6 +10,10 @@ import { removeAccount, renameAccount } from "../App";
 import { startWizard } from "../views/Wizard";
 import { ChatAvatar, PersonAvatar } from "../ui/Avatar";
 import { Glyph, Icon, type IconName } from "../ui/Icon";
+import { isMobile } from "../lib/mobile";
+
+/** Long-press sheet: the reactions people actually use, in Telegram's order. */
+const QUICK = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
 function useOverlayFocus(ref: React.RefObject<HTMLElement>, open: boolean) {
   const previous = useRef<HTMLElement | null>(null);
@@ -319,6 +323,7 @@ function Popover() {
 
   useLayoutEffect(() => {
     if (!pop || !ref.current) return setPos(null);
+    if (isMobile) { ref.current.querySelector<HTMLButtonElement>("button")?.focus(); return; }
     const place = () => {
       if (!ref.current) return;
       const w = ref.current.offsetWidth, h = ref.current.offsetHeight;
@@ -340,6 +345,35 @@ function Popover() {
     document.addEventListener("mousedown", down);
     return () => document.removeEventListener("mousedown", down);
   }, [pop]);
+
+  // phone: every popover is a bottom sheet (long-press menu, reaction picker, account colour)
+  if (isMobile) return (
+    <AnimatePresence onExitComplete={restoreFocus}>
+      {pop && <>
+        <motion.button key="backdrop" type="button" className="mobile-sheet-backdrop" aria-label="Đóng" tabIndex={-1} onClick={close}
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.16 }} />
+        <motion.div
+          key={`${pop.kind}${pop.x}${pop.y}`}
+          ref={ref}
+          className={`mobile-pop-sheet ${pop.kind === "emoji" ? "emoji-pop" : "index-context-menu account-pop"}`}
+          role={pop.kind === "menu" ? "menu" : "dialog"}
+          aria-modal="true"
+          aria-label={pop.kind === "emoji" ? "Chọn biểu cảm" : pop.kind === "color" ? "Màu tài khoản" : "Thao tác"}
+          onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } }}
+          initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%", transition: { duration: 0.16 } }}
+          transition={{ duration: 0.24, ease: [0.2, 0, 0, 1] }}
+        >
+          {pop.kind === "menu" && pop.quick && (
+            <div className="quick-reactions" role="group" aria-label="Biểu cảm nhanh">
+              {QUICK.map((emoji) => <button key={emoji} type="button" onClick={() => { close(); pop.quick!.pick(emoji); }}>{emoji}</button>)}
+              <button type="button" className="quick-more" aria-label="Thêm biểu cảm" onClick={() => { close(); pop.quick!.more(); }}><Icon name="plus" /></button>
+            </div>
+          )}
+          <PopBody pop={pop} close={close} />
+        </motion.div>
+      </>}
+    </AnimatePresence>
+  );
 
   return (
     <AnimatePresence onExitComplete={restoreFocus}>

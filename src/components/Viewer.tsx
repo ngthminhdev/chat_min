@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { EASE } from "../lib/motion";
+import { isMobile } from "../lib/mobile";
 import { api, fileSrc, openPath, revealPath } from "../lib/bridge";
 import { fileSize } from "../lib/format";
 import { fail, saveMedia, useApp } from "../store";
@@ -10,6 +11,7 @@ import { Icon } from "../ui/Icon";
 export function Viewer() {
   const v = useApp((s) => s.viewer);
   const [zoom, setZoom] = useState(false);
+  const swipe = useRef<number | null>(null);
   // a streaming video has no local file yet: saving/opening it downloads the whole thing first
   const local = async () => {
     if (!v) return "";
@@ -45,6 +47,9 @@ export function Viewer() {
           exit={{ opacity: 0 }}
           transition={{ duration: 0.16 }}
           onClick={close}
+          // phone: a downward swipe closes, like every gallery
+          onTouchStart={(e) => { swipe.current = zoom ? null : e.touches[0].clientY; }}
+          onTouchEnd={(e) => { if (swipe.current != null && e.changedTouches[0].clientY - swipe.current > 90) close(); swipe.current = null; }}
         >
           <div className="viewer-bar" onClick={(e) => e.stopPropagation()}>
             <span className="viewer-name">
@@ -60,9 +65,9 @@ export function Viewer() {
             <button className="tool-btn icon-only" aria-label="Mở bằng app mặc định" data-tip="Mở bằng app mặc định" onClick={() => void local().then((p) => { if (p) openPath(p).catch(fail); })}>
               <Icon name="external-link" />
             </button>
-            <button className="tool-btn icon-only" aria-label="Hiện trong Finder" data-tip="Hiện trong Finder" onClick={() => void local().then((p) => { if (p) revealPath(p).catch(fail); })}>
+            {!isMobile && <button className="tool-btn icon-only" aria-label="Hiện trong Finder" data-tip="Hiện trong Finder" onClick={() => void local().then((p) => { if (p) revealPath(p).catch(fail); })}>
               <Icon name="search" />
-            </button>
+            </button>}
             <button className="tool-btn icon-only" aria-label="Đóng" data-tip="Đóng" data-kbd="Esc" onClick={close}>
               <Icon name="x" />
             </button>

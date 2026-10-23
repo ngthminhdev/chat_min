@@ -38,9 +38,20 @@ export function Inbox() {
           <div className="mobile-list-search"><Icon name="search" /><input aria-label="Tìm hội thoại" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Tên hoặc tin nhắn gần đây" />
             {q && <button className="tool-btn icon-only" aria-label="Xoá tìm hội thoại" onClick={() => setQ("")}><Icon name="x" /></button>}
           </div>
-          <div className="mobile-list-filters">
-            <select aria-label="Lọc tài khoản" value={account} onChange={(e) => setAccount(e.target.value)}><option value="">Mọi tài khoản</option>{accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
-            <div className="mini-tabs" role="tablist" aria-label="Lọc hội thoại">{[["all", "Tất cả"], ["unread", "Chưa đọc"], ["mention", "Nhắc tên"]].map(([value, label]) => <button key={value} role="tab" aria-selected={filter === value} onClick={() => setFilter(value)}>{label}</button>)}</div>
+          {/* one scrollable chip row: status first, then an account chip each (2+ accounts) */}
+          <div className="mobile-chips" role="group" aria-label="Lọc hội thoại">
+            {[["all", "Tất cả"], ["unread", "Chưa đọc"], ["mention", "Nhắc tên"]].map(([value, label]) => (
+              <button key={value} className="chip" aria-pressed={filter === value} onClick={() => setFilter(value)}>{label}</button>
+            ))}
+            {accounts.length > 1 && <>
+              <span className="chip-sep" aria-hidden="true" />
+              {accounts.map((a) => (
+                <button key={a.id} className="chip" aria-pressed={account === a.id} style={{ "--conn": `var(--conn-${a.color})` } as React.CSSProperties}
+                  onClick={() => setAccount(account === a.id ? "" : a.id)}>
+                  <span className="conn-dot" />{a.name}
+                </button>
+              ))}
+            </>}
           </div>
         </> : <div className="inbox-filters">
           <label>
