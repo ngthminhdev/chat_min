@@ -393,6 +393,14 @@ button.tab-close { padding: 0; border: 0; background: transparent; font-family: 
 .palette-mode .on { color: var(--text); }
 
 .prompt-dialog h3 { margin: 0; font-size: var(--fs-lg); }
+.forward-preview { max-width: none; grid-template-columns: auto minmax(0, 1fr); column-gap: 8px; }
+.forward-preview img { grid-row: span 2; width: 44px; height: 44px; object-fit: cover; border-radius: var(--radius-sm); }
+.forward-to { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; color: var(--text-2); }
+.forward-to .cmd-main { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--text); }
+.forward-field { display: grid; gap: 4px; color: var(--text-2); font-size: var(--fs-sm); }
+.forward-field .settings-select { max-width: none; width: 100%; }
+.forward-comment { min-height: 56px; padding: 6px 10px; resize: vertical; color: var(--text); background: var(--pane-2); border: 1px solid var(--line); border-radius: var(--radius-md); outline: none; font: var(--fs-md)/1.5 var(--font-body); }
+.forward-comment:focus { border-color: color-mix(in oklab, var(--accent), transparent 40%); box-shadow: 0 0 0 3px var(--focus-ring); }
 .prompt-dialog input[type="text"] { height: 32px; padding: 0 10px; color: var(--text); background: var(--pane-2); border: 1px solid var(--line); border-radius: var(--radius-md); outline: none; }
 .prompt-dialog input[type="text"]:focus { border-color: color-mix(in oklab, var(--accent), transparent 40%); box-shadow: 0 0 0 3px var(--focus-ring); }
 .toast .ic { --od-icon-size: 16px; color: var(--green); margin-top: 1px; }

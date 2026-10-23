@@ -237,6 +237,7 @@ function useGlobalHandlers() {
       if (k === "Escape") {
         if (s.viewer) return st({ viewer: null });
         if (s.dialog) return st({ dialog: null });
+        if (s.forward) return st({ forward: null });
         if (s.pop) return st({ pop: null });
         if (s.palette) return st({ palette: null });
         if (s.active && (s.replyTo[s.active] || s.editing[s.active])) {

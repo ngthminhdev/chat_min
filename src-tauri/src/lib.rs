@@ -827,11 +827,11 @@ async fn topic_history(core: C<'_>, account_id: String, chat_id: String, topic: 
     core.tg.topic_history(&core, &account_id, &chat_id, &topic, before, limit).await
 }
 #[tauri::command]
-async fn forward(core: C<'_>, account_id: String, chat_id: String, from_chat_id: String, msg_id: String) -> Res<()> {
+async fn forward(core: C<'_>, account_id: String, chat_id: String, from_chat_id: String, msg_id: String, topic: Option<String>) -> Res<()> {
     if core.platform(&account_id) != "telegram" {
         return Err("Chỉ Telegram có chuyển tiếp gốc".into());
     }
-    core.tg.forward(&account_id, &chat_id, &from_chat_id, &msg_id).await
+    core.tg.forward(&account_id, &chat_id, &from_chat_id, &msg_id, topic).await
 }
 #[tauri::command]
 async fn delete_chat(core: C<'_>, account_id: String, chat_id: String, revoke: bool) -> Res<()> {

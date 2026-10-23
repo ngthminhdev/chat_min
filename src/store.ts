@@ -111,6 +111,8 @@ interface State {
   leftCollapsed: boolean;
   rightCollapsed: boolean;
   palette: { mode: "chats" | "msgs"; scope?: string; forward?: Msg } | null;
+  /** forward sheet: the message and the chat picked in the palette */
+  forward: { msg: Msg; to: string } | null;
   pop: Pop | null;
   dialog: Dialog | null;
   toasts: Toast[];
@@ -197,6 +199,7 @@ export const useApp = create<State>(() => ({
   leftCollapsed: saved.leftCollapsed ?? false,
   rightCollapsed: saved.rightCollapsed ?? false,
   palette: null,
+  forward: null,
   pop: null,
   dialog: null,
   toasts: [],
@@ -789,21 +792,23 @@ const sendable = (t: string) => t.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, l, u) 
 
 /** Forward `m` to chat `to`: native inside one Telegram account, otherwise a fresh
  *  message with a "forwarded from" line (media re-uploaded from the local copy). */
-export async function forwardMsg(m: Msg, to: string) {
+export async function forwardMsg(m: Msg, to: string, { comment = "", threadId }: { comment?: string; threadId?: string } = {}) {
   const s = get();
   const [accountId, chatId] = splitKey(to);
   const target = s.chats[to];
   try {
+    // like Telegram: the comment goes first, as its own message
+    if (comment.trim()) await send(to, comment.trim(), { threadId });
     const native = accountId === m.accountId && s.accounts.find((a) => a.id === accountId)?.platform === "telegram";
     if (native) {
-      await api.forward(accountId, chatId, m.chatId, m.id);
+      await api.forward(accountId, chatId, m.chatId, m.id, threadId);
     } else {
       const src = s.chats[key(m.accountId, m.chatId)];
       const from = `↪ Chuyển tiếp từ ${m.outgoing ? "tôi" : m.senderName}${src && src.kind !== "dm" ? ` · ${src.title}` : ""}`;
       let file: string | undefined;
       if (m.media && !m.media.url && m.media.fileRef) file = m.media.localPath || (await api.download(m.accountId, m.media.fileRef, m.media.name));
       const text = [from, sendable(m.text), m.media?.url ?? ""].filter((x) => x.trim()).join("\n");
-      await send(to, text, { file });
+      await send(to, text, { file, threadId });
     }
     toast(`Đã chuyển tiếp tới ${target?.title ?? "chat"}`);
   } catch (e) {

@@ -1,11 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { api } from "../lib/bridge";
+import { api, fileSrc } from "../lib/bridge";
 import { esc, fuzzy, hm, norm, plain } from "../lib/format";
 import { bare, EMOJI, nextEmojiIndex, searchEmoji } from "../lib/micro-ux";
 import { COLORS, COLOR_LABELS } from "../lib/platforms";
 import type { Chat, Msg } from "../lib/types";
-import { forwardMsg, key, openChat, splitKey, useApp, openSearch, type Pop } from "../store";
+import { forwardMsg, key, loadLatest, loadTopics, openChat, splitKey, useApp, openSearch, type Pop } from "../store";
 import { removeAccount, renameAccount } from "../App";
 import { startWizard } from "../views/Wizard";
 import { ChatAvatar, PersonAvatar } from "../ui/Avatar";
@@ -54,6 +54,7 @@ export function Overlays() {
       <Palette />
       <Popover />
       <DialogLayer />
+      <ForwardSheet />
       <Toasts />
       <Tooltip />
     </>
@@ -161,7 +162,7 @@ function PaletteBody({ mode, scope, forward }: { mode: "chats" | "msgs"; scope?:
         const a = acc(c.accountId);
         out.push({
           group: i === 0 ? (forward ? "Chuyển tiếp tới" : nq ? "Chat" : "Gần đây") : undefined,
-          run: () => (forward ? void forwardMsg(forward, key(c.accountId, c.id)) : void openChat(key(c.accountId, c.id))),
+          run: () => (forward ? useApp.setState({ forward: { msg: forward, to: key(c.accountId, c.id) } }) : void openChat(key(c.accountId, c.id))),
           node: (
             <>
               <ChatAvatar chat={c} size="sm" platform={a?.platform} />
@@ -504,6 +505,110 @@ function DialogLayer() {
               <button type="submit" disabled={d.kind === "prompt" && !value.trim()} className={`tool-btn ${d.kind === "confirm" ? "danger" : "primary"}`}>
                 {d.kind === "confirm" ? d.ok : "Lưu"}
               </button>
+            </div>
+          </motion.form>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+// ── forward sheet: preview, target, thread/topic, comment ───────────────────
+function ForwardSheet() {
+  const fw = useApp((s) => s.forward);
+  const target = useApp((s) => (fw ? s.chats[fw.to] : undefined));
+  const account = useApp((s) => (fw ? s.accounts.find((a) => a.id === splitKey(fw.to)[0]) : undefined));
+  const topics = useApp((s) => (fw && target?.forum ? s.topics[fw.to] : undefined));
+  const msgs = useApp((s) => (fw && target?.threaded ? s.msgs[fw.to] : undefined));
+  const [thread, setThread] = useState("");
+  const [comment, setComment] = useState("");
+  const [busy, setBusy] = useState(false);
+  const form = useRef<HTMLFormElement>(null);
+  const restoreFocus = useOverlayFocus(form, !!fw);
+  useEffect(() => {
+    setThread("");
+    setComment("");
+    setBusy(false);
+    if (!fw) return;
+    if (target?.forum && !topics) void loadTopics(fw.to);
+    if (target?.threaded && !msgs) void loadLatest(fw.to);
+  }, [fw?.to, fw?.msg.id]);
+  const close = () => useApp.setState({ forward: null });
+  if (!fw && !busy) return <AnimatePresence onExitComplete={restoreFocus} />;
+  const m = fw?.msg;
+  const src = useApp.getState().chats[m ? key(m.accountId, m.chatId) : ""];
+  // Google Chat threads of the loaded page, newest first (same rule as the inspector)
+  const threads = (msgs ?? []).filter((x) => !x.threadReply && x.threadId && !x.deleted && x.kind !== "service").sort((a, b) => b.ts - a.ts).slice(0, 30);
+  const thumb = m?.media && m.media.kind === "image" ? m.media.localPath || m.media.thumb : "";
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!fw || busy) return;
+    setBusy(true);
+    await forwardMsg(fw.msg, fw.to, { comment, threadId: thread || undefined });
+    setBusy(false);
+    close();
+  };
+  return (
+    <AnimatePresence onExitComplete={restoreFocus}>
+      {fw && m && (
+        <motion.div className="modal" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, transition: { duration: 0.1 } }} onMouseDown={(e) => e.target === e.currentTarget && close()}>
+          <motion.form
+            className="prompt-dialog forward-sheet"
+            ref={form}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="forward-title"
+            initial={{ opacity: 0, scale: 0.97, y: 6 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.98 }}
+            transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
+            onSubmit={(e) => void submit(e)}
+            onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void submit(e); }}
+          >
+            <h3 id="forward-title">Chuyển tiếp</h3>
+            <div className="quote forward-preview">
+              {thumb && <img src={fileSrc(thumb)} alt="" />}
+              <b>{m.outgoing ? "Bạn" : m.senderName}{src && src.kind !== "dm" ? ` · ${src.title}` : ""}</b>
+              <span>{plain(m.text) || m.media?.name || "tin nhắn"}</span>
+            </div>
+            <div className="forward-to">
+              <Icon name="forward" />
+              <span className="cmd-main">
+                {target && <ChatAvatar chat={target} size="sm" platform={account?.platform} />}
+                <span>{target?.title ?? fw.to}</span>
+              </span>
+              <button type="button" className="tool-btn" onClick={() => useApp.setState({ forward: null, palette: { mode: "chats", forward: m } })}>Đổi</button>
+            </div>
+            {target?.forum && (
+              <label className="forward-field">
+                Chủ đề
+                <select className="settings-select" value={thread} onChange={(e) => setThread(e.target.value)}>
+                  {!topics ? <option value="">Đang tải…</option> : <option value="">{topics.find((t) => t.general)?.name ?? "General"}</option>}
+                  {(topics ?? []).filter((t) => !t.general && !t.closed).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </label>
+            )}
+            {target?.threaded && (
+              <label className="forward-field">
+                Luồng
+                <select className="settings-select" value={thread} onChange={(e) => setThread(e.target.value)}>
+                  <option value="">{msgs ? "Tin mới trong space" : "Đang tải…"}</option>
+                  {threads.map((t) => <option key={t.threadId} value={t.threadId}>{(t.outgoing ? "Bạn" : t.senderName) + ": " + (plain(t.text) || t.media?.name || "").slice(0, 60)}</option>)}
+                </select>
+              </label>
+            )}
+            <textarea
+              className="forward-comment"
+              rows={2}
+              placeholder="Nhắn kèm (tuỳ chọn)…"
+              aria-label="Nhắn kèm"
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              autoFocus
+            />
+            <div className="prompt-dialog-foot">
+              <button type="button" className="tool-btn" onClick={close}>Huỷ <kbd className="kbd">Esc</kbd></button>
+              <button type="submit" className="tool-btn primary" disabled={busy || !target?.canSend}>{busy ? "Đang gửi…" : "Chuyển tiếp"} <kbd className="kbd">⌘↵</kbd></button>
             </div>
           </motion.form>
         </motion.div>

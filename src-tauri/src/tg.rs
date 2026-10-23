@@ -840,10 +840,11 @@ impl Tg {
     }
 
     /// Native forward inside one Telegram account (keeps the "Forwarded from" header).
-    pub async fn forward(&self, account_id: &str, chat_id: &str, from_chat_id: &str, msg_id: &str) -> R<()> {
+    pub async fn forward(&self, account_id: &str, chat_id: &str, from_chat_id: &str, msg_id: &str, topic: Option<String>) -> R<()> {
         let c = self.client(account_id)?;
         let (chat, from, id) = (chat_id.parse().unwrap_or(0), from_chat_id.parse().unwrap_or(0), msg_id.parse().unwrap_or(0));
-        f::forward_messages(chat, None, from, vec![id], None, false, false, c).await.map_err(err)?;
+        let topic = topic.and_then(|t| t.parse::<i32>().ok()).map(|id| enums::MessageTopic::Forum(t::MessageTopicForum { forum_topic_id: id }));
+        f::forward_messages(chat, topic, from, vec![id], None, false, false, c).await.map_err(err)?;
         Ok(())
     }
 
