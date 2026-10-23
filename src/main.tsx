@@ -10,6 +10,11 @@ import "./styles/layout.css";
 import "./styles/components.css";
 import "./styles/chatmin.css";
 
+// phone build (Android/iOS webview) or `?mobile` in the browser demo: one pane at a time, no
+// keyboard hints, no status bar — see the `.mobile` rules in chatmin.css
+export const isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent) || location.search.includes("mobile");
+document.documentElement.classList.toggle("mobile", isMobile);
+
 const report = (what: string) => void api.logJs(what).catch(() => {});
 window.addEventListener("error", (e) => report(`${e.message}\n${e.error?.stack ?? ""}`));
 window.addEventListener("unhandledrejection", (e) => report(`unhandled: ${e.reason?.stack ?? e.reason}`));

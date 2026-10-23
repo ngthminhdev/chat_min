@@ -198,8 +198,9 @@ export const useApp = create<State>(() => ({
   filter: "all",
   query: "",
   collapsed: saved.collapsed ?? {},
-  leftCollapsed: saved.leftCollapsed ?? false,
-  rightCollapsed: saved.rightCollapsed ?? false,
+  // phone: start on the list, inspector closed (it is a sheet there)
+  leftCollapsed: document.documentElement.classList.contains("mobile") ? false : saved.leftCollapsed ?? false,
+  rightCollapsed: document.documentElement.classList.contains("mobile") ? true : saved.rightCollapsed ?? false,
   palette: null,
   forward: null,
   pop: null,

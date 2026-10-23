@@ -79,6 +79,8 @@ export default function App() {
     const apply = () => {
       const { mode } = windowAppearance(prefs, reduced.matches);
       document.body.dataset.background = mode;
+      // phones have no window effects: solid background, no toast
+      if (document.documentElement.classList.contains("mobile")) { document.body.dataset.background = "solid"; return; }
       if (isTauri) windowEffectsUpdate.current = windowEffectsUpdate.current.then(async () => {
         if (disposed) return;
         const win = getCurrentWindow();

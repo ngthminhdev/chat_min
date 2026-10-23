@@ -1,5 +1,5 @@
 import {
-  ArrowDown, AtSign, AudioLines, Bell, BellOff, Check, CheckCheck, ChevronDown, ChevronRight, CircleAlert, Clock, Copy,
+  ArrowDown, AtSign, AudioLines, Bell, BellOff, Check, CheckCheck, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Copy,
   CornerDownRight, Download, Ellipsis, ExternalLink, FileArchive, FileCode, FileText, Film, FolderOpen, Forward, Hash, Image,
   Inbox, Info, KeyRound, Languages, Layers, Link, Lock, Mail, Megaphone, MessageCircleReply, MessageSquareText, MessagesSquare, Mic,
   Palette, PanelLeft, PanelRight, Paperclip, Pencil, Phone, Pin, PinOff, Play, Plus, QrCode, RefreshCw, Reply, RotateCw,
@@ -13,7 +13,7 @@ import zaloLogo from "../assets/brands/zalo.svg";
 
 const ICONS = {
   "arrow-down": ArrowDown, "at-sign": AtSign, "audio-lines": AudioLines, bell: Bell, "bell-off": BellOff, check: Check,
-  "check-check": CheckCheck, "chevron-down": ChevronDown, "chevron-right": ChevronRight, "circle-alert": CircleAlert,
+  "check-check": CheckCheck, "chevron-down": ChevronDown, "chevron-left": ChevronLeft, "chevron-right": ChevronRight, "circle-alert": CircleAlert,
   clock: Clock, copy: Copy, "corner-down-right": CornerDownRight, download: Download, ellipsis: Ellipsis,
   "external-link": ExternalLink, "file-archive": FileArchive, "file-code": FileCode, "file-text": FileText, film: Film,
   "folder-open": FolderOpen, forward: Forward, hash: Hash, image: Image, inbox: Inbox, info: Info, "key-round": KeyRound,

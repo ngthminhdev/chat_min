@@ -1531,3 +1531,28 @@ body:is([data-background="glass"], [data-background="clear"]) .inbox-shell { bor
 .composer-tools .tool-btn.icon-only:not(.primary) .ic { --od-icon-size: 16px; }
 .composer-tools .lang-tag { height: 28px; }
 .composer-tools > .tool-btn.primary { width: 30px; height: 30px; margin-left: 6px; }
+
+/* ── phone (html.mobile, set in main.tsx): one pane at a time ───────────────────────── */
+.conv-back { display: none; }
+.mobile kbd, .mobile .kbd { display: none !important; }
+.mobile .footer-shell { display: none; }
+.mobile .traffic { padding-left: 12px; }
+.mobile .app-frame { height: 100dvh; }
+.mobile .conv-back { display: inline-flex; flex: 0 0 auto; }
+.mobile .conv-head { flex-wrap: nowrap; }
+.mobile .conv-head .title { flex: 1; min-width: 0; }
+.mobile .conv-actions { flex: 0 0 auto; }
+.mobile .conv-actions .tool-btn:not(.icon-only) { display: none; }
+.mobile .conv-tabs { display: none; }
+/* the inspector is a sheet over the conversation, never a third column */
+.mobile body .main > .inspector { position: absolute; inset: 0; z-index: var(--z-chrome); background: var(--window); display: flex; }
+.mobile body.right-collapsed .main > .inspector { display: none; }
+.mobile .resize-handle { display: none; }
+.mobile .tool-btn { min-height: 40px; }
+.mobile .tool-btn.icon-only { min-width: 40px; }
+.mobile .composer-box textarea { font-size: 16px; } /* webviews zoom into fields smaller than 16px */
+.mobile .msg-actions { display: none; } /* hover toolbar: use the long-press / context menu */
+.mobile .welcome-view h1 { font-size: 28px; }
+.mobile .welcome-view p { font-size: var(--fs-md); }
+.mobile .app-frame { min-width: 0; grid-template-rows: 48px 1fr 0; }
+.mobile body .main > .inspector { width: auto; max-width: none; }

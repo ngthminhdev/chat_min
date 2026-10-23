@@ -76,6 +76,9 @@ export function Conversation() {
   return (
     <div className={`content${banner ? " with-health" : ""}`}>
       <div className="conv-head">
+        <button className="tool-btn icon-only conv-back" type="button" aria-label="Danh sách hội thoại" onClick={() => useApp.setState({ leftCollapsed: false })}>
+          <Icon name="chevron-left" />
+        </button>
         <ChatAvatar chat={chat} platform={platform} />
         <div className="title">
           <strong>{chat.title}</strong>
@@ -332,6 +335,9 @@ function WebConversation({ chatKey }: { chatKey: string }) {
   return (
     <div className="content web-content">
       <div className="conv-head">
+        <button className="tool-btn icon-only conv-back" type="button" aria-label="Danh sách hội thoại" onClick={() => useApp.setState({ leftCollapsed: false })}>
+          <Icon name="chevron-left" />
+        </button>
         <ChatAvatar chat={chat} platform={platform} />
         <div className="title">
           <strong>{account?.name ?? chat.title}</strong>

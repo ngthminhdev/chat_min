@@ -16,6 +16,15 @@ mkdir -p "$LIBS"
 cp -f "$SYS/libc++_static.a" "$SYS/libc++abi.a" "$LIBS/"
 export CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS="-L $PWD/$LIBS -C link-arg=-lc++abi"
 echo "RUSTFLAGS=$CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS"
+# `tauri android init` regenerates gen/android (gitignored): keep the webview below the status
+# bar instead of Android 15's forced edge-to-edge (the title bar would sit under the clock).
+T=src-tauri/gen/android/app/src/main/res/values/themes.xml
+# targetSdk 36+ ignores that opt-out, so the generated project targets 35
+sed -i '' 's/^\([[:space:]]*\)targetSdk = 3[6-9]$/\1targetSdk = 35/' src-tauri/gen/android/app/build.gradle.kts
+M=src-tauri/gen/android/app/src/main/java/com/chatmin/app/MainActivity.kt
+sed -i '' '/enableEdgeToEdge/d' "$M"
+grep -q statusBarColor "$T" || sed -i '' 's|<!-- Customize your theme here. -->|&\n        <item name="android:statusBarColor">#141821</item>\n        <item name="android:navigationBarColor">#141821</item>\n        <item name="android:windowLightStatusBar">false</item>|' "$T"
+grep -q windowOptOutEdgeToEdgeEnforcement "$T" || sed -i '' 's|<!-- Customize your theme here. -->|&\n        <item name="android:windowOptOutEdgeToEdgeEnforcement" tools:targetApi="35">true</item>|' "$T"
 npx tauri android build --apk --target aarch64 --debug
 APK=src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk
 echo "APK: $APK"
