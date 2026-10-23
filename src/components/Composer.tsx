@@ -11,6 +11,10 @@ import { LANGS, langLabel, langTag, suggestReplies, translateDraft } from "../ai
 import type { Suggestion } from "../lib/types";
 import { ReplySuggestions, type ReplySuggestionsState } from "./ReplySuggestions";
 import { EASE } from "../lib/motion";
+import { isMobile } from "../lib/mobile";
+import { enterSubmits } from "../lib/mobile-navigation";
+import { useMobileBack } from "../mobile";
+import { MobileActions } from "../ui/MobileActions";
 
 const BLOCKING = ["offline", "reconnecting", "expired", "rate"];
 
@@ -56,7 +60,7 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
   };
   // Tauri owns file drops (dragDropEnabled): the composer of the visible tab takes them
   useEffect(() => {
-    if (!isTauri) return;
+    if (!isTauri || isMobile) return;
     let off = () => {};
     let gone = false;
     void import("@tauri-apps/api/webview").then(({ getCurrentWebview }) =>
@@ -107,7 +111,7 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
   }, [draft]);
 
   useEffect(() => {
-    if (!blocked) ta.current?.focus();
+    if (!blocked && !isMobile) ta.current?.focus();
   }, [k, blocked]);
 
   const setDraft = (v: string) => useApp.setState((s) => ({ drafts: { ...s.drafts, [k]: v } }));
@@ -126,6 +130,11 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
     setSug(null);
   };
   const closeSuggestions = () => { dismissSuggestions(); suggestionButton.current?.focus(); };
+  useMobileBack(() => {
+    if (recorder.recording) void recorder.stop(false);
+    else if (stickers) setStickers(false);
+    else dismissSuggestions();
+  }, useApp((s) => s.route === "shell" && s.rightCollapsed && s.leftCollapsed) && (!!sug || stickers || recorder.recording));
   const chooseSuggestion = (item: Suggestion) => {
     if (draft.trim()) setOrig(orig ?? draft);
     setDraft(item.reply);
@@ -358,7 +367,7 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
                 // ⌥R (what ReplyMin used); e.code because Option+R types "®"
                 e.preventDefault();
                 void translate();
-              } else if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+              } else if (e.key === "Enter" && enterSubmits(isMobile, e.shiftKey, e.nativeEvent.isComposing)) {
                 e.preventDefault();
                 submit();
               } else if (e.key === "ArrowUp" && !draft && caps.edit) {
@@ -382,6 +391,7 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
               <span className="composer-platform">{PLATFORMS[account?.platform ?? "telegram"].name}</span>
             </label>
             <span className="composer-sep" aria-hidden="true" />
+            <MobileActions label="Thêm vào tin nhắn" icon="plus" disabled={blocked || saving || recorder.recording}>
             <button className="tool-btn icon-only" aria-label="Đính kèm tệp" data-tip={editId ? "Chỉ sửa nội dung tin nhắn" : "Đính kèm tệp"} disabled={blocked || saving || !!editId} onClick={attach}>
               <Icon name="paperclip" />
             </button>
@@ -392,7 +402,7 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
               disabled={blocked || saving}
               onClick={(e) => {
                 // the app: macOS's full emoji picker types into the focused textarea; demo: quick set
-                if (isTauri) {
+                if (isTauri && !isMobile) {
                   ta.current?.focus();
                   return void api.emojiPalette().catch(fail);
                 }
@@ -454,8 +464,10 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
                 <Icon name="sticker" />
               </button>
             )}
+            </MobileActions>
+            {(!isMobile || recorder.recording || (!draft.trim() && !files.length && !editId)) &&
             <button
-              className={`tool-btn icon-only${recorder.recording ? " rec-on" : ""}`}
+              className={`tool-btn icon-only composer-record${recorder.recording ? " rec-on" : ""}`}
               aria-label={recorder.recording ? "Huỷ ghi âm" : "Ghi tin nhắn thoại"}
               data-tip={recorder.recording ? "Huỷ ghi âm" : "Ghi tin nhắn thoại"}
               disabled={blocked || saving || !!editId}
@@ -463,8 +475,10 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
             >
               <Icon name={recorder.recording ? "x" : "mic"} />
             </button>
+            }
+            {(!isMobile || recorder.recording || !!draft.trim() || !!files.length || !!editId) &&
             <button
-              className="tool-btn primary icon-only"
+              className="tool-btn primary icon-only composer-send"
               aria-label={editId ? "Lưu chỉnh sửa" : "Gửi"}
               data-tip={recorder.recording ? "Gửi tin thoại" : editId ? "Lưu chỉnh sửa" : "Gửi"}
               data-kbd="↵"
@@ -473,6 +487,7 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
             >
               <Icon name={editId ? "check" : "send"} />
             </button>
+            }
           </div>
         </div>
         <div className="composer-hint">

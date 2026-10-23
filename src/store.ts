@@ -4,6 +4,8 @@ import { plain } from "./lib/format";
 import { windowAppearance, type BackgroundMode } from "./lib/appearance";
 import { reconcileMessage } from "./lib/message-identity";
 import { queueToast } from "./lib/toast-queue";
+import { isMobile } from "./lib/mobile";
+import { mobileConversationVisible } from "./lib/mobile-navigation";
 import { PLATFORMS, type Cap } from "./lib/platforms";
 import type { Account, Chat, CoreEvent, Health, Media, Msg, Topic } from "./lib/types";
 import type { IconName } from "./ui/Icon";
@@ -337,9 +339,10 @@ async function bootOnce() {
     gchatConfigured: st.gchatConfigured,
     mutedThreads: Object.fromEntries(st.mutedThreads.map((k) => [k, true as const])),
     route: st.accounts.length ? "shell" : "welcome",
+    ...(isMobile ? { leftCollapsed: false, rightCollapsed: true } : {}),
   });
   eventOff ??= onEvent(applyEvent);
-  if (active) void openChat(active);
+  if (active && !isMobile) void openChat(active);
 }
 
 function upsert(list: Msg[], m: Msg): Msg[] {
@@ -416,7 +419,7 @@ export function applyEvent(e: CoreEvent) {
       }
       // arriving where I'm looking (the chat, or for a reply its open thread tab): already read
       const here = e.msg.threadReply
-        ? get().active === threadTabKey(k, e.msg.threadId) && document.hasFocus() && !document.hidden
+        ? get().active === threadTabKey(k, e.msg.threadId) && (!isMobile || mobileConversationVisible(get())) && document.hasFocus() && !document.hidden
         : isWatching(k);
       if (e.inbox && here) set((s) => ({ inboxRead: { ...s.inboxRead, [inboxKey(e.msg)]: true } }));
       if (e.inbox)
@@ -484,7 +487,7 @@ export function applyEvent(e: CoreEvent) {
 /** The user is looking at this chat right now: new messages count as read. */
 // reading older messages up the list isn't seeing the new one: it stays unread (badge + "N tin mới")
 const isWatching = (k: string) =>
-  chatKeyOf(get().active) === k && get().route === "shell" && get().atBottom && document.hasFocus() && !document.hidden;
+  chatKeyOf(get().active) === k && get().route === "shell" && (!isMobile || mobileConversationVisible(get())) && get().atBottom && document.hasFocus() && !document.hidden;
 
 // ── chats & messages ────────────────────────────────────────────────────────
 const PAGE = 50;
@@ -497,7 +500,7 @@ export async function openChat(k: string) {
     t.splice(s.active ? t.indexOf(s.active) + 1 : t.length, 0, k);
     return t;
   })();
-  set({ tabs, active: k, route: "shell", inspTab: s.active === k ? s.inspTab : (() => { const c = s.chats[chatKeyOf(k) ?? k]; return c?.threaded || c?.forum ? "threads" : "info"; })(), ...(window.matchMedia("(max-width: 760px)").matches ? { leftCollapsed: true } : {}) });
+  set({ tabs, active: k, route: "shell", inspTab: s.active === k ? s.inspTab : (() => { const c = s.chats[chatKeyOf(k) ?? k]; return c?.threaded || c?.forum ? "threads" : "info"; })(), ...(isMobile ? { leftCollapsed: true, rightCollapsed: true } : window.matchMedia("(max-width: 760px)").matches ? { leftCollapsed: true } : {}) });
   const chatKey = chatKeyOf(k);
   if (!chatKey) return;
   // web apps (Messenger, Zalo) live in their own webview: nothing to load or mark here

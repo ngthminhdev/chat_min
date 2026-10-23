@@ -3,6 +3,8 @@ import { fuzzy, listTime, norm } from "../lib/format";
 import { key, openChat, useApp } from "../store";
 import { ChatAvatar } from "../ui/Avatar";
 import { Icon } from "../ui/Icon";
+import { isMobile } from "../lib/mobile";
+import { startWizard } from "./Wizard";
 
 export function Inbox() {
   const chats = useApp((s) => s.chats);
@@ -25,14 +27,22 @@ export function Inbox() {
   );
   return (
     <>
-      <header className="r2-header">
+      <header className="r2-header mobile-page-heading">
         <div className="od-field">
           <h1>Tất cả hội thoại</h1>
           <p>Hội thoại gần đây từ mọi tài khoản</p>
         </div>
       </header>
-      <div className="inbox-shell">
-        <div className="inbox-filters">
+      <div className={`inbox-shell${isMobile ? " mobile-inbox" : ""}`}>
+        {isMobile ? <>
+          <div className="mobile-list-search"><Icon name="search" /><input aria-label="Tìm hội thoại" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Tên hoặc tin nhắn gần đây" />
+            {q && <button className="tool-btn icon-only" aria-label="Xoá tìm hội thoại" onClick={() => setQ("")}><Icon name="x" /></button>}
+          </div>
+          <div className="mobile-list-filters">
+            <select aria-label="Lọc tài khoản" value={account} onChange={(e) => setAccount(e.target.value)}><option value="">Mọi tài khoản</option>{accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select>
+            <div className="mini-tabs" role="tablist" aria-label="Lọc hội thoại">{[["all", "Tất cả"], ["unread", "Chưa đọc"], ["mention", "Nhắc tên"]].map(([value, label]) => <button key={value} role="tab" aria-selected={filter === value} onClick={() => setFilter(value)}>{label}</button>)}</div>
+          </div>
+        </> : <div className="inbox-filters">
           <label>
             Tài khoản
             <select className="settings-select" value={account} onChange={(e) => setAccount(e.target.value)}>
@@ -52,7 +62,7 @@ export function Inbox() {
             Tìm hội thoại
             <input value={q} placeholder="Tên hoặc tin gần đây" onChange={(e) => setQ(e.target.value)} />
           </label>
-        </div>
+        </div>}
         <div className="inbox-count" role="status">{Math.min(limit, rows.length)} / {rows.length} hội thoại · mới nhất trước</div>
         <div className="inbox-list">
           {rows.length ? (
@@ -90,6 +100,7 @@ export function Inbox() {
           )}
         </div>
         {rows.length > limit && <button className="tool-btn" onClick={() => setLimit((n) => n + 300)}>Xem thêm hội thoại</button>}
+        {isMobile && <button className="tool-btn mobile-add-account" onClick={() => startWizard()}><Icon name="user-plus" /> Thêm tài khoản</button>}
       </div>
     </>
   );

@@ -6,6 +6,8 @@ import { useShallow } from "zustand/react/shallow";
 import { startWizard } from "../views/Wizard";
 import { Icon } from "../ui/Icon";
 import { PersonAvatar } from "../ui/Avatar";
+import { useMobileBack } from "../mobile";
+import { isMobile } from "../lib/mobile";
 
 export function Titlebar() {
   const theme = useApp((s) => s.prefs.theme);
@@ -30,7 +32,7 @@ export function Titlebar() {
         <kbd>⌘⇧F</kbd>
       </button>
       <div className="toolbar" data-tauri-drag-region>
-        <Inbox />
+        <Notifications />
         <details
           className="appearance-menu"
           ref={menu}
@@ -86,12 +88,13 @@ export function Titlebar() {
 }
 
 /** Bell: mentions of me, DMs, replies in my threads, reactions to my messages. */
-function Inbox() {
+export function Notifications() {
   const items = useApp((s) => s.inbox);
   const unread = useApp(useShallow((s) => s.inbox.filter((m) => inboxUnread(s, m)).map(inboxKey)));
   const chats = useApp((s) => s.chats);
   const [open, setOpen] = useState(false);
   const [all, setAll] = useState(false);
+  useMobileBack(() => setOpen(false), open);
   const box = useRef<HTMLDivElement>(null);
   const isNew = new Set(unread);
   const shown = all ? items : items.filter((m) => isNew.has(inboxKey(m)));
@@ -114,6 +117,7 @@ function Inbox() {
       {open && (
         <div className="bell-panel" role="dialog" aria-label="Thông báo">
           <div className="bell-head">
+            {isMobile && <button className="tool-btn icon-only" aria-label="Đóng thông báo" onClick={() => setOpen(false)}><Icon name="chevron-left" /></button>}
             <span className="mini-tabs bell-filter" role="tablist">
               <button role="tab" aria-selected={!all} onClick={() => setAll(false)}>Chưa đọc{unread.length ? ` · ${unread.length}` : ""}</button>
               <button role="tab" aria-selected={all} onClick={() => setAll(true)}>Tất cả</button>

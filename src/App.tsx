@@ -25,6 +25,10 @@ import { Inbox } from "./views/Inbox";
 import { MessageSearch } from "./views/MessageSearch";
 import { Settings } from "./views/Settings";
 import { Icon } from "./ui/Icon";
+import { isMobile } from "./lib/mobile";
+import { mobileConversationVisible } from "./lib/mobile-navigation";
+import { useAndroidNavigation } from "./mobile";
+import { MobileHeader } from "./components/MobileHeader";
 
 export default function App() {
   const booted = useApp((s) => s.booted);
@@ -32,6 +36,7 @@ export default function App() {
   const prefs = useApp((s) => s.prefs);
   const left = useApp((s) => s.leftCollapsed);
   const right = useApp((s) => s.rightCollapsed);
+  const active = useApp((s) => s.active);
   const threadTab = useApp((s) => (isThreadTab(s.active) ? s.active : null));
   const [bootError, setBootError] = useState("");
   const windowEffectsUpdate = useRef(Promise.resolve());
@@ -45,6 +50,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (isMobile) return;
     const compact = window.matchMedia("(max-width: 1180px)");
     const narrow = window.matchMedia("(max-width: 760px)");
     const adapt = () => {
@@ -106,7 +112,7 @@ export default function App() {
   const page = route === "welcome" || route === "wizard";
   const tabPage = route === "inbox" || route === "settings" || route === "search";
   useEffect(() => {
-    if (tabPage && window.matchMedia("(max-width: 760px)").matches) useApp.setState({ leftCollapsed: true });
+    if (!isMobile && tabPage && window.matchMedia("(max-width: 760px)").matches) useApp.setState({ leftCollapsed: true });
   }, [tabPage, route]);
   useEffect(() => {
     const cls = document.body.classList;
@@ -123,10 +129,11 @@ export default function App() {
   }, [notif, accountIds]);
 
   useGlobalHandlers();
+  useAndroidNavigation();
 
   if (!booted) return (
     <div className="app-frame">
-      <Titlebar />
+      {isMobile ? <MobileHeader /> : <Titlebar />}
       <main className="r2-empty" role={bootError ? "alert" : "status"}>
         <Icon name={bootError ? "circle-alert" : "messages-square"} />
         <h1>{bootError ? "Chưa mở được ChatMin" : "Đang mở ChatMin…"}</h1>
@@ -137,17 +144,18 @@ export default function App() {
   return (
     <MotionConfig reducedMotion="user" transition={{ duration: 0.18, ease: [0.2, 0, 0, 1] }}>
       <div className="app-frame">
-        <Titlebar />
+        {isMobile ? <MobileHeader /> : <Titlebar />}
         <main className={`main${page ? " r2-page" : tabPage ? " r2-tab" : ""}`}>
           {page ? (
             <section className="page-view">{route === "welcome" ? <Welcome /> : <Wizard />}</section>
           ) : (
             <>
-              <Sidebar />
-              <ResizeHandle side="left" />
+              {!isMobile && <><Sidebar /><ResizeHandle side="left" /></>}
               <section className="workspace">
-                <Tabs />
-                {route === "inbox" ? (
+                {!isMobile && <Tabs />}
+                {isMobile && route === "shell" && (!left || !active) ? (
+                  <section className="page-view mobile-list-page"><Inbox /></section>
+                ) : route === "inbox" ? (
                   <section className="page-view"><Inbox /></section>
                 ) : route === "settings" ? (
                   <section className="page-view"><Settings /></section>
@@ -160,8 +168,8 @@ export default function App() {
                   <Conversation />
                 )}
               </section>
-              <ResizeHandle side="right" />
-              <Inspector />
+              {!isMobile && <ResizeHandle side="right" />}
+              {(!isMobile || (!right && !tabPage && left)) && <Inspector />}
             </>
           )}
         </main>
@@ -195,7 +203,7 @@ export default function App() {
       </div>
       <Overlays />
       <Viewer />
-      <HoverPeek />
+      {!isMobile && <HoverPeek />}
     </MotionConfig>
   );
 }
@@ -334,6 +342,7 @@ function useGlobalHandlers() {
     const onFocus = () => {
       const s = useApp.getState();
       const c = s.active ? s.chats[s.active] : undefined;
+      if (isMobile && !mobileConversationVisible(s)) return;
       if (s.active && !isThreadTab(s.active) && s.route === "shell" && s.atBottom && (c?.unread || c?.mention)) markRead(s.active);
     };
     // typing indicators expire on their own

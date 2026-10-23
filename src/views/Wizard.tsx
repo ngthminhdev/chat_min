@@ -6,6 +6,8 @@ import type { Platform } from "../lib/types";
 import { key, openChat, sortedChats, toast, useApp } from "../store";
 import { ColorPicker } from "../components/Overlays";
 import { Glyph, Icon } from "../ui/Icon";
+import { isMobile } from "../lib/mobile";
+import { showMobileList, useMobileBack } from "../mobile";
 
 const STEPS = ["Nền tảng", "Xác thực", "Đồng bộ", "Tên & màu"];
 const SYNC = ["Xác thực tài khoản", "Tải danh sách hội thoại", "Đồng bộ tin gần đây"];
@@ -26,15 +28,24 @@ export function Wizard() {
   const leave = (toastText?: string) => {
     useApp.setState({ route: useApp.getState().accounts.length ? "shell" : returnTo.current === "welcome" ? "welcome" : "shell", wizardFor: null });
     if (toastText) toast(toastText);
+    if (isMobile && useApp.getState().accounts.length) showMobileList();
   };
   const cancel = () => {
     void api.loginCancel(accountId ?? undefined).catch(() => {});
     leave();
   };
+  const back = () => {
+    if (step === 2 && !existing) {
+      void api.loginCancel(accountId ?? undefined).catch(() => {});
+      setAccountId(null); setError(""); setStep(1);
+    } else cancel();
+  };
+  useMobileBack(back);
 
   return (
     <>
       <header className="r2-header wizard-header">
+        {isMobile && <button className="tool-btn icon-only" aria-label="Quay lại" type="button" onClick={back}><Icon name="chevron-left" /></button>}
         <div className="od-field">
           <h1>{existing ? "Đăng nhập lại" : "Thêm tài khoản"}</h1>
           <p>{existing ? `${existing.name} · ${existing.handle}` : "Kết nối một tài khoản vào ChatMin"}</p>
@@ -464,8 +475,8 @@ function GoogleAuth({ setError, back, done }: AuthProps) {
       <div className="wizard-form">
         <div className="oauth-wait">
           <Icon name="external-link" />
-          <h3>Đang đợi bạn đăng nhập trong browser</h3>
-          <p>Chrome đã mở trang đồng ý của Google. Chọn tài khoản Workspace và bấm Cho phép, rồi quay lại đây.</p>
+          <h3>{isMobile ? "Chọn tài khoản và cấp quyền Google" : "Đang đợi bạn đăng nhập trong browser"}</h3>
+          <p>{isMobile ? "Hoàn tất chọn tài khoản Workspace và cấp quyền trong cửa sổ Google, rồi quay lại ChatMin." : "Chrome đã mở trang đồng ý của Google. Chọn tài khoản Workspace và bấm Cho phép, rồi quay lại đây."}</p>
         </div>
         <Actions>
           <button type="button" className="tool-btn" onClick={() => void api.loginCancel()}>Huỷ đăng nhập</button>

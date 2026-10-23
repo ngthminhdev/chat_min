@@ -56,7 +56,7 @@ export function MessageSearch() {
     .sort((a, b) => b[1].lastTs - a[1].lastTs || a[1].title.localeCompare(b[1].title));
   return (
     <section className="message-search" aria-label="Tìm kiếm tin nhắn">
-      <header className="message-search-head">
+      <header className="message-search-head mobile-page-heading">
         <div><h1>Tìm tin nhắn</h1><p>Tìm nội dung trong lịch sử đã đồng bộ trên máy.</p></div>
         <button className="tool-btn" onClick={() => useApp.setState({ route: "shell" })}><Icon name="reply" />Về hội thoại</button>
       </header>

@@ -11,6 +11,7 @@ import { SummaryButton, SummaryCard } from "./Summary";
 import { useMessageArrivals } from "./useMessageArrivals";
 import { messageRenderKey } from "../lib/message-identity";
 import { DelayedLoading } from "./DelayedLoading";
+import { MobileActions } from "../ui/MobileActions";
 
 /** A Google Chat thread in its own workspace tab: root, replies, and a composer that answers in-thread. */
 export function ThreadView({ tab }: { tab: string }) {
@@ -69,7 +70,7 @@ export function ThreadView({ tab }: { tab: string }) {
     <div className="content thread-content">
       <div className="conv-head">
         <button className="tool-btn icon-only back-btn" aria-label={`Về ${chat.title}`} data-tip={`Về ${chat.title}`} onClick={() => void openChat(meta.chatKey)}>
-          <Icon name="chevron-right" />
+          <Icon name="chevron-left" />
         </button>
         <ChatAvatar chat={chat} platform={platform} />
         <div className="title">
@@ -78,6 +79,7 @@ export function ThreadView({ tab }: { tab: string }) {
             {meta.topic ? `Topic · ${chat.title} · ${fmtCount(replies.length)} tin đã tải` : `Thread trong tab riêng · ${chat.title} · ${fmtCount(replies.length)} trả lời`}
           </span>
         </div>
+        <div className="conv-actions"><MobileActions label="Thao tác luồng trả lời">
         <button
           className={`tool-btn icon-only${muted ? " active" : ""}`}
           aria-pressed={muted}
@@ -89,6 +91,7 @@ export function ThreadView({ tab }: { tab: string }) {
         </button>
         <TranslateAllButton autoKey={tab} chatKey={meta.chatKey} msgs={shown} />
         <SummaryButton tab={tab} />
+        </MobileActions></div>
       </div>
       <SummaryCard tab={tab} />
       <div

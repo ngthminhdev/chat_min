@@ -3,16 +3,17 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { api } from "./lib/bridge";
 import { useApp } from "./store";
+import { isMobile } from "./lib/mobile";
 import "./styles/tokens.css";
 import "./styles/themes.css";
 import "./styles/base.css";
 import "./styles/layout.css";
 import "./styles/components.css";
 import "./styles/chatmin.css";
+import "./styles/mobile.css";
 
 // phone build (Android/iOS webview) or `?mobile` in the browser demo: one pane at a time, no
 // keyboard hints, no status bar — see the `.mobile` rules in chatmin.css
-export const isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent) || location.search.includes("mobile");
 document.documentElement.classList.toggle("mobile", isMobile);
 
 const report = (what: string) => void api.logJs(what).catch(() => {});

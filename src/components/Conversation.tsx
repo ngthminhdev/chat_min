@@ -16,6 +16,9 @@ import { messageRenderKey } from "../lib/message-identity";
 import { TypingIndicator } from "./TypingIndicator";
 import { DelayedLoading } from "./DelayedLoading";
 import { langLabel, toggleAutoTranslate, translateMissing } from "../ai";
+import { isMobile } from "../lib/mobile";
+import { showMobileList } from "../mobile";
+import { MobileActions } from "../ui/MobileActions";
 
 const HEALTH_MSG: Record<string, string> = {
   offline: "Tài khoản đang mất kết nối. Nháp vẫn được giữ trên máy.",
@@ -29,6 +32,7 @@ export function Conversation() {
   const chat = useApp((s) => (s.active ? s.chats[s.active] : undefined));
   const health = useApp((s) => (chat ? s.health[chat.accountId] : undefined));
   const platform = useApp((s) => s.accounts.find((a) => a.id === chat?.accountId)?.platform);
+  const accountName = useApp((s) => s.accounts.find((a) => a.id === chat?.accountId)?.name);
   const insp = useApp((s) => s.inspTab);
   const rightOff = useApp((s) => s.rightCollapsed);
   const threadCount = useApp((s) => (s.active && chat?.threaded ? new Set((s.msgs[s.active] ?? []).filter((m) => m.threadReply).map((m) => m.threadId)).size : 0));
@@ -55,9 +59,9 @@ export function Conversation() {
           <span className="ring"><Icon name="messages-square" /></span>
           <strong>Không có hội thoại nào đang mở</strong>
           <p>
-            Chọn một chat ở sidebar, hoặc nhấn <kbd className="kbd">⌘K</kbd> để nhảy tới chat bất kỳ.
+            {isMobile ? "Chọn hội thoại để xem và gửi tin nhắn." : <>Chọn một chat ở sidebar, hoặc nhấn <kbd className="kbd">⌘K</kbd> để nhảy tới chat bất kỳ.</>}
           </p>
-          <button className="tool-btn primary" onClick={() => useApp.setState({ palette: { mode: "chats" } })}>
+          <button className="tool-btn primary" onClick={() => isMobile ? showMobileList() : useApp.setState({ palette: { mode: "chats" } })}>
             <Icon name="search" /> Mở hội thoại
           </button>
         </div>
@@ -76,15 +80,16 @@ export function Conversation() {
   return (
     <div className={`content${banner ? " with-health" : ""}`}>
       <div className="conv-head">
-        <button className="tool-btn icon-only conv-back" type="button" aria-label="Danh sách hội thoại" onClick={() => useApp.setState({ leftCollapsed: false })}>
+        <button className="tool-btn icon-only conv-back" type="button" aria-label="Danh sách hội thoại" onClick={() => isMobile ? showMobileList() : useApp.setState({ leftCollapsed: false })}>
           <Icon name="chevron-left" />
         </button>
         <ChatAvatar chat={chat} platform={platform} />
         <div className="title">
           <strong>{chat.title}</strong>
-          <span>{sub}</span>
+          <span>{isMobile ? `${accountName} · ${sub}` : sub}</span>
         </div>
         <div className="conv-actions" role="group" aria-label="Thao tác hội thoại">
+        <MobileActions label="Thao tác hội thoại">
         {(chat.threaded || chat.forum) && (
           <button
             className={`tool-btn conv-threads${insp === "threads" && !rightOff ? " active" : ""}${threadNew ? " has-new" : ""}`}
@@ -127,10 +132,11 @@ export function Conversation() {
           aria-expanded={!rightOff}
           data-tip="Thông tin chat"
           data-kbd="⌘R"
-          onClick={() => useApp.setState((s) => ({ rightCollapsed: !s.rightCollapsed }))}
+          onClick={() => useApp.setState((s) => ({ rightCollapsed: !s.rightCollapsed, inspTab: "info" }))}
         >
           <Icon name="info" />
         </button>
+        </MobileActions>
         </div>
         {banner && (
           <div className={`health-banner ${h}`} role="status">

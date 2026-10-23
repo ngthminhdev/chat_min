@@ -10,6 +10,7 @@ import { anchor, confirmDialog, DEFAULT_NOTIFY, fail, toast, useApp, type Notify
 import { removeAccount, renameAccount } from "../App";
 import { startWizard } from "./Wizard";
 import { Glyph, Icon, type IconName } from "../ui/Icon";
+import { isMobile } from "../lib/mobile";
 
 const SHORTCUTS: [string, string][] = [
   ["Thêm tài khoản", "⌘N"], ["Chat & lệnh", "⌘K"], ["Tìm tin mọi tài khoản", "⌘⇧F"], ["Tìm trong chat", "⌘F"],
@@ -51,7 +52,7 @@ export function Settings() {
 
   return (
     <>
-      <header className="r2-header">
+      <header className="r2-header mobile-page-heading">
         <div className="od-field">
           <h1>Cài đặt</h1>
           <p>Giao diện, tài khoản, thông báo và bộ nhớ</p>
@@ -60,7 +61,7 @@ export function Settings() {
       <div className="settings-shell">
         <section className="settings-card">
           <h3>Giao diện</h3>
-          <Row title="Chủ đề giao diện" help="Áp dụng cho toàn bộ cửa sổ." icon="palette">
+          <Row title="Chủ đề giao diện" help={isMobile ? "Áp dụng cho toàn bộ ứng dụng." : "Áp dụng cho toàn bộ cửa sổ."} icon="palette">
             <select className="settings-select" aria-label="Chủ đề giao diện" value={prefs.theme} onChange={(e) => setPrefs({ theme: e.target.value })}>
               <option value="">Bearded Arc · dark</option>
               {THEMES.filter((t) => t.id !== "dark" && t.id !== "default-dark").map((t) => (
@@ -68,6 +69,7 @@ export function Settings() {
               ))}
             </select>
           </Row>
+          {!isMobile && <>
           <Row title="Nền cửa sổ" help="Nền toàn cửa sổ, gồm cả hai dock. Các thành phần nội dung giữ nền riêng." icon="palette">
             <select className="settings-select" aria-label="Nền cửa sổ" value={prefs.backgroundMode} onChange={(e) => setPrefs({ backgroundMode: e.target.value as BackgroundMode })}>
               <option value="solid">Nền đặc</option>
@@ -83,6 +85,7 @@ export function Settings() {
             </div>
           </Row>}
           <p className="r2-muted">Nền xuyên desktop hiển thị trong ứng dụng desktop. Tùy chọn giảm độ trong suốt của hệ thống được ưu tiên.</p>
+          </>}
           <Row title="Cỡ chữ giao diện" help="Bước 0.5px. Bấm giá trị để về 13px.">
             <div className="font-stepper">
               <button type="button" className="tool-btn" aria-label="Giảm cỡ chữ" disabled={prefs.size <= 11} onClick={() => setPrefs({ size: Math.max(11, prefs.size - 0.5) })}>−</button>
@@ -170,7 +173,7 @@ export function Settings() {
           <h3>Thông báo</h3>
           <Row
             title="Kiểm tra thông báo"
-            help="Gửi một thông báo macOS ngay. Không thấy thì mở System Settings → Notifications → ChatMin. Space Google Chat báo khi có @nhắc tên, thread mới, hoặc trả lời trong thread bạn đã nhắn — như Google Chat."
+            help={isMobile ? "Gửi một thông báo thử. Nếu không thấy, kiểm tra quyền Thông báo của ChatMin trong Cài đặt Android." : "Gửi một thông báo macOS ngay. Không thấy thì mở System Settings → Notifications → ChatMin. Space Google Chat báo khi có @nhắc tên, thread mới, hoặc trả lời trong thread bạn đã nhắn — như Google Chat."}
             icon="bell"
           >
             <button className="tool-btn" onClick={() => void api.notifyTest().then(() => toast("Đã gửi thông báo thử", "bell")).catch(fail)}>
@@ -182,7 +185,7 @@ export function Settings() {
             return (
               <div key={a.id} className="notification-account">
                 <h4>{a.name}</h4>
-                <Row title="Thông báo" help="Bật thông báo macOS cho tài khoản này." icon="bell">
+                <Row title="Thông báo" help={isMobile ? "Bật thông báo cho tài khoản này." : "Bật thông báo macOS cho tài khoản này."} icon="bell">
                   <Toggle checked={p.enabled} label={`Thông báo ${a.name}`} onChange={(v) => setNotif(a.id, { enabled: v })} />
                 </Row>
                 <Row title="Chỉ khi được nhắc tên" help="Chỉ báo khi bạn được nhắc tên.">
@@ -207,14 +210,14 @@ export function Settings() {
 
         <StorageCard />
 
-        <section className="settings-card">
+        {!isMobile && <section className="settings-card">
           <h3>Phím tắt</h3>
           <div className="shortcut-grid">
             {SHORTCUTS.map(([l, k]) => (
               <div key={l} className="shortcut-row"><span>{l}</span><kbd className="kbd">{k}</kbd></div>
             ))}
           </div>
-        </section>
+        </section>}
         <p className="r2-muted">Giao diện, thông báo và phiên đăng nhập được lưu trên máy này.</p>
       </div>
     </>
@@ -372,10 +375,10 @@ function StorageCard() {
   return (
     <section className="settings-card">
       <h3>Bộ nhớ & tải về</h3>
-      <Row title="Thư mục tải về" help={v?.downloadDir ?? "…"} icon="folder-open">
+      {!isMobile && <Row title="Thư mục tải về" help={v?.downloadDir ?? "…"} icon="folder-open">
         <button className="tool-btn" onClick={() => void pickFolder().then((d) => d && set({ downloadDir: d }))}>Chọn…</button>
         {v && <button className="tool-btn" onClick={() => void openPath(v.downloadDir).catch(fail)}>Mở</button>}
-      </Row>
+      </Row>}
       <Row title="Giới hạn bộ nhớ đệm" help="Ảnh, video, tệp đã xem. Vượt giới hạn thì xoá cái lâu không dùng nhất; cần lại sẽ tải lại." icon="download">
         <select className="settings-select" aria-label="Giới hạn bộ nhớ đệm" value={v?.cacheMb ?? 2048} onChange={(e) => set({ cacheMb: +e.target.value })}>
           {CACHE_MB.map(([n, l]) => <option key={n} value={n}>{l}</option>)}
