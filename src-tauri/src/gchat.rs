@@ -1011,6 +1011,19 @@ fn to_msg(account_id: &str, me: &str, m: &Value) -> Msg {
     if !formatted.is_empty() {
         text = chat_markup(formatted, &names);
     }
+    // a Meet huddle ("Call ended") carries no text: only a RICH_LINK annotation whose
+    // status Google rewrites in place, so it must not read as an edit either
+    let huddle = m["annotations"].as_array().into_iter().flatten().find_map(|a| {
+        let d = &a["richLinkMetadata"]["meetSpaceLinkData"];
+        Some((d["huddleStatus"].as_str()?, a["richLinkMetadata"]["uri"].as_str().unwrap_or_default()))
+    });
+    if let Some((status, uri)) = huddle {
+        text = match status {
+            "STARTED" => format!("📞 Cuộc gọi đang diễn ra {uri}"),
+            "MISSED" => "📞 Cuộc gọi nhỡ".into(),
+            _ => "📞 Cuộc gọi đã kết thúc".into(),
+        };
+    }
     let media = m["attachment"].as_array().and_then(|a| a.first()).map(|a| {
         let mime = a["contentType"].as_str().unwrap_or_default();
         let drive = a["driveDataRef"]["driveFileId"].as_str();
@@ -1038,7 +1051,7 @@ fn to_msg(account_id: &str, me: &str, m: &Value) -> Msg {
         sender_name: m["sender"]["displayName"].as_str().unwrap_or_default().into(),
         sender_id,
         ts,
-        edited: !updated.is_empty() && updated != created && m["deletionMetadata"].is_null(),
+        edited: !updated.is_empty() && updated != created && m["deletionMetadata"].is_null() && huddle.is_none(),
         deleted: !m["deletionMetadata"].is_null(),
         kind: if media.is_some() { "media" } else { "text" }.into(),
         text,
@@ -1361,5 +1374,19 @@ mod tests {
         assert!(msg.mentions_me);
         assert_eq!(msg.chat_id, "spaces/A");
         assert!(!msg.outgoing);
+    }
+
+    #[test]
+    fn meet_huddle_gets_text_and_is_not_an_edit() {
+        let m = json!({
+            "name": "spaces/A/messages/C", "createTime": "2026-10-23T12:33:58Z", "lastUpdateTime": "2026-10-23T12:34:15Z",
+            "sender": {"name": "users/2", "displayName": "Kamen"}, "formattedText": "\n",
+            "annotations": [{"type": "RICH_LINK", "startIndex": 0, "richLinkMetadata": {
+                "uri": "https://meet.google.com/pod-bawk-asu", "richLinkType": "MEET_SPACE",
+                "meetSpaceLinkData": {"meetingCode": "pod-bawk-asu", "type": "HUDDLE", "huddleStatus": "ENDED"}}}]
+        });
+        let msg = to_msg("gc", "users/1", &m);
+        assert_eq!(msg.text, "📞 Cuộc gọi đã kết thúc");
+        assert!(!msg.edited);
     }
 }
