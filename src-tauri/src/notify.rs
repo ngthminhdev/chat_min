@@ -281,6 +281,7 @@ pub fn permission(app: &AppHandle, ask: bool) -> String {
 /// Brings the window up and opens `chat` ("account|chat"; empty: just the window).
 /// `target`: "account|chat", optionally followed by "\nmessage id\nthread id".
 fn open(app: &AppHandle, target: &str) {
+    eprintln!("[notify] open {:?}", target.split('\n').next().unwrap_or(""));
     #[cfg(desktop)]
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();

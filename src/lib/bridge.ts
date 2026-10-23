@@ -102,7 +102,9 @@ export const api = {
 export const fileSrc = (path: string) => (isTauri && path && !path.startsWith("data:") ? convertFileSrc(path) : path);
 
 /** Telegram video played while it downloads (Range requests served by the tgstream protocol in lib.rs). */
-export const streamSrc = (accountId: string, fileRef: string, mime: string) => `tgstream://localhost/${accountId}/${fileRef}?${mime || "video/mp4"}`;
+// Android (like Windows) serves custom schemes as http://<scheme>.localhost; macOS as <scheme>://localhost
+const STREAM_BASE = /Android/i.test(navigator.userAgent) ? "http://tgstream.localhost" : "tgstream://localhost";
+export const streamSrc = (accountId: string, fileRef: string, mime: string) => `${STREAM_BASE}/${accountId}/${fileRef}?${mime || "video/mp4"}`;
 
 export async function openUrl(url: string) {
   if (!isTauri) return void window.open(url, "_blank", "noopener");
