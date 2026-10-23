@@ -556,8 +556,16 @@ fn emoji_palette(app: tauri::AppHandle) {
 }
 /// Webview errors (no console in release builds) land in the app's stderr log.
 #[tauri::command]
-fn log_js(msg: String) {
+fn log_js(core: C, msg: String) {
     eprintln!("[js] {msg}");
+    // release builds have no console: keep the last ~1 MB in <cache>/js.log
+    let path = core.cache_dir.join("js.log");
+    if std::fs::metadata(&path).map(|m| m.len() > 1 << 20).unwrap_or(false) {
+        let _ = std::fs::remove_file(&path);
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = std::io::Write::write_all(&mut f, format!("{} {msg}\n", chrono::Local::now().format("%m-%d %H:%M:%S")).as_bytes());
+    }
 }
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -307,9 +307,23 @@ function MediaView({ accountId, media, sending }: { accountId: string; media: Me
       >
         {live && /\.gif$/i.test(dl.path) ? (
           // my own upload: Telegram serves the converted mp4, TDLib keeps the local .gif as its copy — <video> can't play that
-          <img className="od-media" src={fileSrc(dl.path)} alt="GIF" onError={dl.broken} />
+          <img className="od-media" src={fileSrc(dl.path)} alt="GIF" onError={() => { void api.logJs(`gif img error ${dl.path}`); dl.broken(); }} />
         ) : live ? (
-          <video className="od-media" src={fileSrc(dl.path)} poster={poster || undefined} muted loop autoPlay playsInline onError={dl.broken} />
+          <video
+            className="od-media"
+            src={fileSrc(dl.path)}
+            poster={poster || undefined}
+            muted
+            loop
+            autoPlay
+            playsInline
+            onPlaying={() => void api.logJs(`video playing ${media.name} ${dl.path}`)}
+            onError={(e) => {
+              const err = e.currentTarget.error;
+              void api.logJs(`video error code=${err?.code} ${err?.message ?? ""} ${media.mime} ${media.size}B ${dl.path}`);
+              dl.broken();
+            }}
+          />
         ) : poster ? (
           <img className="od-media" src={poster} alt={media.name} />
         ) : null}
