@@ -746,7 +746,7 @@ impl Tg {
         let reply = reply_to.and_then(|r| r.parse::<i64>().ok()).map(|id| {
             enums::InputMessageReplyTo::Message(t::InputMessageReplyToMessage { message_id: id, quote: None, checklist_task_id: 0 })
         });
-        let caption = with_mentions(&text);
+        let caption = formatted(c, &text).await;
         let content = match file {
             Some(path) if voice.is_some() => enums::InputMessageContent::InputMessageVoiceNote(t::InputMessageVoiceNote {
                 voice_note: enums::InputFile::Local(t::InputFileLocal { path }),
@@ -851,7 +851,7 @@ impl Tg {
     pub async fn edit(&self, account_id: &str, chat_id: &str, msg_id: &str, text: String) -> R<()> {
         let c = self.client(account_id)?;
         let content = enums::InputMessageContent::InputMessageText(t::InputMessageText {
-            text: t::FormattedText { text, entities: vec![] },
+            text: formatted(c, &text).await,
             link_preview_options: None,
             clear_draft: false,
         });
@@ -1035,6 +1035,50 @@ fn with_mentions(text: &str) -> t::FormattedText {
     }
     out.push_str(rest);
     t::FormattedText { text: out, entities }
+}
+
+/// Our markup → Telegram's markdown for parseMarkdown: *b* → **b**, _i_ → __i__, ~s~ → ~~s~~.
+/// `code`, ```pre``` and [label](url) read the same in both; code spans are left alone.
+/// A marker opens when it starts a word and closes when it ends one, so snake_case and
+/// 2 * 3 stay as typed; a marker opens only when its closer is on the same line.
+fn to_tg_markdown(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len() + 8);
+    let mut open = [false; 3];
+    let mut in_code = false;
+    let boundary = |c: Option<&char>| c.map_or(true, |c| !c.is_alphanumeric());
+    for (i, &c) in chars.iter().enumerate() {
+        if c == '`' {
+            in_code = !in_code;
+        }
+        let k = match c { '*' => 0, '_' => 1, '~' => 2, _ => 3 };
+        if in_code || k == 3 {
+            out.push(c);
+            continue;
+        }
+        let (prev, next) = (chars.get(i.wrapping_sub(1)).filter(|_| i > 0), chars.get(i + 1));
+        let closes_at = |j: usize| chars[j] == c && j > i + 1 && !chars[j - 1].is_whitespace() && chars[j - 1] != c && boundary(chars.get(j + 1));
+        // an opener needs its closer on the same line (like the frontend's renderer): ~/path stays
+        let has_closer = || (i + 1..chars.len()).take_while(|&j| chars[j] != '\n' && chars[j] != '`').any(closes_at);
+        let opens = !open[k] && boundary(prev) && next.is_some_and(|n| !n.is_whitespace() && *n != c) && has_closer();
+        let closes = open[k] && prev.is_some_and(|p| !p.is_whitespace() && *p != c) && boundary(next);
+        if opens || closes {
+            open[k] = opens;
+            out.push(c);
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Text as typed in the composer → what Telegram gets: mentions as entities, markup as
+/// entities via TDLib's own markdown parser (falls back to the plain text on error).
+async fn formatted(c: i32, text: &str) -> t::FormattedText {
+    let ft = with_mentions(&to_tg_markdown(text));
+    match f::parse_markdown(ft.clone(), c).await {
+        Ok(enums::FormattedText::FormattedText(parsed)) => parsed,
+        Err(_) => with_mentions(text),
+    }
 }
 
 fn status_text(s: &enums::UserStatus) -> String {
@@ -1460,6 +1504,16 @@ mod tests {
         assert_eq!(f.text, "Hi Lan Phạm, xem @[x](no) và 😀B!");
         let e: Vec<(i32, i32)> = f.entities.iter().map(|e| (e.offset, e.length)).collect();
         assert_eq!(e, vec![(3, 8), (31, 1)]); // UTF-16: 😀 counts 2
+    }
+
+    #[test]
+    fn composer_markup_becomes_telegram_markdown() {
+        assert_eq!(to_tg_markdown("*bold* and _it_ and ~gone~"), "**bold** and __it__ and ~~gone~~");
+        assert_eq!(to_tg_markdown("snake_case_name, 2 * 3 * 4, ~/path, a_"), "snake_case_name, 2 * 3 * 4, ~/path, a_");
+        assert_eq!(to_tg_markdown("`*raw*` and ```\n_x_\n```"), "`*raw*` and ```\n_x_\n```");
+        assert_eq!(to_tg_markdown("tele app:\n`32900283`"), "tele app:\n`32900283`");
+        assert_eq!(to_tg_markdown("*a*b* c"), "**a*b** c"); // same lazy span as the frontend renderer
+        assert_eq!(to_tg_markdown("*open\nline* x"), "*open\nline* x");
     }
 
     #[test]
