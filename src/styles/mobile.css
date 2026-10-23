@@ -243,3 +243,6 @@ html.mobile body .main .content .conv-head .title strong { font-size: 16px; line
 .mobile .msg:not(.last) .msg-col .msg-meta { position: static; opacity: 1; pointer-events: auto; }
 .mobile .msg:not(.last) .msg-col .message-footer { position: static; height: auto; }
 .mobile .thread-content .back-btn .ic { transform: none; }
+/* Android WebView 124 (emulator, both GPU backends) painted a light band across the Welcome
+   hero whenever the second brand logo rastered in the main layer; its own layer fixes it. */
+.mobile .welcome-platforms .glyph { will-change: transform; }
