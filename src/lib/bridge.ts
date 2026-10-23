@@ -70,6 +70,7 @@ export const api = {
   markRead: (accountId: string, chatId: string, msgIds: string[]) => call<void>("mark_read", { accountId, chatId, msgIds }),
   setOpen: (accountId: string, chatId: string, open: boolean) => call<void>("set_open", { accountId, chatId, open }),
   setMuted: (accountId: string, chatId: string, muted: boolean) => call<void>("set_muted", { accountId, chatId, muted }),
+  threadMute: (accountId: string, chatId: string, threadId: string, muted: boolean) => call<void>("thread_mute", { accountId, chatId, threadId, muted }),
   topics: (accountId: string, chatId: string) => call<Topic[]>("topics", { accountId, chatId }),
   topicHistory: (accountId: string, chatId: string, topic: string, before: number, limit: number) =>
     call<Msg[]>("topic_history", { accountId, chatId, topic, before, limit }),

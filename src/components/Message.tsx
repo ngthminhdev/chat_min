@@ -69,7 +69,6 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
 
   return (
     <Wrap className={cls} id={`m-${m.id}`} {...anim}
-      onMouseEnter={me ? undefined : (e: React.MouseEvent) => sideActions(e.currentTarget as HTMLElement)}
       onContextMenu={(e: React.MouseEvent) => {
         if (e.defaultPrevented) return;
         e.preventDefault();
@@ -151,6 +150,7 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
             </button>
           </div>
         )}
+      </div>
       <div className="msg-actions" role="toolbar" aria-label="Thao tác tin nhắn">
         <button aria-label="Trả lời" data-tip="Trả lời" onClick={() => setReply(tab, m)}>
           <Icon name="reply" />
@@ -191,20 +191,9 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
           <Icon name="ellipsis" />
         </button>
       </div>
-      </div>
     </Wrap>
   );
 });
-
-/** Incoming message: the hover toolbar sits at the row's right edge (where it is for my own
- *  messages): the bar floats above the row, so it never collides with the bubble. */
-function sideActions(row: HTMLElement) {
-  const col = row.querySelector<HTMLElement>(".msg-col");
-  if (!col) return;
-  const room = row.getBoundingClientRect().right - col.getBoundingClientRect().right;
-  row.classList.add("act-side");
-  row.style.setProperty("--act-room", `${room}px`); // the bar lives in .msg-col: push it out to the row's edge
-}
 
 function Meta({ m, caps }: { m: Msg; caps: Record<Cap, boolean> }) {
   // an upload in flight: Rust reports it under the file's local path (tg.rs / gchat.rs)

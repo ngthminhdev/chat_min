@@ -137,7 +137,7 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
   switch (cmd) {
     case "app_state": {
       const empty = new URLSearchParams(location.search).has("empty");
-      return { accounts: empty ? [] : accounts, health, chats: empty ? [] : chats, tgConfigured: true, gchatConfigured: true } satisfies AppState;
+      return { accounts: empty ? [] : accounts, health, chats: empty ? [] : chats, tgConfigured: true, gchatConfigured: true, mutedThreads: [] } satisfies AppState;
     }
     case "messages": {
       await wait(250);
@@ -147,6 +147,8 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
     }
     case "cached_messages":
       return [[], []];
+    case "thread_mute":
+      return;
     case "storage":
       return { downloadDir: "~/Downloads/ChatMin", cacheMb: 2048, keepDays: 30, tgBytes: 1.3e9, localBytes: 188e6 };
     case "storage_set":

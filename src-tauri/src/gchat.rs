@@ -1064,8 +1064,19 @@ fn to_msg(account_id: &str, me: &str, m: &Value) -> Msg {
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
+/// Google parses a line of only `---` / `***` / `___` as a markdown rule, leaving no text:
+/// the API then rejects the message as empty. A zero-width space in front keeps the dashes.
+fn keep_rules(text: &str) -> String {
+    let rule = |l: &str| {
+        let t = l.trim();
+        let c = t.chars().next();
+        t.len() >= 3 && matches!(c, Some('-' | '*' | '_')) && t.chars().all(|x| Some(x) == c || x == ' ')
+    };
+    text.split('\n').map(|l| if rule(l) { format!("\u{200B}{l}") } else { l.to_string() }).collect::<Vec<_>>().join("\n")
+}
+
 fn create_message_request(space: &str, text: &str, thread: Option<&str>, quoted: Option<&Msg>) -> (String, Value) {
-    let mut body = json!({ "text": text });
+    let mut body = json!({ "text": keep_rules(text) });
     let thread = thread.filter(|t| !t.is_empty());
     if let Some(t) = thread { body["thread"] = json!({ "name": t }); }
     if let Some(q) = quoted { body["quotedMessageMetadata"] = json!({ "name": q.id, "lastUpdateTime": q.rev }); }
@@ -1267,6 +1278,13 @@ fn unescape(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rules_get_a_zero_width_space() {
+        assert_eq!(keep_rules("---"), "\u{200B}---");
+        assert_eq!(keep_rules("ok\n* * *\n--"), "ok\n\u{200B}* * *\n--");
+        assert_eq!(keep_rules("- item"), "- item");
+    }
 
     #[test]
     fn html_entities_decode() {

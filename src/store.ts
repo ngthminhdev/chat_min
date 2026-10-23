@@ -61,6 +61,8 @@ export interface SyncState { checks: ("idle" | "run" | "ok" | "err")[]; log: str
 interface State {
   booted: boolean;
   tgConfigured: boolean;
+  /** "chatKey|threadId" → muted: no banner, no bell entry (thread_mute) */
+  mutedThreads: Record<string, true>;
   gchatConfigured: boolean;
   accounts: Account[];
   health: Record<string, Health>;
@@ -156,6 +158,7 @@ const saved: Partial<State> = (() => {
 export const useApp = create<State>(() => ({
   booted: false,
   tgConfigured: false,
+  mutedThreads: {},
   gchatConfigured: false,
   accounts: [],
   health: {},
@@ -326,6 +329,7 @@ async function bootOnce() {
     active,
     tgConfigured: st.tgConfigured,
     gchatConfigured: st.gchatConfigured,
+    mutedThreads: Object.fromEntries(st.mutedThreads.map((k) => [k, true as const])),
     route: st.accounts.length ? "shell" : "welcome",
   });
   eventOff ??= onEvent(applyEvent);
@@ -866,4 +870,22 @@ export async function toggleReaction(k: string, m: Msg, emoji: string) {
 /** Dedicated message search, independent of the command palette. */
 export function openSearch(scope = "") {
   set({ route: "search", palette: null, pop: null, searchScope: scope, searchAccount: scope ? splitKey(scope)[0] : "" });
+}
+
+/** Mute/unmute a thread or topic: nothing from it rings or reaches the bell. */
+export async function muteThread(chatKey: string, threadId: string, muted: boolean) {
+  const k = `${chatKey}|${threadId}`;
+  set((s) => {
+    const mutedThreads = { ...s.mutedThreads };
+    if (muted) mutedThreads[k] = true;
+    else delete mutedThreads[k];
+    return { mutedThreads, inbox: muted ? s.inbox.filter((m) => !(m.threadId === threadId && key(m.accountId, m.chatId) === chatKey)) : s.inbox };
+  });
+  const [accountId, chatId] = splitKey(chatKey);
+  try {
+    await api.threadMute(accountId, chatId, threadId, muted);
+    toast(muted ? "Đã tắt thông báo luồng này" : "Đã bật lại thông báo luồng này");
+  } catch (e) {
+    fail(e);
+  }
 }

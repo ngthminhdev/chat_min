@@ -112,6 +112,8 @@ export interface AppState {
   chats: Chat[];
   tgConfigured: boolean;
   gchatConfigured: boolean;
+  /** "account|chat|thread" keys of threads/topics that never notify */
+  mutedThreads: string[];
 }
 
 export interface AiView { format: "openai" | "anthropic"; endpoint: string; model: string; guide: string; hasKey: boolean }

@@ -38,6 +38,8 @@ struct Config {
     cache_mb: Option<u64>,
     /// keep cached media this many days since last use; None = 30, Some(0) = forever
     keep_days: Option<u32>,
+    /// threads/topics that never ring nor reach the bell: "account|chat|thread"
+    muted_threads: Vec<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -125,6 +127,11 @@ impl Core {
         tg as u64 + local
     }
 
+    /// A muted thread/topic: nothing from it rings or lands in the bell.
+    fn thread_muted(&self, m: &Msg) -> bool {
+        !m.thread_id.is_empty() && self.config.lock().unwrap().muted_threads.contains(&format!("{}|{}|{}", m.account_id, m.chat_id, m.thread_id))
+    }
+
     pub fn put_msg(&self, msg: Msg, is_new: bool) {
         // Hold the store mutex across existence check + upsert: concurrent pollers
         // and history loads must agree on whether this ID is a first delivery.
@@ -154,16 +161,18 @@ impl Core {
         let is_new = is_new && first_delivery && !msg.deleted;
         let mut inbox = false;
         if is_new {
+            let muted = self.thread_muted(&msg);
             let (chat, followed) = {
                 let s = self.store();
                 let chat = s.chat(&msg.account_id, &msg.chat_id).ok().flatten();
-                let followed = msg.thread_reply
+                let followed = !muted
+                    && msg.thread_reply
                     && !msg.thread_id.is_empty()
                     && s.thread_msgs(&msg.account_id, &msg.chat_id, &msg.thread_id).is_ok_and(|t| t.iter().any(|m| m.outgoing));
                 (chat, followed)
             };
-            inbox = !msg.outgoing && (msg.mentions_me || followed || chat.as_ref().is_some_and(|c| c.kind == "dm" && !c.muted));
-            let rang = self.notifier.message(&self.app, chat.as_ref(), &msg, followed);
+            inbox = !muted && !msg.outgoing && (msg.mentions_me || followed || chat.as_ref().is_some_and(|c| c.kind == "dm" && !c.muted));
+            let rang = if muted { notify::Ring::No } else { self.notifier.message(&self.app, chat.as_ref(), &msg, followed) };
             // how long a message took to reach us (what the polling cadence is tuned by), and
             // why it did or didn't ring — no names or content
             let c = chat.as_ref();
@@ -305,6 +314,7 @@ struct AppState {
     chats: Vec<Chat>,
     tg_configured: bool,
     gchat_configured: bool,
+    muted_threads: Vec<String>,
 }
 
 #[tauri::command]
@@ -320,7 +330,20 @@ fn app_state(core: C) -> Res<AppState> {
         chats,
         tg_configured: c.tg_api_id != 0 && !c.tg_api_hash.is_empty(),
         gchat_configured: !c.gchat_client_id.is_empty(),
+        muted_threads: c.muted_threads,
     })
+}
+
+/// Mute/unmute one thread or topic: no banner, no bell entry, no "followed" status.
+#[tauri::command]
+fn thread_mute(core: C, account_id: String, chat_id: String, thread_id: String, muted: bool) -> Res<()> {
+    let key = format!("{account_id}|{chat_id}|{thread_id}");
+    let mut c = core.config.lock().unwrap();
+    c.muted_threads.retain(|k| k != &key);
+    if muted {
+        c.muted_threads.push(key);
+    }
+    write_private(&core.data_dir.join("config.json"), &serde_json::to_string_pretty(&*c).unwrap()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -613,7 +636,9 @@ fn presence(core: C<'_>) -> Vec<String> {
 /// Mentions + DMs for the notification inbox (titlebar bell).
 #[tauri::command]
 fn inbox(core: C<'_>, limit: i64) -> Res<Vec<Msg>> {
-    Ok(core.store().inbox(limit)?)
+    let mut v = core.store().inbox(limit)?;
+    v.retain(|m| !core.thread_muted(m));
+    Ok(v)
 }
 #[tauri::command]
 fn cached_messages(core: C<'_>, account_id: String, chat_id: String, limit: i64) -> Res<(Vec<Msg>, Vec<Msg>)> {
@@ -1094,6 +1119,7 @@ pub fn run() {
             mark_read,
             set_open,
             set_muted,
+            thread_mute,
             download,
             search,
             notify_prefs,

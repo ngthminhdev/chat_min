@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { fmtCount, plain } from "../lib/format";
-import { capsOf, openChat, seenThread, toast, useApp } from "../store";
+import { capsOf, muteThread, openChat, seenThread, toast, useApp } from "../store";
 import { ChatAvatar } from "../ui/Avatar";
 import { Icon } from "../ui/Icon";
 import { Composer } from "./Composer";
@@ -16,6 +16,7 @@ export function ThreadView({ tab }: { tab: string }) {
   const platform = useApp((s) => s.accounts.find((a) => a.id === chat?.accountId)?.platform);
   const list = useApp((s) => (meta ? s.msgs[meta.chatKey] : undefined));
   const fresh = useApp((s) => s.fresh);
+  const muted = useApp((s) => (meta ? !!s.mutedThreads[`${meta.chatKey}|${meta.threadId}`] : false));
   const jumpTo = useApp((s) => s.jumpTo);
   const box = useRef<HTMLDivElement>(null);
 
@@ -73,6 +74,15 @@ export function ThreadView({ tab }: { tab: string }) {
             {meta.topic ? `Topic · ${chat.title} · ${fmtCount(replies.length)} tin đã tải` : `Thread trong tab riêng · ${chat.title} · ${fmtCount(replies.length)} trả lời`}
           </span>
         </div>
+        <button
+          className={`tool-btn icon-only${muted ? " active" : ""}`}
+          aria-pressed={muted}
+          aria-label={muted ? "Bật thông báo luồng này" : "Tắt thông báo luồng này"}
+          data-tip={muted ? "Bật thông báo luồng này" : "Tắt thông báo luồng này"}
+          onClick={() => void muteThread(meta.chatKey, meta.threadId, !muted)}
+        >
+          <Icon name={muted ? "bell-off" : "bell"} />
+        </button>
         <TranslateAllButton autoKey={tab} chatKey={meta.chatKey} msgs={shown} />
         <SummaryButton tab={tab} />
       </div>
