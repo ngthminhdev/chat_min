@@ -1007,9 +1007,11 @@ fn to_msg(account_id: &str, me: &str, m: &Value) -> Msg {
             text = format!("{}@{{{inner}}}{}", chars[..s].iter().collect::<String>(), chars[s + l..].iter().collect::<String>());
         }
     }
-    // formattedText keeps lists, bold, code blocks… that `text` flattens
+    // formattedText keeps lists, bold, links… that `text` flattens — but it mangles ```
+    // blocks (fence dropped, newlines removed, 4 spaces in front), so those come back from `text`
     if !formatted.is_empty() {
-        text = chat_markup(formatted, &names);
+        let raw = m["text"].as_str().unwrap_or_default();
+        text = chat_markup(&restore_code_blocks(formatted, raw), &names);
     }
     // a Meet huddle ("Call ended") carries no text: only a RICH_LINK annotation whose
     // status Google rewrites in place, so it must not read as an edit either
@@ -1245,6 +1247,39 @@ fn chat_markup(ft: &str, names: &HashMap<String, String>) -> String {
     unescape(&out)
 }
 
+/// A ``` block in `formattedText` is its lines glued together without newlines behind
+/// four spaces; `text` has the lines but no fence. Each such run that matches a stretch of
+/// `text` (newlines ignored) is replaced by that stretch inside a fence. Single lines that
+/// match without a line break stay as they are: an indented line is not a code block.
+fn restore_code_blocks(formatted: &str, text: &str) -> String {
+    if !formatted.contains("    ") {
+        return formatted.to_string();
+    }
+    // `text` without newlines, with each flat char's byte offset in `text`
+    let (flat, at): (String, Vec<usize>) = text.char_indices().filter(|(_, c)| *c != '\n').map(|(i, c)| (c, i)).unzip();
+    let mut out = String::new();
+    for (n, line) in formatted.split('\n').enumerate() {
+        if n > 0 {
+            out.push('\n');
+        }
+        let Some(body) = line.strip_prefix("    ").filter(|b| !b.trim().is_empty()) else {
+            out.push_str(line);
+            continue;
+        };
+        let body = &unescape(body); // "\[2\]" in formattedText is "[2]" in text
+        let restored = flat.find(body.as_str()).and_then(|i| {
+            let (from, to) = (at[flat[..i].chars().count()], at[flat[..i + body.len()].chars().count() - 1] + 1);
+            let orig = &text[from..to];
+            orig.contains('\n').then(|| format!("```\n{orig}\n```"))
+        });
+        match restored {
+            Some(r) => out.push_str(&r),
+            None => out.push_str(line),
+        }
+    }
+    out
+}
+
 /// `chat-user data-user="users/1"` → "users/1" for tag "chat-user", attribute "data-user"
 fn attr<'a>(tok: &'a str, tag: &str, name: &str) -> Option<&'a str> {
     let rest = tok.strip_prefix(tag)?.trim_start().strip_prefix(name)?.strip_prefix("=\"")?;
@@ -1297,6 +1332,17 @@ mod tests {
         assert_eq!(keep_rules("---"), "\u{200B}---");
         assert_eq!(keep_rules("ok\n* * *\n--"), "ok\n\u{200B}* * *\n--");
         assert_eq!(keep_rules("- item"), "- item");
+    }
+
+    #[test]
+    fn code_blocks_come_back_from_text() {
+        let text = "see:\n{\n  \"a\": 1,\n  \"b\": [2]\n}\nthanks";
+        let formatted = "see:\n    {  \"a\": 1,  \"b\": \\[2\\]}\nthanks";
+        assert_eq!(restore_code_blocks(formatted, text), "see:\n```\n{\n  \"a\": 1,\n  \"b\": [2]\n}\n```\nthanks");
+        // one indented line is not a block; unmatched runs and plain text pass through
+        assert_eq!(restore_code_blocks("    x = 1\nok", "x = 1\nok"), "    x = 1\nok");
+        assert_eq!(restore_code_blocks("    gone", "other"), "    gone");
+        assert_eq!(restore_code_blocks("*bold* é", "bold é"), "*bold* é");
     }
 
     #[test]
