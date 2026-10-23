@@ -291,7 +291,10 @@ function MediaView({ accountId, media, sending }: { accountId: string; media: Me
         onClick={() => void view()}
         onContextMenu={(e) => menu(e, true)}
       >
-        {live ? (
+        {live && /\.gif$/i.test(dl.path) ? (
+          // my own upload: Telegram serves the converted mp4, TDLib keeps the local .gif as its copy — <video> can't play that
+          <img className="od-media" src={fileSrc(dl.path)} alt="GIF" onError={dl.broken} />
+        ) : live ? (
           <video className="od-media" src={fileSrc(dl.path)} poster={poster || undefined} muted loop autoPlay playsInline onError={dl.broken} />
         ) : poster ? (
           <img className="od-media" src={poster} alt={media.name} />
