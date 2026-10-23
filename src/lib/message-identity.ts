@@ -21,8 +21,10 @@ export function reconcileMessage(list: Msg[], m: Msg, oldId?: string): Msg[] {
   const merged: Msg = {
     ...m,
     uiKey: previous ? messageRenderKey(previous) : messageRenderKey(m),
+    // `oldId` is retired even when it never reached the list: the send promise can resolve
+    // with the provider's temporary id after the id-change event already replaced it
     uiPreviousIds: [...new Set([...(previous?.uiPreviousIds ?? []), ...(m.uiPreviousIds ?? []),
-      ...(previous && previous.id !== m.id ? [previous.id] : [])])],
+      ...(previous && previous.id !== m.id ? [previous.id] : []), ...(oldId && oldId !== m.id ? [oldId] : [])])],
     status: current?.status === "seen" && m.status === "sent" ? "seen" : m.status,
   };
   const i = list.findIndex(x => x.id === m.id);

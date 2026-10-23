@@ -52,3 +52,13 @@ test("native ID-change before the send response merges the still-pending local b
   assert.equal(messageRenderKey(acknowledged[0]), "local-5");
   assert.equal(acknowledged[0].status, "seen");
 });
+
+test("id change before the send promise resolves leaves no stale pending bubble", async () => {
+  const { reconcileMessage, messageRenderKey } = await import("./message-identity.ts");
+  // Telegram: send_message returns pending id P over IPC, but the update thread already
+  // replaced P with the server id F and emitted the id change
+  const changed = reconcileMessage([msg("local-4", { sort: 9e15, status: "sending" })], msg("F", { sort: 100, status: "sent" }), "P");
+  const list = reconcileMessage(changed, msg("P", { sort: 9e15 - 5, status: "sending" }), "local-4");
+  assert.deepEqual(list.map(m => `${m.id}:${m.status}`), ["F:sent"]);
+  assert.equal(messageRenderKey(list[0]), "local-4");
+});
