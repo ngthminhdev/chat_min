@@ -87,12 +87,15 @@ export function useStickyScroll(box: React.RefObject<HTMLDivElement | null>, las
     prevLast.current = lastId;
   });
 
-  // content resizing on its own (images, link cards, translations)
+  // content resizing on its own (images, link cards, translations), or the box itself
+  // (the software keyboard opening shrinks the webview: stay on the newest message)
   useEffect(() => {
-    const inner = box.current?.firstElementChild;
-    if (!inner) return;
+    const el = box.current;
+    const inner = el?.firstElementChild;
+    if (!el || !inner) return;
     const ro = new ResizeObserver(() => restore());
     ro.observe(inner);
+    ro.observe(el);
     return () => ro.disconnect();
   }, [box.current]);
 
