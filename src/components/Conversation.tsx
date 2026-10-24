@@ -284,14 +284,19 @@ function MessageList({ k }: { k: string }) {
             </Fragment>
           );
         })}
-        <AnimatePresence>
-          {caps.typing && typing?.until ? (
-            <motion.div className="typing" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-              <PersonAvatar name={typing.who || chat?.title || "?"} size="sm" accountId={chat?.accountId} photo={chat?.kind === "dm" ? chat.photo || chat.photoRef : ""} />
-              <TypingIndicator label={`${typing.who || chat?.title} đang gõ`} />
-            </motion.div>
-          ) : null}
-        </AnimatePresence>
+        {/* a fixed slot: "đang gõ" fading in and out must not move the list (busy groups toggle it every few seconds) */}
+        {caps.typing && (
+          <div className="typing-slot" aria-live="polite">
+            <AnimatePresence>
+              {typing?.until ? (
+                <motion.div className="typing" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+                  <PersonAvatar name={typing.who || chat?.title || "?"} size="sm" accountId={chat?.accountId} photo={chat?.kind === "dm" ? chat.photo || chat.photoRef : ""} />
+                  <TypingIndicator label={`${typing.who || chat?.title} đang gõ`} />
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
+          </div>
+        )}
       </>
     );
   }

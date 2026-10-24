@@ -238,7 +238,8 @@ button.tab-close { padding: 0; border: 0; background: transparent; font-family: 
 .msg-actions .ic { --od-icon-size: 15px; }
 
 /* NEW: typing indicator */
-.typing { display: flex; align-items: center; gap: 10px; width: fit-content; max-width: min(600px, 88%); margin-top: 12px; color: var(--text-3); font-size: var(--fs-md); }
+.typing-slot { height: 32px; margin-top: 8px; display: flex; align-items: center; }
+.typing { display: flex; align-items: center; gap: 10px; width: fit-content; max-width: min(600px, 88%); color: var(--text-3); font-size: var(--fs-md); }
 .typing-indicator { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0; vertical-align: bottom; }
 .typing-copy { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .typing-dots { display: inline-flex; align-items: center; gap: 3px; height: 12px; flex: none; }
