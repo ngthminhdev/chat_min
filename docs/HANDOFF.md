@@ -177,3 +177,14 @@ Spec: `docs/superpowers/specs/2026-10-22-chatmin-design.md`. Prototype export: `
   - CHƯA test được: login TG/GChat thật, tap thông báo mở đúng chat (cần account), video inline qua asset protocol (demo chỉ có poster), Messenger/Zalo.
 - Kiểm thêm trên emulator với APK cuối (`57ea9b4`): tap thông báo → `on_action` plugin chạy trên Android, log `[notify] open ""` (đường mở chat dùng chung với desktop); video mp4 qua asset protocol (`http://asset.localhost/...`, scope `$APPCACHE/**`) phát inline được (`save_temp` → `convertFileSrc` → `<video>` t=0.71s, readyState 4); `streamSrc` Telegram trước đây trả `tgstream://localhost/...` — Android không biết scheme này → đổi thành `http://tgstream.localhost/...` trên Android, request tới được `tg_stream` (log `[tgstream] … Telegram account chưa kết nối` vì chưa login). Còn lại đúng nghĩa cần account thật: login TG/GChat, tap thông báo mở đúng chat, phát video Telegram thật.
 - Messenger/Zalo trên Android (`b42a26b`): hàng web account mở màn giải thích + nút "Mở Messenger/Zalo" → `openUrl` → app/trình duyệt hệ thống (verify emulator: Chrome mở; thêm bằng `web_add`, xoá bằng `account_remove` về Welcome). APK debug hiện tại build từ commit này.
+
+## Android (2026-10-24 sáng) — album, ảnh không crop, forum vào topic, thumbnail sai
+
+Test trên máy thật A301SH (Telegram đăng nhập sẵn), APK debug cài qua `scripts/android-build.sh`.
+
+- **Album**: tin ảnh/video có cùng `albumId` (TDLib `media_album_id`, `model.rs`/`tg.rs`) — hoặc ảnh tôi gửi liên tiếp trong 1 phút (ChatMin gửi từng file) — gộp thành 1 grid 2 cột, 1 mốc giờ, caption lấy tin đầu có text. `Conversation.tsx` (`albumNext`) gom run, `MessageItem album=` vẽ `.media-grid.album`. Long-press/reaction trên grid tác động tin đầu (ponytail). Gửi album thật qua `sendMessageAlbum` chưa làm: người nhận trên Telegram vẫn thấy từng ảnh rời.
+- **Ảnh đơn**: `fitWidth()` trong `Message.tsx` tính width từ tỉ lệ (max 300px phone / 360px desktop, cao ≤ 420px) → hiện trọn ảnh, không `cover` crop nữa.
+- **Viewer phone**: media `width/height: 100%; object-fit: contain`, không tap-zoom (pinch của hệ thống). Đo trên máy: ảnh 420×802 tại (0,56) trong cửa sổ 420×858.
+- **Forum**: `openChat` một forum → `forumLanding()` mở tab topic `lastTopic[k]` (persist) hoặc topic có `lastTs` mới nhất; Back từ topic vẫn về forum (General). Thông báo của topic mở đúng topic (`openAt`). Verify máy thật: "Thị trấn Qua Hốc" → "# Chuyện lạ Út Bông".
+- **Thumbnail "tạp nham"**: tin vẽ từ cache SQLite mang file id TDLib của phiên trước; phiên mới id đó là file khác (avatar người khác hiện trong ô ảnh) cho tới khi reload thay tin. `cached_messages` (lib.rs `stale_refs`) xoá id số, giữ blur base64 + path local.
+- Chưa test: gửi nhiều ảnh từ máy (album heuristic cho tin đi), video Telegram thật qua tgstream.
