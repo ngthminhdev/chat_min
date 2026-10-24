@@ -124,9 +124,9 @@ function Favorites() {
   const favorites = useApp((s) => s.favorites);
   const chats = useApp((s) => s.chats);
   const accounts = useApp((s) => s.accounts);
-  const collapsed = useApp((s) => !!s.collapsed["fav"]);
   const filter = useApp((s) => s.filter);
   const q = norm(useApp((s) => s.query));
+  const collapsed = useApp((s) => !!s.collapsed["fav"]) && !q;
   const rs = useRowState();
   const dragAnim = useDragAnim();
   const live = favorites.filter((k) => chats[k]);
@@ -236,7 +236,8 @@ export function rowProps(k: string, c: Chat, a: Account | undefined, rs: ReturnT
 }
 
 function AccountGroup({ account: a, index, chats, filter, query, drag: accDrag }: { account: Account; index: number; chats: Record<string, Chat>; filter: string; query: string; drag: ReturnType<typeof useDragAnim> }) {
-  const collapsed = useApp((s) => !!s.collapsed[a.id]);
+  // typing in the filter opens every group so the matches show; a click still folds it afterwards
+  const collapsed = useApp((s) => !!s.collapsed[a.id]) && !norm(query);
   const health = useApp((s) => s.health[a.id]?.health ?? "ok");
   const favorites = useApp((s) => s.favorites);
   const rs = useRowState();
