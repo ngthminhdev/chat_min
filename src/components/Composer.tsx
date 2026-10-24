@@ -116,6 +116,10 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
     // above grew by the difference and WebKit clamped its scrollTop to that taller box, so
     // the list sat one composer-height above the bottom until the next render yanked it
     // back (visible as a jump on every keystroke). Hold the composer's height meanwhile.
+    // KNOWN ISSUE (2026-10-24): not enough on macOS — js.log still shows "unstick dist=142"
+    // (= the composer's growth) right after keystrokes with a long draft. Next thing to try:
+    // measure in a hidden mirror element (same font/width) instead of touching this
+    // textarea's height, or save/restore the .msgs scrollTop around the measurement.
     const shell = el.closest<HTMLElement>(".composer") ?? el.parentElement!;
     const held = shell.style.height;
     shell.style.height = `${shell.offsetHeight}px`;
