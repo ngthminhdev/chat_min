@@ -285,3 +285,17 @@ html.mobile body .main .content .conv-head .title strong { font-size: 16px; line
 .mobile .msg.reply-dragging .msg-col { translate: var(--reply-drag) 0; transition: none; }
 .mobile .msg.reply-dragging::after { content: "↩"; position: absolute; right: 12px; top: 14px; color: var(--text-2); font-size: 24px; pointer-events: none; }
 @media (prefers-reduced-motion: reduce) { .mobile .msg-col { transition: none; } }
+
+/* Direct mobile media attachment: visible beside the draft and primary action. */
+.mobile .composer .main-composer { grid-template-columns: 48px minmax(0, 1fr) 48px 48px; }
+.mobile .composer-tools > .composer-media { grid-column: 3; grid-row: 1; align-self: end; width: 48px; min-width: 48px; height: 48px; min-height: 48px; padding: 3px 0; margin: 0; display: flex; flex-direction: column; justify-content: center; gap: 1px; color: var(--text-2); }
+.mobile .composer-tools > .composer-media span:not(.ic, .veil-spinner) { font-size: 9px; line-height: 12px; white-space: nowrap; }
+.mobile .composer-tools > :is(.composer-record, .composer-send) { grid-column: 4; }
+.mobile .composer-tools > .composer-record.rec-on { grid-column: 1; }
+.mobile .composer:has(.rec-on) .composer-tools > .composer-media { visibility: hidden; }
+.mobile .composer .rec-bar { grid-column: 2 / 4; }
+
+/* The photograph owns its transform; the stage and toolbar keep fixed viewport bounds. */
+.mobile .viewer .viewer-stage { position:relative; min-width:0; min-height:0; }
+.mobile .viewer .viewer-photo { position:absolute; inset:0; overflow:hidden; touch-action:none; user-select:none; }
+.mobile .viewer .viewer-photo img { position:absolute; left:50%; top:50%; max-width:none; max-height:none; object-fit:contain; transform-origin:center; -webkit-user-drag:none; }

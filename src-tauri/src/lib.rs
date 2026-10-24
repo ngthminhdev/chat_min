@@ -1,4 +1,6 @@
 mod ai;
+#[cfg(target_os = "android")]
+mod files_android;
 mod gchat;
 #[cfg(any(target_os = "android", test))]
 mod google_android;
@@ -579,8 +581,14 @@ struct Staged {
 /// Files about to be sent (dropped, pasted, picked): their size for the chip, folders
 /// dropped (can't be sent), and the asset protocol opened so images can preview.
 #[tauri::command]
-fn stage_files(app: tauri::AppHandle, paths: Vec<String>) -> Vec<Staged> {
-    paths
+async fn stage_files(app: tauri::AppHandle, paths: Vec<String>) -> Result<Vec<Staged>, String> {
+    // The picker gives Android URI grants, not filesystem paths. Native streaming runs on
+    // a worker before metadata/asset access so media is never silently discarded.
+    #[cfg(target_os = "android")]
+    let paths = if paths.iter().any(|path| path.starts_with("content://")) {
+        app.state::<files_android::AndroidFiles>().import(paths).await?
+    } else { paths };
+    tauri::async_runtime::spawn_blocking(move || paths
         .into_iter()
         .filter_map(|path| {
             let md = std::fs::metadata(&path).ok().filter(|m| m.is_file())?;
@@ -588,7 +596,8 @@ fn stage_files(app: tauri::AppHandle, paths: Vec<String>) -> Vec<Staged> {
             let name = std::path::Path::new(&path).file_name()?.to_string_lossy().into();
             Some(Staged { name, size: md.len(), path })
         })
-        .collect()
+        .collect())
+        .await.map_err(|error| error.to_string())
 }
 /// Files copied in Finder: the webview's paste event only sees their names, the paths
 /// live on the native pasteboard (as file reference URLs, resolved here).
@@ -1007,7 +1016,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init());
     #[cfg(target_os = "android")]
-    let builder = builder.plugin(google_android::init());
+    let builder = builder.plugin(google_android::init()).plugin(files_android::init());
     // remember window size/position across launches, like the other _min apps
     // (not visibility: quitting with the window hidden must not launch hidden)
     #[cfg(desktop)]

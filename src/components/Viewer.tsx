@@ -8,6 +8,7 @@ import type { Media } from "../lib/types";
 import { chatKeyOf, fail, saveMedia, useApp } from "../store";
 import { Icon } from "../ui/Icon";
 import { viewerSwipe } from "../lib/mobile-gestures";
+import { ZoomableImage, type ImageZoomControls } from "./ZoomableImage";
 
 const gallery = (m: Media | null) => !!m && (m.kind === "image" || m.kind === "video") && !["Sticker", "GIF", "Video tròn"].includes(m.name);
 const sameMedia = (a: Media, b: Media) => (a.fileRef && a.fileRef === b.fileRef) || (!!a.localPath && a.localPath === b.localPath);
@@ -22,6 +23,7 @@ export function Viewer() {
   const [retryLoad, setRetryLoad] = useState(0);
   const swipe = useRef<{ x: number; y: number } | null>(null);
   const suppressClick = useRef(false);
+  const imageZoom = useRef<ImageZoomControls>(null);
   const list = useApp((s) => { const k = chatKeyOf(s.active); return k ? s.msgs[k] : undefined; });
   const items = useMemo(() => (list ?? []).filter((m) => !m.deleted && gallery(m.media) && (!v?.galleryIds || v.galleryIds.includes(m.id))).map((m) => ({ id: m.id, media: m.media!, accountId: m.accountId })), [list, v?.galleryIds]);
   // the store's own Media object first (demo data shares fileRefs), then by file id/path once a reload replaced the message
@@ -93,15 +95,19 @@ export function Viewer() {
               {v.media.size > 0 && <small>{fileSize(v.media.size)}</small>}
               {idx >= 0 && items.length > 1 && <small>{idx + 1} / {items.length}</small>}
             </span>
+            {isMobile && v.media.kind === "image" && <>
+              <button className="tool-btn icon-only" aria-label="Thu nhỏ ảnh" disabled={!v.path} onClick={() => imageZoom.current?.zoomOut()}><Icon name="minus" /></button>
+              <button className="tool-btn icon-only" aria-label="Phóng to ảnh" disabled={!v.path} onClick={() => imageZoom.current?.zoomIn()}><Icon name="plus" /></button>
+            </>}
             <button className="tool-btn icon-only" aria-label="Lưu vào thư mục tải về" data-tip="Lưu vào thư mục tải về" data-kbd="⌘S" onClick={() => keep(false)}>
               <Icon name="download" />
             </button>
             {!isMobile && <button className="tool-btn icon-only" aria-label="Lưu thành" data-tip="Lưu thành…" data-kbd="⌘⇧S" onClick={() => keep(true)}>
               <Icon name="folder-open" />
             </button>}
-            <button className="tool-btn icon-only" aria-label="Mở bằng app mặc định" data-tip="Mở bằng app mặc định" onClick={() => void local().then((p) => { if (p) openPath(p).catch(fail); })}>
+            {!isMobile && <button className="tool-btn icon-only" aria-label="Mở bằng app mặc định" data-tip="Mở bằng app mặc định" onClick={() => void local().then((p) => { if (p) openPath(p).catch(fail); })}>
               <Icon name="external-link" />
-            </button>
+            </button>}
             {!isMobile && <button className="tool-btn icon-only" aria-label="Hiện trong Finder" data-tip="Hiện trong Finder" onClick={() => void local().then((p) => { if (p) revealPath(p).catch(fail); })}>
               <Icon name="search" />
             </button>}
@@ -152,6 +158,8 @@ export function Viewer() {
           >
             {!v.path && !v.src ? <span className="viewer-loading" role="status">{loadError ? <>Không tải được ảnh <button className="tool-btn" onClick={() => setRetryLoad(n => n + 1)}>Thử lại</button></> : <><span className="veil-spinner" /> Đang tải ảnh…</>}</span> : v.media.kind === "video" ? (
               <video src={v.src ?? fileSrc(v.path)} controls autoPlay playsInline onClick={(e) => e.stopPropagation()} />
+            ) : isMobile ? (
+              <ZoomableImage ref={imageZoom} src={fileSrc(v.path)} alt={v.media.name} onSwipe={action => action === "close" ? close() : void go(action === "next" ? 1 : -1)} />
             ) : (
               <img
                 src={fileSrc(v.path)}

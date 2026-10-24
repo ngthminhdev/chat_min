@@ -137,10 +137,32 @@ export async function pickFolder(): Promise<string | null> {
   return typeof picked === "string" ? picked : null;
 }
 
+function pickerCancelled(error: unknown): boolean {
+  return error === "File picker cancelled" ||
+    (typeof error === "object" && error !== null && "message" in error && error.message === "File picker cancelled");
+}
+
 export async function pickFiles(): Promise<string[]> {
   if (!isTauri) return [];
   const { open } = await import("@tauri-apps/plugin-dialog");
-  return (await open({ multiple: true, directory: false })) ?? [];
+  try {
+    return (await open({ multiple: true, directory: false })) ?? [];
+  } catch (error) {
+    if (pickerCancelled(error)) return [];
+    throw error;
+  }
+}
+
+/** System photo/video picker. Android returns granted content URIs; stageFiles imports them. */
+export async function pickMedia(): Promise<string[]> {
+  if (!isTauri) return [];
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  try {
+    return (await open({ multiple: true, directory: false, pickerMode: "media" })) ?? [];
+  } catch (error) {
+    if (pickerCancelled(error)) return [];
+    throw error;
+  }
 }
 
 /** Copy a downloaded file out of the app: `ask` shows a save dialog, otherwise the download folder (Settings, default ~/Downloads/ChatMin).

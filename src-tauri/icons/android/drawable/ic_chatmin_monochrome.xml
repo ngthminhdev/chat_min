@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Brand mark centered in the adaptive icon safe zone; Android supplies the outer mask. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+  <group android:scaleX="0.0873494" android:scaleY="0.0873494" android:translateX="9.2771" android:translateY="5.4337">
+    <path android:fillColor="#FFFFFF" android:fillType="evenOdd" android:pathData="M250,236h340a70,70 0,0 1,70 70v170a70,70 0,0 1,-70 70H372l-92,78v-78h-30a70,70 0,0 1,-70 -70V306a70,70 0,0 1,70 -70z M279,330h216a17,17 0,0 1,0 34H279a17,17 0,0 1,0 -34z M279,408h136a17,17 0,0 1,0 34H279a17,17 0,0 1,0 -34z"/>
+    <path android:fillColor="#FFFFFF" android:fillType="evenOdd" android:pathData="M444,486h330a70,70 0,0 1,70 70v170a70,70 0,0 1,-70 70h-30v80l-94,-80H444a70,70 0,0 1,-70 -70V556a70,70 0,0 1,70 -70z M478,641a34,34 0,1 0,68 0a34,34 0,1 0,-68 0z M575,641a34,34 0,1 0,68 0a34,34 0,1 0,-68 0z M672,641a34,34 0,1 0,68 0a34,34 0,1 0,-68 0z"/>
+  </group>
+</vector>

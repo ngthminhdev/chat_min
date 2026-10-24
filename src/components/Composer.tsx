@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { api, fileSrc, isTauri, pickFiles, type Staged } from "../lib/bridge";
+import { api, fileSrc, isTauri, pickFiles, pickMedia, type Staged } from "../lib/bridge";
 import { fileSize, plain } from "../lib/format";
 import { CAP_OFF_NOTE, PLATFORMS } from "../lib/platforms";
 import { addMsg, anchor, capsOf, fail, send, splitKey, toast, useApp } from "../store";
@@ -51,13 +51,19 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
   /** pasted / dropped files waiting for Enter; the draft goes out as the first one's caption */
   const [files, setFiles] = useState<Staged[]>([]);
   const [dropping, setDropping] = useState(false);
+  const [attaching, setAttaching] = useState(false);
+  const attachmentPending = useRef(false);
+  const attachmentRun = useRef(0);
   const stage = async (paths: string[]) => {
-    if (!paths.length || editId) return;
+    if (!paths.length || editId || blocked || !canSend || recorder.recording) return;
+    const run = attachmentRun.current;
     const add = await api.stageFiles(paths);
+    if (run !== attachmentRun.current) return;
     if (add.length < paths.length) toast("Thư mục không gửi được, chỉ đính kèm file", "info");
     setFiles((f) => [...f, ...add.filter((a) => !f.some((x) => x.path === a.path))]);
-    ta.current?.focus();
+    if (!isMobile) ta.current?.focus();
   };
+  useEffect(() => () => { attachmentRun.current++; }, [k]);
   // Tauri owns file drops (dragDropEnabled): the composer of the visible tab takes them
   useEffect(() => {
     if (!isTauri || isMobile) return;
@@ -247,11 +253,16 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
     useApp.setState((s) => editId && (s.editing[k] !== editId || s.drafts[k] !== draft) ? {} : ({ drafts: { ...s.drafts, [k]: "" }, replyTo: { ...s.replyTo, [k]: "" }, editing: { ...s.editing, [k]: "" } }));
   };
 
-  const attach = async () => {
-    if (blocked || saving || editId) return;
+  const attach = async (media = false) => {
+    if (blocked || saving || editId || !canSend || recorder.recording || attachmentPending.current) return;
+    attachmentPending.current = true;
+    setAttaching(true);
+    const run = attachmentRun.current;
     try {
-      await stage(await pickFiles());
-    } catch (e) { fail(e); }
+      const paths = await (media ? pickMedia() : pickFiles());
+      if (run === attachmentRun.current) await stage(paths);
+    } catch (e) { if (run === attachmentRun.current) fail(e); }
+    finally { attachmentPending.current = false; setAttaching(false); }
   };
 
   if (!canSend) {
@@ -392,7 +403,7 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
             </label>
             <span className="composer-sep" aria-hidden="true" />
             <MobileActions label="Thêm vào tin nhắn" icon="plus" disabled={blocked || saving || recorder.recording}>
-            <button className="tool-btn icon-only" aria-label="Đính kèm tệp" data-tip={editId ? "Chỉ sửa nội dung tin nhắn" : "Đính kèm tệp"} disabled={blocked || saving || !!editId} onClick={attach}>
+            <button className="tool-btn icon-only" aria-label="Đính kèm tệp" data-tip={editId ? "Chỉ sửa nội dung tin nhắn" : "Đính kèm tệp"} disabled={blocked || saving || !!editId || attaching || recorder.recording} onClick={() => void attach()}>
               <Icon name="paperclip" />
             </button>
             <button
@@ -465,6 +476,16 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
               </button>
             )}
             </MobileActions>
+            {isMobile && <button
+              className="tool-btn composer-media"
+              aria-label="Ảnh/video"
+              aria-busy={attaching}
+              disabled={blocked || saving || !!editId || attaching || recorder.recording}
+              onClick={() => void attach(true)}
+            >
+              {attaching ? <span className="veil-spinner" /> : <Icon name="image" />}
+              <span>Ảnh/video</span>
+            </button>}
             {(!isMobile || recorder.recording || (!draft.trim() && !files.length && !editId)) &&
             <button
               className={`tool-btn icon-only composer-record${recorder.recording ? " rec-on" : ""}`}
