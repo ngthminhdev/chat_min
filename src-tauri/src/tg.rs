@@ -361,7 +361,10 @@ impl Tg {
             Update::MessageInteractionInfo(u) => self.refetch(core, c, u.chat_id, u.message_id),
             Update::MessageIsPinned(u) => self.refetch(core, c, u.chat_id, u.message_id),
             Update::DeleteMessages(u) => {
-                if u.is_permanent {
+                // from_cache: TDLib only dropped them from its memory cache (edits, reactions and
+                // busy groups do this constantly); the next update brings the same message back,
+                // so removing it here made the newest bubble blink in and out of the list
+                if u.is_permanent && !u.from_cache {
                     core.delete_msgs(&account_id, &u.chat_id.to_string(), u.message_ids.iter().map(|i| i.to_string()).collect());
                 }
             }
