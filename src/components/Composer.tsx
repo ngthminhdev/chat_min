@@ -112,8 +112,10 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
   useLayoutEffect(() => {
     const el = ta.current;
     if (!el) return;
+    const before = el.style.height;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 176)}px`;
+    if (before !== el.style.height) void api.logJs(`[composer] ${before || "?"}→${el.style.height} lines=${draft.split("\n").length} len=${draft.length}`);
   }, [draft]);
 
   useEffect(() => {

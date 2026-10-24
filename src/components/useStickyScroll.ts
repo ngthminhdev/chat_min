@@ -12,6 +12,15 @@ import { preferredScrollBehavior } from "../lib/motion";
  * - `away` / `fresh` drive the "jump to bottom" button.
  * `lastId` is the newest message: when it changes while scrolled up, `fresh` counts it.
  */
+// jank diagnostics → the app log (js.log), throttled so a busy chat can't flood it
+let diagN = 0, diagT = 0;
+function diag(msg: string) {
+  const now = Date.now();
+  if (now - diagT > 1000) { diagN = 0; diagT = now; }
+  if (++diagN > 40) return;
+  void api.logJs(`[scroll] ${msg}`);
+}
+
 export function useStickyScroll(box: React.RefObject<HTMLDivElement | null>, lastId: string | undefined, onTop?: () => void) {
   const stick = useRef(true);
   const anchor = useRef<{ id: string; top: number } | null>(null);
@@ -51,14 +60,16 @@ export function useStickyScroll(box: React.RefObject<HTMLDivElement | null>, las
       return;
     }
     if (stick.current) {
+      const before = el.scrollTop;
       el.scrollTop = el.scrollHeight;
+      if (Math.abs(el.scrollTop - before) > 1) diag(`restick ${Math.round(before)}→${Math.round(el.scrollTop)} h=${el.scrollHeight} view=${el.clientHeight}`);
       return;
     }
     const a = anchor.current;
     const node = a && document.getElementById(a.id);
     if (!a || !node) return;
     const delta = node.getBoundingClientRect().top - el.getBoundingClientRect().top - a.top;
-    if (Math.abs(delta) > 0.5) el.scrollTop += delta;
+    if (Math.abs(delta) > 0.5) { el.scrollTop += delta; diag(`anchor ${a.id} delta=${Math.round(delta)} h=${el.scrollHeight} view=${el.clientHeight}`); }
   };
 
   const endTravel = () => {
@@ -93,7 +104,12 @@ export function useStickyScroll(box: React.RefObject<HTMLDivElement | null>, las
     const el = box.current;
     const inner = el?.firstElementChild;
     if (!el || !inner) return;
-    const ro = new ResizeObserver(() => restore());
+    let lastView = el.clientHeight, lastInner = inner.scrollHeight;
+    const ro = new ResizeObserver(() => {
+      if (el.clientHeight !== lastView || inner.scrollHeight !== lastInner) diag(`resize view ${lastView}→${el.clientHeight} inner ${lastInner}→${inner.scrollHeight} rows=${el.querySelectorAll("[id^='m-']").length}`);
+      lastView = el.clientHeight; lastInner = inner.scrollHeight;
+      restore();
+    });
     ro.observe(inner);
     ro.observe(el);
     return () => ro.disconnect();
