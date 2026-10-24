@@ -158,6 +158,7 @@ export function useStickyScroll(box: React.RefObject<HTMLDivElement | null>, las
     }
     const was = stick.current;
     const byUser = Date.now() - gesture.current < 600;
+
     stick.current = dist < 80 || (byUser ? false : stick.current);
     if (was && !stick.current) void api.logJs(`[scroll] unstick dist=${Math.round(dist)} gesture=${gesture.current ? Date.now() - gesture.current : -1}ms h=${el.scrollHeight}`);
     setAway(dist > 400);

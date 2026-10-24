@@ -112,10 +112,16 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
   useLayoutEffect(() => {
     const el = ta.current;
     if (!el) return;
-    const before = el.style.height;
+    // Measuring with height:auto drops the textarea to one row for a moment; the chat box
+    // above grew by the difference and WebKit clamped its scrollTop to that taller box, so
+    // the list sat one composer-height above the bottom until the next render yanked it
+    // back (visible as a jump on every keystroke). Hold the composer's height meanwhile.
+    const shell = el.closest<HTMLElement>(".composer") ?? el.parentElement!;
+    const held = shell.style.height;
+    shell.style.height = `${shell.offsetHeight}px`;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 176)}px`;
-    if (before !== el.style.height) void api.logJs(`[composer] ${before || "?"}→${el.style.height} lines=${draft.split("\n").length} len=${draft.length}`);
+    shell.style.height = held;
   }, [draft]);
 
   useEffect(() => {
