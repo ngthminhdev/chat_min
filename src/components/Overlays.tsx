@@ -426,7 +426,7 @@ function PopBody({ pop, close }: { pop: Pop; close: () => void }) {
       </>
     );
   }
-  return <ColorPicker accountId={pop.accountId} close={close} />;
+  return <ColorPicker accountId={pop.accountId} value={pop.value} onPick={pop.onPick && ((c) => { close(); pop.onPick!(c); })} close={close} />;
 }
 
 function EmojiPicker({ onPick, only }: { onPick: (emoji: string) => void; only?: string[] }) {
@@ -681,7 +681,7 @@ function ToastItem({ value: t }: { value: Toast }) {
       (next ?? document.querySelector<HTMLTextAreaElement>("#composer-input"))?.focus();
     });
   };
-  return <motion.div layout className={`toast ${t.icon === "circle-alert" ? "error" : t.icon === "info" ? "info" : "ok"}`}
+  return <motion.div layout="position" className={`toast ${t.icon === "circle-alert" ? "error" : t.icon === "info" ? "info" : "ok"}`}
     initial={{ opacity: 0, y: 8, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }}
     exit={{ opacity: 0, y: 4, transition: { duration: 0.12 } }}
     onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}

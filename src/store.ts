@@ -7,7 +7,7 @@ import { queueToast } from "./lib/toast-queue";
 import { isMobile } from "./lib/mobile";
 import { mobileConversationVisible } from "./lib/mobile-navigation";
 import { PLATFORMS, type Cap } from "./lib/platforms";
-import type { Account, Chat, CoreEvent, Health, Media, Msg, Topic } from "./lib/types";
+import type { Account, Chat, CoreEvent, Folder, Health, Media, Msg, Topic } from "./lib/types";
 import type { IconName } from "./ui/Icon";
 
 export type Route = "shell" | "inbox" | "settings" | "search" | "welcome" | "wizard";
@@ -48,7 +48,7 @@ export type Pop = { x: number; y: number; top: number } & (
   | { kind: "emoji"; onPick: (emoji: string) => void; only?: string[] }
   /** `quick`: phone long-press sheet — a row of reactions above the items, `more` opens the full picker */
   | { kind: "menu"; items: MenuItem[]; title?: string; quick?: { pick: (emoji: string) => void; more: () => void } }
-  | { kind: "color"; accountId: string }
+  | { kind: "color"; accountId?: string; value?: string; onPick?: (color: string) => void }
 );
 export const anchor = (el: Element) => {
   const r = el.getBoundingClientRect();
@@ -107,6 +107,9 @@ interface State {
   threadTabs: Record<string, ThreadTab>;
   /** forum chat → topic the user opened last; opening the chat lands there (like Telegram) */
   lastTopic: Record<string, string>;
+  /** user folders (sidebar tabs) and the one selected ("" = everything) */
+  folders: Folder[];
+  folder: string;
   /** ChatMin's own pins: cross-account, user-ordered, shown on top of the sidebar */
   favorites: string[];
   accountOrder: string[];
@@ -142,7 +145,7 @@ interface State {
   summary: Record<string, { state: "loading" | "ok" | "err"; text: string; n: number }>;
   /** full-window image/video viewer */
   /** `src` set: a Telegram video streaming, `path` stays empty until it is downloaded */
-  viewer: { media: Media; path: string; src?: string; accountId?: string } | null;
+  viewer: { media: Media; path: string; src?: string; accountId?: string; messageId?: string; galleryIds?: string[] } | null;
   /** `${accountId}|${fileRef}` → percent of a big download in progress */
   progress: Record<string, number>;
   /** Android notification permission: "granted" | "denied" | "prompt" (desktop: granted) */
@@ -200,6 +203,8 @@ export const useApp = create<State>(() => ({
   convTab: {},
   threadTabs: saved.threadTabs ?? {},
   lastTopic: saved.lastTopic ?? {},
+  folders: saved.folders ?? [],
+  folder: saved.folder ?? "",
   favorites: saved.favorites ?? [],
   accountOrder: saved.accountOrder ?? [],
   expanded: {},
@@ -244,11 +249,11 @@ let persistT: ReturnType<typeof setTimeout> | undefined;
 useApp.subscribe((s) => {
   clearTimeout(persistT);
   persistT = setTimeout(() => {
-    const { tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, lastTopic, favorites, accountOrder, trAuto, aiLang, hidden, chatOrder, inboxSeen, inboxRead } = s;
+    const { tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, lastTopic, folders, folder, favorites, accountOrder, trAuto, aiLang, hidden, chatOrder, inboxSeen, inboxRead } = s;
     try {
       localStorage.setItem(
         PERSIST,
-        JSON.stringify({ tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, lastTopic, favorites, accountOrder, trAuto, aiLang, hidden, chatOrder, inboxSeen, inboxRead }),
+        JSON.stringify({ tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, lastTopic, folders, folder, favorites, accountOrder, trAuto, aiLang, hidden, chatOrder, inboxSeen, inboxRead }),
       );
     } catch {}
   }, 300);

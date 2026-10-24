@@ -12,6 +12,7 @@ import {
 import { ChatAvatar } from "../ui/Avatar";
 import { Glyph, Icon } from "../ui/Icon";
 import { TypingIndicator } from "./TypingIndicator";
+import { FolderChats, FolderTabs, folderItems } from "./Folders";
 
 /** Rows slide only while the user drags. Otherwise collapsing a section makes every
  *  Reorder.Item around it run a layout animation: scale-squished text, siblings jumping. */
@@ -33,6 +34,7 @@ export function Sidebar() {
   const filter = useApp((s) => s.filter);
   const query = useApp((s) => s.query);
   const route = useApp((s) => s.route);
+  const folder = useApp((s) => s.folder);
   const total = totalUnread(chats);
   const ordered = orderedAccounts(accounts, order);
   const accDrag = useDragAnim();
@@ -74,7 +76,9 @@ export function Sidebar() {
           </button>
         ))}
       </div>
+      <FolderTabs />
       <div className="side-scroll">
+        {folder ? <FolderChats /> : <>
         <button
           className={`nav-item all-inbox${route === "inbox" ? " active" : ""}`}
           aria-label="Tất cả hội thoại"
@@ -101,12 +105,13 @@ export function Sidebar() {
             Bấm <Icon name="user-plus" /> để thêm.
           </div>
         )}
+        </>}
       </div>
     </aside>
   );
 }
 
-function useRowState() {
+export function useRowState() {
   const active = useApp((s) => (s.route === "shell" ? chatKeyOf(s.active) : null));
   const drafts = useApp((s) => s.drafts);
   const typing = useApp((s) => s.typing);
@@ -220,7 +225,7 @@ function Latest() {
   );
 }
 
-function rowProps(k: string, c: Chat, a: Account | undefined, rs: ReturnType<typeof useRowState>) {
+export function rowProps(k: string, c: Chat, a: Account | undefined, rs: ReturnType<typeof useRowState>) {
   const t = rs.typing[k];
   return {
     active: k === rs.active,
@@ -427,6 +432,7 @@ export function chatMenu(k: string, c: Chat, mobile = false): MenuItem[] {
       },
     },
     !mobile && { icon: "copy", label: "Sao chép ID chat", run: () => void navigator.clipboard.writeText(c.id).then(() => toast("Đã sao chép ID")) },
+    ...(mobile ? [] : folderItems(k)),
     ...unfixItem(k),
     ...removeItems(k, c),
   ];
@@ -553,7 +559,7 @@ interface RowProps {
   platform?: Account["platform"];
 }
 
-const ChatRow = memo(function ChatRow({ chat: c, k, active, draft, typing, expanded, platform }: RowProps) {
+export const ChatRow = memo(function ChatRow({ chat: c, k, active, draft, typing, expanded, platform }: RowProps) {
   const rail = useApp((s) => s.leftCollapsed);
   const unreadBefore = useRef(c.unread);
   const [pulse, setPulse] = useState(0);

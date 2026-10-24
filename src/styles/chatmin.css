@@ -1590,3 +1590,21 @@ body:is([data-background="glass"], [data-background="clear"]) .inbox-shell { bor
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 700; }
 .bubble .code-block pre code, .cmsg .code-block pre code { display: block; padding: 0; border-radius: 0; background: transparent; font: inherit; }
+
+/* ── user folders: tab strip over the sidebar (Folders.tsx) ─────────────────── */
+.folder-tabs { display: flex; align-items: center; gap: 2px; padding: 6px 8px 0; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+.folder-tab-list { display: flex; gap: 2px; }
+.folder-tab-item { flex: none; }
+.folder-tab { position: relative; display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px 2px; border: 0; border-radius: 7px 7px 0 0; background: transparent; color: var(--text-2); font-size: var(--fs-sm); font-weight: 500; white-space: nowrap; cursor: default; }
+.folder-tab:hover { color: var(--text); background: color-mix(in oklab, var(--text), transparent 94%); }
+.folder-tab.active { color: var(--text); }
+.folder-tab.active::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: -1px; height: 2px; border-radius: 2px 2px 0 0; background: var(--conn, var(--accent)); }
+.folder-tab .conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--conn); }
+.folder-tab .folder-emoji { font-size: 14px; line-height: 1; }
+.folder-tab .folder-img { width: 16px; height: 16px; border-radius: 4px; object-fit: cover; }
+.folder-tab .badge.unread { min-width: 16px; height: 16px; padding: 0 4px; font-size: 10px; }
+.folder-add { padding: 0 6px; color: var(--text-3); }
+.folder-add .ic { --od-icon-size: 14px; }
+.folder-chats { padding: 4px 0; }
+.sidebar:has(.folder-tabs) { grid-template-rows: auto auto auto minmax(0, 1fr); }
+body.left-collapsed .sidebar .folder-tabs { display: none; }

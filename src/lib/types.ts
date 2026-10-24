@@ -123,6 +123,9 @@ export interface AppState {
 
 export interface AiView { format: "openai" | "anthropic"; endpoint: string; model: string; guide: string; hasKey: boolean }
 export interface Suggestion { reply: string; meaning: string }
+/** A user folder: chats from any account under one tab in the sidebar (Telegram-style). `icon` is an emoji, "img:<path>" or "". */
+export interface Folder { id: string; name: string; color: string; icon: string; chats: string[] }
+
 export interface Topic {
   accountId: string; chatId: string; id: string; name: string; color: number; unread: number; mention: boolean;
   lastTs: number; preview: string; previewFrom: string; pinned: boolean; closed: boolean; general: boolean;
