@@ -105,6 +105,8 @@ interface State {
   convTab: Record<string, "msgs" | "threads">;
   /** thread/topic tabs ("thread:<chatKey>:<threadId>") → the chat they belong to */
   threadTabs: Record<string, ThreadTab>;
+  /** forum chat → topic the user opened last; opening the chat lands there (like Telegram) */
+  lastTopic: Record<string, string>;
   /** ChatMin's own pins: cross-account, user-ordered, shown on top of the sidebar */
   favorites: string[];
   accountOrder: string[];
@@ -197,6 +199,7 @@ export const useApp = create<State>(() => ({
   inspTab: "info",
   convTab: {},
   threadTabs: saved.threadTabs ?? {},
+  lastTopic: saved.lastTopic ?? {},
   favorites: saved.favorites ?? [],
   accountOrder: saved.accountOrder ?? [],
   expanded: {},
@@ -241,11 +244,11 @@ let persistT: ReturnType<typeof setTimeout> | undefined;
 useApp.subscribe((s) => {
   clearTimeout(persistT);
   persistT = setTimeout(() => {
-    const { tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, favorites, accountOrder, trAuto, aiLang, hidden, chatOrder, inboxSeen, inboxRead } = s;
+    const { tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, lastTopic, favorites, accountOrder, trAuto, aiLang, hidden, chatOrder, inboxSeen, inboxRead } = s;
     try {
       localStorage.setItem(
         PERSIST,
-        JSON.stringify({ tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, favorites, accountOrder, trAuto, aiLang, hidden, chatOrder, inboxSeen, inboxRead }),
+        JSON.stringify({ tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, lastTopic, favorites, accountOrder, trAuto, aiLang, hidden, chatOrder, inboxSeen, inboxRead }),
       );
     } catch {}
   }, 300);
@@ -499,6 +502,11 @@ const PAGE = 50;
 export async function openChat(k: string) {
   const s = get();
   const prevChat = chatKeyOf(s.active);
+  // not when coming back out of one of its topic tabs (that shows the forum itself)
+  if (s.chats[k]?.forum && !(isThreadTab(s.active) && prevChat === k)) {
+    const landing = await forumLanding(k);
+    if (landing) return openChat(landing);
+  }
   const tabs = s.tabs.includes(k) ? s.tabs : (() => {
     const t = s.tabs.slice();
     t.splice(s.active ? t.indexOf(s.active) + 1 : t.length, 0, k);
@@ -529,6 +537,10 @@ export function openAt(k: string, msg: string, thread: string) {
   const chat = get().chats[k];
   if (!chat) return toast("Chat này không còn trong danh sách", "info");
   set((s) => ({ toLatest: s.toLatest + 1 })); // land on the newest message (useStickyScroll)
+  if (thread && chat.forum) {
+    const topic = get().topics[k]?.find((t) => t.id === thread);
+    return openTopicTab(k, topic ?? ({ id: thread, name: get().threadTabs[threadTabKey(k, thread)]?.title || "Chủ đề" } as Topic));
+  }
   if (!thread || !chat.threaded) return void openChat(k);
   const m = get().msgs[k]?.find((x) => x.id === msg);
   if (m) return openThreadTab(k, m);
@@ -571,8 +583,24 @@ export async function loadTopics(k: string) {
 
 export function openTopicTab(chatKey: string, topic: Topic) {
   const t = threadTabKey(chatKey, topic.id);
-  set((s) => ({ threadTabs: { ...s.threadTabs, [t]: { chatKey, threadId: topic.id, rootId: "", title: topic.name, topic: true } } }));
+  set((s) => ({ threadTabs: { ...s.threadTabs, [t]: { chatKey, threadId: topic.id, rootId: "", title: topic.name, topic: true } }, lastTopic: { ...s.lastTopic, [chatKey]: topic.id } }));
   void openChat(t);
+}
+
+/** Opening a forum from the list lands in the topic opened last (or the most recent one), not General.
+ *  Back from a topic tab still shows the plain chat: `prevChat` is the forum itself then. */
+async function forumLanding(k: string): Promise<string | null> {
+  const s = get();
+  const id = s.lastTopic[k];
+  const tab = id ? threadTabKey(k, id) : "";
+  if (tab && s.threadTabs[tab]) return tab;
+  const topics = s.topics[k] ?? (await api.topics(...splitKey(k)).catch(() => [] as Topic[]));
+  if (!s.topics[k] && topics.length) set((st) => ({ topics: { ...st.topics, [k]: topics } }));
+  const newest = [...topics].sort((a, b) => b.lastTs - a.lastTs)[0];
+  if (!newest) return null;
+  const t = threadTabKey(k, newest.id);
+  set((st) => ({ threadTabs: { ...st.threadTabs, [t]: { chatKey: k, threadId: newest.id, rootId: "", title: newest.name, topic: true } }, lastTopic: { ...st.lastTopic, [k]: newest.id } }));
+  return t;
 }
 
 async function loadThread(t: string) {
