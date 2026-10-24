@@ -129,6 +129,9 @@ pub struct Msg {
     /// plain text; `code` in backticks, mentions as @{Name}
     pub text: String,
     pub media: Option<Media>,
+    /// Telegram media_album_id: photos/videos sent together render as one grid
+    #[serde(default)]
+    pub album_id: String,
     pub link: Option<LinkCard>,
     pub reply_to: String,
     pub reply_name: String,

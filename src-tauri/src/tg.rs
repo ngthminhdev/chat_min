@@ -1266,6 +1266,7 @@ fn to_msg(a: &Acc, m: &t::Message) -> Msg {
         kind: "text".into(),
         pinned: m.is_pinned,
         mentions_me: m.contains_unread_mention,
+        album_id: if m.media_album_id != 0 { m.media_album_id.to_string() } else { String::new() },
         ..Default::default()
     };
     if let Some(enums::MessageTopic::Forum(t)) = &m.topic_id {

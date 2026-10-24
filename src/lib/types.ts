@@ -76,6 +76,8 @@ export interface Msg {
   kind: "text" | "media" | "service";
   text: string;
   media: Media | null;
+  /** Telegram album: photos/videos sent together share one id */
+  albumId?: string;
   link: LinkCard | null;
   replyTo: string;
   replyName: string;

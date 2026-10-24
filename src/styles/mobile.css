@@ -248,3 +248,7 @@ html.mobile body .main .content .conv-head .title strong { font-size: 16px; line
 .mobile .welcome-platforms .glyph { will-change: transform; }
 /* Long-press opens the sheet; Android must not also start a text selection (Copy is in the sheet). */
 .mobile .msg .bubble, .mobile .msg .sender { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.mobile .bubble .media-grid.album { width: 300px; }
+/* viewer: the media fills the stage and sits centred; no tap-to-100% on a phone (pinch is the system's) */
+.mobile .viewer-stage { height: 100%; }
+.mobile .viewer-stage img, .mobile .viewer-stage video { width: 100%; height: 100%; max-height: 100%; object-fit: contain; cursor: default; }

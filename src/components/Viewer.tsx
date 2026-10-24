@@ -87,7 +87,7 @@ export function Viewer() {
                 alt={v.media.name}
                 onClick={(e) => {
                   e.stopPropagation();
-                  setZoom((z) => !z);
+                  if (!isMobile) setZoom((z) => !z);
                 }}
               />
             )}

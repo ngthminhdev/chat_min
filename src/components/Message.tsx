@@ -27,9 +27,11 @@ interface Props {
   fresh: boolean;
   replies?: Msg[];
   threadOpen: boolean;
+  /** this message plus the photos/videos that follow it in one album: rendered as a grid under one time stamp */
+  album?: Msg[];
 }
 
-export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps, first, last, fresh, replies, threadOpen }: Props) {
+export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps, first, last, fresh, replies, threadOpen, album }: Props) {
   const tr = useApp((s) => s.tr[trKey(k, m.id)]);
   // only when the platform didn't send the quote itself: an O(n) find per message on every
   // store change made long chats crawl
@@ -101,8 +103,13 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
         {sender}
         <div className={`bubble${(m.media?.kind === "sticker" || m.media?.name === "Sticker") && !m.text ? " sticker" : ""}`}>
           {quote}
-          {m.media && <MediaView accountId={m.accountId} media={m.media} sending={m.status === "sending"} />}
-          {m.text && <div className="tx" dangerouslySetInnerHTML={{ __html: fmt(m.text) }} />}
+          {album ? (
+            // ponytail: long-press/reactions on the grid act on the first message; per-tile menus need the tile's own Msg
+            <div className={`media-grid album n${Math.min(album.length, 4)}`}>
+              {album.map((t) => <MediaView key={t.id} accountId={t.accountId} media={t.media!} sending={t.status === "sending"} tile={t.id} />)}
+            </div>
+          ) : m.media && <MediaView accountId={m.accountId} media={m.media} sending={m.status === "sending"} />}
+          {(album ? album.map((t) => t.text).find(Boolean) : m.text) && <div className="tx" dangerouslySetInnerHTML={{ __html: fmt(album ? album.map((t) => t.text).find(Boolean)! : m.text) }} />}
           <AnimatePresence initial={false}>
           {tr && (tr.state !== "ok" || tr.text) && (
             <motion.div
@@ -276,7 +283,14 @@ function TgsSticker({ path, poster }: { path: string; poster: string }) {
   );
 }
 
-function MediaView({ accountId, media, sending }: { accountId: string; media: Media; sending?: boolean }) {
+/** Bubble width for a photo: the whole image shows (no crop), tall ones get narrower, like Telegram. */
+function fitWidth(media: Media) {
+  if (!media.width || !media.height || media.kind === "sticker" || media.name === "Sticker") return undefined;
+  const maxW = isMobile ? 300 : 360;
+  return `${Math.max(120, Math.min(maxW, Math.round(420 * media.width / media.height)))}px`;
+}
+
+function MediaView({ accountId, media, sending, tile }: { accountId: string; media: Media; sending?: boolean; tile?: string }) {
   // my upload in flight: progress under the file's local path (see Meta)
   const up = useApp((s) => (sending && media.localPath ? s.progress[`${accountId}|${media.localPath}`] : undefined));
   const isImage = media.kind === "image" || (media.kind === "sticker" && !!media.fileRef);
@@ -285,7 +299,9 @@ function MediaView({ accountId, media, sending }: { accountId: string; media: Me
   const inline = isVideo && (media.name === "GIF" || media.name === "Sticker" || media.name === "Video tròn" || (media.size > 0 && media.size < 5e6));
   const dl = useDownload(accountId, media, (isImage && (media.size === 0 || media.size < 15e6)) || inline);
   const [playing, setPlaying] = useState(false);
-  const ratio = media.width && media.height ? `${media.width}/${media.height}` : undefined;
+  // an album tile is square and keeps the message id so quotes can still jump to it
+  const ratio = tile ? "1" : media.width && media.height ? `${media.width}/${media.height}` : undefined;
+  const box = { style: { aspectRatio: ratio, width: tile ? undefined : fitWidth(media) }, id: tile ? `m-${tile}` : undefined };
   // Telegram's ~320px thumbnail once it is here, the 40px blur until then
   const poster = useAvatar(accountId, media.thumbFile ?? "") || media.thumb;
   // Telegram videos (numeric TDLib file ids) stream: playback starts while the rest downloads
@@ -330,7 +346,7 @@ function MediaView({ accountId, media, sending }: { accountId: string; media: Me
     return (
       <figure
         className={`img-msg${media.kind === "sticker" ? " sticker" : ""}${dl.path ? "" : " pending"}`}
-        style={{ aspectRatio: ratio }}
+        {...box}
         onClick={() => void view()}
         onContextMenu={(e) => menu(e, true)}
       >
@@ -344,7 +360,8 @@ function MediaView({ accountId, media, sending }: { accountId: string; media: Me
     return (
       <figure
         className={`img-msg video${media.name === "Video tròn" ? " round" : ""}${media.name === "Sticker" ? " sticker" : ""}`}
-        style={{ aspectRatio: ratio ?? "16/9" }}
+        {...box}
+        style={{ ...box.style, aspectRatio: ratio ?? "16/9" }}
         onClick={() => void view()}
         onContextMenu={(e) => menu(e, true)}
       >
