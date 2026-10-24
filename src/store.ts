@@ -47,7 +47,7 @@ export interface MenuItem { icon: IconName; label: string; kbd?: string; danger?
 export type Pop = { x: number; y: number; top: number } & (
   | { kind: "emoji"; onPick: (emoji: string) => void; only?: string[] }
   /** `quick`: phone long-press sheet — a row of reactions above the items, `more` opens the full picker */
-  | { kind: "menu"; items: MenuItem[]; quick?: { pick: (emoji: string) => void; more: () => void } }
+  | { kind: "menu"; items: MenuItem[]; title?: string; quick?: { pick: (emoji: string) => void; more: () => void } }
   | { kind: "color"; accountId: string }
 );
 export const anchor = (el: Element) => {

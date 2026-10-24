@@ -407,12 +407,12 @@ function Section({ id, label, chats, forceOpen, children }: { id: string; label:
   );
 }
 
-function chatMenu(k: string, c: Chat): MenuItem[] {
+export function chatMenu(k: string, c: Chat, mobile = false): MenuItem[] {
   const fav = useApp.getState().favorites.includes(k);
   const items: (MenuItem | false)[] = [
-    { icon: "external-link", label: "Mở trong tab", run: () => void openChat(k) },
+    !mobile && { icon: "external-link", label: "Mở trong tab", run: () => void openChat(k) },
     { icon: fav ? "pin-off" : "pin", label: fav ? "Bỏ ghim khỏi đầu danh sách" : "Ghim lên đầu danh sách", run: () => toggleFavorite(k) },
-    (c.threaded || !!c.forum) && {
+    !mobile && (c.threaded || !!c.forum) && {
       icon: "message-circle-reply",
       label: useApp.getState().expanded[k] ? "Ẩn" : c.forum ? "Xem nhanh chủ đề" : "Xem nhanh luồng trả lời",
       run: () => useApp.setState((s) => ({ expanded: { ...s.expanded, [k]: !s.expanded[k] } })),
@@ -426,7 +426,7 @@ function chatMenu(k: string, c: Chat): MenuItem[] {
         api.setMuted(c.accountId, c.id, !c.muted).catch(fail);
       },
     },
-    { icon: "copy", label: "Sao chép ID chat", run: () => void navigator.clipboard.writeText(c.id).then(() => toast("Đã sao chép ID")) },
+    !mobile && { icon: "copy", label: "Sao chép ID chat", run: () => void navigator.clipboard.writeText(c.id).then(() => toast("Đã sao chép ID")) },
     ...unfixItem(k),
     ...removeItems(k, c),
   ];

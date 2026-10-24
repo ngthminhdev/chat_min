@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { dayKey, dayLabel, fmtCount } from "../lib/format";
+import { dayLabel, fmtCount } from "../lib/format";
 import type { Msg } from "../lib/types";
 import { capsOf, healthOf, loadLatest, loadOlder, markRead, splitKey, threadTabKey, threadUnread, toast, useApp, openSearch } from "../store";
 import { api, openUrl } from "../lib/bridge";
@@ -19,11 +19,7 @@ import { langLabel, toggleAutoTranslate, translateMissing } from "../ai";
 import { isMobile } from "../lib/mobile";
 import { showMobileList } from "../mobile";
 
-const tile = (m?: Msg) => !!m?.media && (m.media.kind === "image" || m.media.kind === "video") && !["Sticker", "GIF", "Video tròn"].includes(m.media.name);
-/** `b` continues the album `a` is in: same Telegram album, or media I sent within a minute (ChatMin sends files one by one). */
-const albumNext = (a: Msg, b: Msg | undefined, unreadAt?: number) =>
-  !!b && tile(a) && tile(b) && a.senderId === b.senderId && a.outgoing === b.outgoing && b.sort !== unreadAt &&
-  (a.albumId ? a.albumId === b.albumId : a.outgoing && !b.albumId && Math.abs(a.ts - b.ts) < 60e3);
+import { layoutMessages } from "../lib/message-layout";
 import { MobileActions } from "../ui/MobileActions";
 
 const HEALTH_MSG: Record<string, string> = {
@@ -259,17 +255,8 @@ function MessageList({ k }: { k: string }) {
       <>
         {older === "loading" && <div className="older-loading"><span className="veil-spinner" /></div>}
         {older === "done" && <div className="history-start">Đầu cuộc trò chuyện</div>}
-        {visible.map((m, i) => {
-          const prev = visible[i - 1];
-          const group = (a?: Msg, b?: Msg) =>
-            !!a && !!b && a.kind !== "service" && b.kind !== "service" && a.senderId === b.senderId && a.outgoing === b.outgoing && Math.abs(a.ts - b.ts) < 5 * 60e3 && dayKey(a.ts) === dayKey(b.ts);
+        {layoutMessages(visible, mark?.sort).map(({ m, album, first, last, newDay }) => {
           const showUnread = mark && m.sort === mark.sort;
-          // Telegram album (shared albumId), or photos/videos I sent in one go: one grid, one time stamp
-          if (prev && albumNext(prev, m, mark?.sort)) return null;
-          const album: Msg[] = [m];
-          while (albumNext(album[album.length - 1], visible[i + album.length], mark?.sort)) album.push(visible[i + album.length]);
-          const next = visible[i + album.length];
-          const newDay = !prev || dayKey(prev.ts) !== dayKey(m.ts);
           return (
             <Fragment key={messageRenderKey(m)}>
               {newDay && (
@@ -287,9 +274,9 @@ function MessageList({ k }: { k: string }) {
                 m={m}
                 chat={chat!}
                 caps={caps}
-                first={!group(prev, m) || !!showUnread || newDay}
-                last={!group(album[album.length - 1], next)}
-                album={album.length > 1 ? album : undefined}
+                first={first}
+                last={last}
+                album={album}
                 fresh={arrival(m)}
                 replies={m.threadId ? replies[m.threadId] : undefined}
                 threadOpen={!!m.threadId && threadTabs.includes(threadTabKey(k, m.threadId))}

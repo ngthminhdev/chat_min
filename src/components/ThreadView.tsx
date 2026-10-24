@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef } from "react";
-import { fmtCount, plain } from "../lib/format";
+import { Fragment, useEffect, useMemo, useRef } from "react";
+import { dayKey, dayLabel, fmtCount, plain } from "../lib/format";
 import { capsOf, muteThread, openChat, seenThread, toast, useApp } from "../store";
 import { ChatAvatar } from "../ui/Avatar";
 import { Icon } from "../ui/Icon";
@@ -11,6 +11,7 @@ import { SummaryButton, SummaryCard } from "./Summary";
 import { useMessageArrivals } from "./useMessageArrivals";
 import { messageRenderKey } from "../lib/message-identity";
 import { DelayedLoading } from "./DelayedLoading";
+import { layoutMessages } from "../lib/message-layout";
 import { MobileActions } from "../ui/MobileActions";
 
 /** A Google Chat thread in its own workspace tab: root, replies, and a composer that answers in-thread. */
@@ -102,33 +103,34 @@ export function ThreadView({ tab }: { tab: string }) {
         <div className="msgs-inner">
           {meta.error && <div className="empty-note" role="alert">Chưa tải được luồng trả lời: {meta.error} <button className="tool-btn" onClick={() => void openChat(tab)}>Thử lại</button></div>}
           {meta.topic ? null : root ? (
+            <>
+            <div className="day-sep" role="separator"><span>{dayLabel(root.ts)}</span></div>
             <div className="thread-root">
               <MessageItem k={meta.chatKey} tab={tab} m={root} chat={chat} caps={caps} first last fresh={false} threadOpen={false} />
             </div>
+            </>
           ) : !meta.error ? (
             <DelayedLoading label="Đang tải luồng trả lời…" />
           ) : null}
           {!meta.topic && <div className="day-sep" role="separator"><span>{replies.length ? `${replies.length} trả lời` : "Chưa có trả lời"}</span></div>}
           {meta.topic && !replies.length && !meta.error && <DelayedLoading label="Đang tải chủ đề…" />}
-          {replies.map((m, i) => {
-            const prev = replies[i - 1];
-            const next = replies[i + 1];
-            const same = (a?: typeof m, b?: typeof m) => !!a && !!b && a.senderId === b.senderId && Math.abs(a.ts - b.ts) < 5 * 60e3;
-            return (
+          {layoutMessages(replies).map(({ m, album, first, last, newDay }, i) => (
+            <Fragment key={messageRenderKey(m)}>
+              {newDay && (meta.topic || !root || i > 0 || dayKey(root.ts) !== dayKey(m.ts)) && <div className="day-sep" role="separator"><span>{dayLabel(m.ts)}</span></div>}
               <MessageItem
-                key={messageRenderKey(m)}
                 k={meta.chatKey}
                 tab={tab}
                 m={m}
                 chat={chat}
                 caps={caps}
-                first={!same(prev, m)}
-                last={!same(m, next)}
+                first={first}
+                last={last}
+                album={album}
                 fresh={arrival(m)}
                 threadOpen={false}
               />
-            );
-          })}
+            </Fragment>
+          ))}
         </div>
         <JumpBottom away={scroll.away} fresh={scroll.fresh} onClick={scroll.toBottom} />
       </div>

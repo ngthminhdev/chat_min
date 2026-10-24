@@ -363,6 +363,7 @@ function Popover() {
           initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%", transition: { duration: 0.16 } }}
           transition={{ duration: 0.24, ease: [0.2, 0, 0, 1] }}
         >
+          {pop.kind === "menu" && pop.title && <div className="mobile-menu-title">{pop.title}</div>}
           {pop.kind === "menu" && pop.quick && (
             <div className="quick-reactions" role="group" aria-label="Biểu cảm nhanh">
               {QUICK.map((emoji) => <button key={emoji} type="button" onClick={() => { close(); pop.quick!.pick(emoji); }}>{emoji}</button>)}

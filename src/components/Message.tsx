@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { EASE } from "../lib/motion";
 import { fileSrc, isTauri, openPath, openUrl, revealPath, streamSrc } from "../lib/bridge";
-import { fileSize, fmt, hm, plain } from "../lib/format";
+import { dayLabel, fileSize, fmt, hm, plain } from "../lib/format";
 import { CAP_OFF_NOTE, type Cap } from "../lib/platforms";
 import type { Chat, Media, Msg } from "../lib/types";
 import { anchor, confirmDialog, fail, openThreadTab, pickReaction, retry, threadUnread, saveMedia, toast, toggleReaction, useApp, type MenuItem } from "../store";
@@ -84,11 +84,7 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
       onContextMenu={(e: React.MouseEvent) => {
         if (e.defaultPrevented) return;
         e.preventDefault();
-        // phone: long-press → bottom sheet with a quick reaction row
-        const quick = isMobile && caps.reactions && !m.deleted
-          ? { pick: (emoji: string) => void toggleReaction(k, m, emoji), more: () => void pickReaction(k, m, { x: 0, y: 0, top: 0 }) }
-          : undefined;
-        useApp.setState({ pop: { kind: "menu", x: e.clientX, y: e.clientY, top: e.clientY, items: menuFor(k, tab, m, caps), quick } });
+        showMessageMenu(e, k, tab, m, caps);
       }}
       onKeyDown={(e: React.KeyboardEvent) => {
         if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
@@ -104,12 +100,11 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
         <div className={`bubble${(m.media?.kind === "sticker" || m.media?.name === "Sticker") && !m.text ? " sticker" : ""}`}>
           {quote}
           {album ? (
-            // ponytail: long-press/reactions on the grid act on the first message; per-tile menus need the tile's own Msg
             <div className={`media-grid album n${Math.min(album.length, 4)}`}>
-              {album.map((t) => <MediaView key={t.id} accountId={t.accountId} media={t.media!} sending={t.status === "sending"} tile={t.id} />)}
+              {album.map((t) => <MediaView key={t.id} accountId={t.accountId} media={t.media!} sending={t.status === "sending"} tile anchorId={t.id === m.id ? undefined : t.id} onMessageMenu={(e, items) => showMessageMenu(e, k, tab, t, caps, items)} />)}
             </div>
-          ) : m.media && <MediaView accountId={m.accountId} media={m.media} sending={m.status === "sending"} />}
-          {(album ? album.map((t) => t.text).find(Boolean) : m.text) && <div className="tx" dangerouslySetInnerHTML={{ __html: fmt(album ? album.map((t) => t.text).find(Boolean)! : m.text) }} />}
+          ) : m.media && <MediaView accountId={m.accountId} media={m.media} sending={m.status === "sending"} onMessageMenu={(e, items) => showMessageMenu(e, k, tab, m, caps, items)} />}
+          {m.text && <div className="tx" dangerouslySetInnerHTML={{ __html: fmt(m.text) }} />}
           <AnimatePresence initial={false}>
           {tr && (tr.state !== "ok" || tr.text) && (
             <motion.div
@@ -290,7 +285,7 @@ function fitWidth(media: Media) {
   return `${Math.max(120, Math.min(maxW, Math.round(420 * media.width / media.height)))}px`;
 }
 
-function MediaView({ accountId, media, sending, tile }: { accountId: string; media: Media; sending?: boolean; tile?: string }) {
+function MediaView({ accountId, media, sending, tile, anchorId, onMessageMenu }: { accountId: string; media: Media; sending?: boolean; tile?: boolean; anchorId?: string; onMessageMenu: (e: React.MouseEvent, items: MenuItem[]) => void }) {
   // my upload in flight: progress under the file's local path (see Meta)
   const up = useApp((s) => (sending && media.localPath ? s.progress[`${accountId}|${media.localPath}`] : undefined));
   const isImage = media.kind === "image" || (media.kind === "sticker" && !!media.fileRef);
@@ -301,7 +296,7 @@ function MediaView({ accountId, media, sending, tile }: { accountId: string; med
   const [playing, setPlaying] = useState(false);
   // an album tile is square and keeps the message id so quotes can still jump to it
   const ratio = tile ? "1" : media.width && media.height ? `${media.width}/${media.height}` : undefined;
-  const box = { style: { aspectRatio: ratio, width: tile ? undefined : fitWidth(media) }, id: tile ? `m-${tile}` : undefined };
+  const box = { style: { aspectRatio: ratio, width: tile ? undefined : fitWidth(media) }, id: anchorId ? `m-${anchorId}` : undefined };
   // Telegram's ~320px thumbnail once it is here, the 40px blur until then
   const poster = useAvatar(accountId, media.thumbFile ?? "") || media.thumb;
   // Telegram videos (numeric TDLib file ids) stream: playback starts while the rest downloads
@@ -326,12 +321,13 @@ function MediaView({ accountId, media, sending, tile }: { accountId: string; med
       : [
           ...(viewable ? [{ icon: "image" as const, label: "Xem", run: () => void view() }] : []),
           { icon: "external-link", label: "Mở bằng app mặc định", run: () => void ensure().then((p) => { if (p) openPath(p).catch(fail); }) },
-          { icon: "folder-open", label: "Hiện trong Finder", run: () => void ensure().then((p) => { if (p) revealPath(p).catch(fail); }) },
+          ...(!isMobile ? [{ icon: "folder-open" as const, label: "Hiện trong Finder", run: () => void ensure().then((p) => { if (p) revealPath(p).catch(fail); }) }] : []),
           { icon: "download", label: "Lưu vào thư mục tải về", run: () => void ensure().then((p) => { if (p) void saveMedia(p, media.name, false); }) },
           { icon: "download", label: "Lưu thành…", run: () => void ensure().then((p) => { if (p) void saveMedia(p, media.name, true); }) },
           { icon: "copy", label: "Sao chép tên tệp", run: () => void navigator.clipboard.writeText(media.name).then(() => toast("Đã sao chép")) },
         ];
-    useApp.setState({ pop: { kind: "menu", x: e.clientX, y: e.clientY, top: e.clientY, items } });
+    if (isMobile) onMessageMenu(e, items);
+    else useApp.setState({ pop: { kind: "menu", x: e.clientX, y: e.clientY, top: e.clientY, items } });
   };
 
   if (media.mime === "application/x-tgsticker") {
@@ -462,6 +458,16 @@ export function startEdit(k: string, m: Msg) {
   setTimeout(() => document.getElementById("composer-input")?.focus());
 }
 
+function showMessageMenu(e: React.MouseEvent, k: string, tab: string, m: Msg, caps: Record<Cap, boolean>, mediaItems: MenuItem[] = []) {
+  e.preventDefault();
+  e.stopPropagation();
+  const quick = isMobile && caps.reactions && !m.deleted
+    ? { pick: (emoji: string) => void toggleReaction(k, m, emoji), more: () => void pickReaction(k, m, { x: 0, y: 0, top: 0 }) }
+    : undefined;
+  useApp.setState({ pop: { kind: "menu", x: e.clientX, y: e.clientY, top: e.clientY,
+    title: `${dayLabel(m.ts)} · ${hm(m.ts)}`, items: [...menuFor(k, tab, m, caps), ...mediaItems], quick } });
+}
+
 function menuFor(k: string, tab: string, m: Msg, caps: Record<Cap, boolean>): MenuItem[] {
   const items: (MenuItem | false)[] = [
     { icon: "reply", label: "Trả lời", run: () => setReply(tab, m) },
@@ -469,7 +475,7 @@ function menuFor(k: string, tab: string, m: Msg, caps: Record<Cap, boolean>): Me
       const el = document.getElementById(`m-${m.id}`);
       void pickReaction(k, m, el ? anchor(el.querySelector('.bubble') ?? el) : { x: 40, y: 80, top: 80 });
     } },
-    caps.threads && !!m.threadId && { icon: "message-circle-reply", label: "Mở luồng trả lời trong tab", run: () => openThread(k, m) },
+    caps.threads && !!m.threadId && { icon: "message-circle-reply", label: isMobile ? "Mở luồng trả lời" : "Mở luồng trả lời trong tab", run: () => openThread(k, m) },
     !!m.text && { icon: "languages", label: useApp.getState().tr[trKey(k, m.id)] ? "Ẩn bản dịch" : "Dịch", run: () => void translateMsg(k, m) },
     {
       icon: "copy",

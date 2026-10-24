@@ -5,10 +5,12 @@ import { ChatAvatar } from "../ui/Avatar";
 import { Icon } from "../ui/Icon";
 import { isMobile } from "../lib/mobile";
 import { startWizard } from "./Wizard";
+import { chatMenu } from "../components/Sidebar";
 
 export function Inbox() {
   const chats = useApp((s) => s.chats);
   const accounts = useApp((s) => s.accounts);
+  const favorites = useApp((s) => s.favorites);
   const [account, setAccount] = useState("");
   const [filter, setFilter] = useState("all");
   const [q, setQ] = useState("");
@@ -22,8 +24,15 @@ export function Inbox() {
             (filter === "all" || (filter === "unread" ? c.unread > 0 : c.mention)) &&
             (!q.trim() || fuzzy(q, c.title) > 0 || norm(c.preview).includes(norm(q))),
         )
-        .sort((a, b) => b.lastTs - a.lastTs),
-    [chats, account, filter, q],
+        .sort((a, b) => {
+          if (isMobile) {
+            const ai = favorites.indexOf(key(a.accountId, a.id));
+            const bi = favorites.indexOf(key(b.accountId, b.id));
+            if (ai >= 0 || bi >= 0) return (ai < 0 ? Infinity : ai) - (bi < 0 ? Infinity : bi);
+          }
+          return b.lastTs - a.lastTs;
+        }),
+    [chats, account, filter, q, favorites],
   );
   return (
     <>
@@ -80,10 +89,14 @@ export function Inbox() {
             rows.slice(0, limit).map((c) => {
               const a = accounts.find((x) => x.id === c.accountId);
               return (
-                <button key={key(c.accountId, c.id)} className="inbox-row" onClick={() => void openChat(key(c.accountId, c.id))}>
+                <button key={key(c.accountId, c.id)} className="inbox-row" onClick={() => void openChat(key(c.accountId, c.id))}
+                  onContextMenu={isMobile ? (e) => {
+                    e.preventDefault();
+                    useApp.setState({ pop: { kind: "menu", x: e.clientX, y: e.clientY, top: e.clientY, title: c.title, items: chatMenu(key(c.accountId, c.id), c, true) } });
+                  } : undefined}>
                   <ChatAvatar chat={c} platform={a?.platform} />
                   <span className="od-field od-fill">
-                    <strong>{c.title}</strong>
+                    <strong>{isMobile && favorites.includes(key(c.accountId, c.id)) && <Icon name="pin" />}{c.title}</strong>
                     <span className="od-truncate">
                       {c.previewFrom ? `${c.previewFrom}: ` : ""}
                       {c.preview || "Chưa có tin nhắn"}
