@@ -1592,6 +1592,13 @@ body:is([data-background="glass"], [data-background="clear"]) .inbox-shell { bor
 .bubble .code-block pre code, .cmsg .code-block pre code { display: block; padding: 0; border-radius: 0; background: transparent; font: inherit; }
 
 /* ── user folders: groups in the sidebar like the account ones (Folders.tsx) ── */
-.folder-group .acc-head .folder-emoji { font-size: 15px; line-height: 1; width: 18px; text-align: center; }
-.folder-group .acc-head .folder-img { width: 18px; height: 18px; border-radius: 5px; object-fit: cover; }
-.folder-group .acc-head .fav-ic { --od-icon-size: 14px; color: var(--conn); }
+.folder-group .acc-head { grid-template-columns: 12px 9px 16px minmax(0, 1fr) auto auto; }
+.folder-group .acc-head .acc-name { padding-left: 4px; }
+.folder-group .acc-head .folder-emoji { font-size: 14px; line-height: 1; width: 16px; text-align: center; }
+.folder-group .acc-head .folder-img { width: 16px; height: 16px; border-radius: 4px; object-fit: cover; }
+.folder-group .acc-head .fav-ic { --od-icon-size: 15px; color: var(--conn); }
+.icon-grid { display: grid; grid-template-columns: repeat(8, 32px); gap: 4px; padding: 8px; }
+.icon-grid button { display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text-2); cursor: pointer; }
+.icon-grid button:hover { color: var(--text); background: color-mix(in oklab, var(--text), transparent 90%); }
+.icon-grid button.selected { color: var(--accent); border-color: var(--accent); }
+.icon-grid .ic { --od-icon-size: 17px; }

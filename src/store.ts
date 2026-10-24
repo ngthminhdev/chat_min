@@ -49,6 +49,7 @@ export type Pop = { x: number; y: number; top: number } & (
   /** `quick`: phone long-press sheet — a row of reactions above the items, `more` opens the full picker */
   | { kind: "menu"; items: MenuItem[]; title?: string; quick?: { pick: (emoji: string) => void; more: () => void } }
   | { kind: "color"; accountId?: string; value?: string; onPick?: (color: string) => void }
+  | { kind: "icons"; value?: string; onPick: (name: IconName) => void }
 );
 export const anchor = (el: Element) => {
   const r = el.getBoundingClientRect();

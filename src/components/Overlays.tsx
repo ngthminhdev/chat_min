@@ -4,6 +4,7 @@ import { api, fileSrc } from "../lib/bridge";
 import { esc, fuzzy, hm, norm, plain } from "../lib/format";
 import { bare, EMOJI, nextEmojiIndex, searchEmoji } from "../lib/micro-ux";
 import { COLORS, COLOR_LABELS } from "../lib/platforms";
+import { IconPicker } from "./Folders";
 import type { Chat, Msg } from "../lib/types";
 import { dismissToast, forwardMsg, key, loadLatest, loadTopics, openChat, splitKey, useApp, openSearch, type Pop, type Toast } from "../store";
 import { removeAccount, renameAccount } from "../App";
@@ -412,6 +413,9 @@ function Popover() {
 function PopBody({ pop, close }: { pop: Pop; close: () => void }) {
   if (pop.kind === "emoji") {
     return <EmojiPicker only={pop.only} onPick={(emoji) => { close(); pop.onPick(emoji); }} />;
+  }
+  if (pop.kind === "icons") {
+    return <IconPicker value={pop.value} onPick={(name) => { close(); pop.onPick(name); }} />;
   }
   if (pop.kind === "menu") {
     return (

@@ -2,12 +2,30 @@
 // and account groups. A folder holds chats from any account (those leave their account
 // group, like pinned ones do). Groups drag to reorder; right-click the header to rename,
 // recolour, set an emoji or image icon, or delete.
+import { useState } from "react";
 import { Reorder, useDragControls } from "motion/react";
 import { fileSrc, pickFile } from "../lib/bridge";
 import { fuzzy, norm } from "../lib/format";
 import type { Folder } from "../lib/types";
 import { confirmDialog, promptDialog, toast, useApp, type MenuItem } from "../store";
-import { Icon } from "../ui/Icon";
+import { Icon, type IconName } from "../ui/Icon";
+
+const LIMIT = 10;
+/** lucide icons offered for a folder (stored as "icon:<name>") */
+export const FOLDER_ICONS: IconName[] = ["folder", "briefcase", "users", "heart", "home", "bot", "server", "terminal", "code", "database", "cloud", "shield", "newspaper", "book-open", "graduation-cap", "lightbulb", "rocket", "zap", "flame", "star", "bookmark", "flag", "tag", "gift", "wallet", "shopping-bag", "building-2", "globe", "plane", "car", "coffee", "music", "camera", "gamepad-2", "dumbbell", "leaf", "sun", "moon", "dog", "cat", "message-circle", "bell", "pin", "wrench"];
+
+/** Grid of folder icons (pop "icons"). */
+export function IconPicker({ value, onPick }: { value?: string; onPick: (name: IconName) => void }) {
+  return (
+    <div className="icon-grid" role="group" aria-label="Chọn icon">
+      {FOLDER_ICONS.map((name) => (
+        <button key={name} type="button" className={value === name ? "selected" : ""} aria-label={name} aria-pressed={value === name} onClick={() => onPick(name)}>
+          <Icon name={name} />
+        </button>
+      ))}
+    </div>
+  );
+}
 import { ChatRow, rowProps, useRowState } from "./Sidebar";
 
 const set = useApp.setState;
@@ -22,7 +40,8 @@ export const inFolders = (folders: Folder[]) => new Set(folders.flatMap((f) => f
 
 function FolderIcon({ f }: { f: Folder }) {
   if (f.icon.startsWith("img:")) return <img className="folder-img" src={fileSrc(f.icon.slice(4))} alt="" />;
-  if (f.icon) return <span className="folder-emoji">{f.icon}</span>;
+  if (f.icon.startsWith("icon:")) return <Icon name={f.icon.slice(5) as IconName} className="fav-ic" />;
+  if (f.icon) return <span className="folder-emoji">{f.icon}</span>; // emoji from before the icon picker
   return <Icon name="folder" className="fav-ic" />;
 }
 
@@ -30,7 +49,7 @@ function folderMenu(f: Folder, at: { x: number; y: number; top: number }): MenuI
   return [
     { icon: "pencil", label: "Đổi tên", run: () => promptDialog("Tên thư mục", f.name, (v) => v.trim() && patch(f.id, { name: v.trim() })) },
     { icon: "palette", label: "Màu", run: () => set({ pop: { kind: "color", ...at, value: f.color, onPick: (color) => patch(f.id, { color }) } }) },
-    { icon: "smile", label: "Icon emoji", run: () => set({ pop: { kind: "emoji", ...at, onPick: (icon) => patch(f.id, { icon }) } }) },
+    { icon: "star", label: "Icon", run: () => set({ pop: { kind: "icons", ...at, value: f.icon.startsWith("icon:") ? f.icon.slice(5) : undefined, onPick: (name) => patch(f.id, { icon: `icon:${name}` }) } }) },
     { icon: "image", label: "Icon ảnh…", run: () => void pickFile([{ name: "Ảnh", extensions: ["png", "jpg", "jpeg", "webp", "svg"] }]).then((p) => p && patch(f.id, { icon: `img:${p}` })) },
     ...(f.icon ? [{ icon: "x" as const, label: "Bỏ icon", run: () => patch(f.id, { icon: "" }) }] : []),
     { icon: "folder-plus", label: "Thư mục mới", run: () => promptDialog("Tên thư mục mới", "", (v) => v.trim() && addFolder(v.trim())) },
@@ -56,11 +75,16 @@ function FolderGroup({ f }: { f: Folder }) {
   const collapsed = useApp((s) => !!s.collapsed[f.id]) && !q;
   const rs = useRowState();
   const drag = useDragControls();
+  const [all, setAll] = useState(false);
   const live = f.chats.filter((k) => chats[k]).map((k) => chats[k]);
   const shown = live
     .filter((c) => (!q || fuzzy(q, c.title) > 0) && (filter === "all" || (filter === "unread" ? c.unread > 0 : c.mention)))
     .sort((a, b) => b.lastTs - a.lastTs);
   const unread = live.filter((c) => !c.muted).reduce((n, c) => n + c.unread, 0);
+  // ten like the other groups; filtering or searching shows every match
+  const full = all || !!q || filter !== "all";
+  const rows = full ? shown : shown.slice(0, LIMIT);
+  const more = shown.length - LIMIT;
   const menu = (e: React.MouseEvent) => {
     e.preventDefault();
     set({ pop: { kind: "menu", x: e.clientX, y: e.clientY, top: e.clientY, title: f.name, items: folderMenu(f, { x: e.clientX, y: e.clientY, top: e.clientY }) } });
@@ -94,7 +118,7 @@ function FolderGroup({ f }: { f: Folder }) {
       </button>
       {!collapsed && (
         <div className="acc-chats">
-          {shown.length ? shown.map((c) => {
+          {rows.length ? rows.map((c) => {
             const k = `${c.accountId}|${c.id}`;
             const a = accounts.find((x) => x.id === c.accountId);
             return (
@@ -104,6 +128,13 @@ function FolderGroup({ f }: { f: Folder }) {
             );
           }) : (
             <div className="side-empty">{live.length ? "Không có hội thoại khớp bộ lọc." : <>Trống. Chuột phải một hội thoại → "Thêm vào {f.name}".</>}</div>
+          )}
+          {more > 0 && !q && filter === "all" && (
+            <button className="sec-more" aria-label={all ? `Thu gọn ${f.name}` : `Xem thêm ${more} hội thoại trong ${f.name}`} aria-expanded={all} onClick={() => setAll((v) => !v)}>
+              <span className="sec-more-label">{all ? "Thu gọn" : `Xem thêm ${more}`}</span>
+              {!all && <span className="sec-more-count" aria-hidden="true">{more > 99 ? "99+" : `+${more}`}</span>}
+              <Icon name="chevron-down" className={all ? "up" : ""} />
+            </button>
           )}
         </div>
       )}
