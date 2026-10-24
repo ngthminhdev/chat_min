@@ -14,6 +14,7 @@ import lottie from "lottie-web/build/player/lottie_light";
 import { translateMsg, trKey } from "../ai";
 import { fileActionLabel } from "../lib/micro-ux";
 import { isMobile } from "../lib/mobile";
+import { isReplySwipe } from "../lib/mobile-gestures";
 
 interface Props {
   k: string;
@@ -40,6 +41,13 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
   const original = useMemo(() => list?.find((x) => x.id === m.replyTo), [list, m.replyTo]);
   const enter = useRef(fresh).current;
   const reduceMotion = useReducedMotion();
+  const swipe = useRef<{ x: number; y: number; msg: Msg } | null>(null);
+  const ignoreClickUntil = useRef(0);
+  const resetSwipe = (el: HTMLElement) => {
+    swipe.current = null;
+    el.style.removeProperty("--reply-drag");
+    el.classList.remove("reply-dragging");
+  };
   if (m.kind === "service") {
     return (
       <div className="service-msg" id={`m-${m.id}`}>
@@ -80,9 +88,44 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
 
   return (
     <Wrap className={cls} id={`m-${m.id}`} {...anim}
+      onPointerDown={(e: React.PointerEvent<HTMLElement>) => {
+        if (!e.isPrimary) { resetSwipe(e.currentTarget); return; }
+        if (!isMobile || e.pointerType !== "touch" || !e.isPrimary || !caps.reply || !chat.canSend || (e.target as Element).closest("button, a, input, textarea, audio, video")) return;
+        const id = (e.target as Element).closest<HTMLElement>("[data-message-id]")?.dataset.messageId;
+        swipe.current = { x: e.clientX, y: e.clientY, msg: album?.find(t => t.id === id) ?? m };
+      }}
+      onPointerMove={(e: React.PointerEvent<HTMLElement>) => {
+        const s = swipe.current;
+        if (!s) return;
+        const dx = e.clientX - s.x, dy = e.clientY - s.y;
+        if (Math.abs(dy) > 12 && Math.abs(dy) >= Math.abs(dx)) { resetSwipe(e.currentTarget); return; }
+        if (dx < -12 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+          e.currentTarget.classList.add("reply-dragging");
+          e.currentTarget.style.setProperty("--reply-drag", `${Math.max(-80, dx)}px`);
+        }
+      }}
+      onPointerUp={(e: React.PointerEvent<HTMLElement>) => {
+        const s = swipe.current;
+        resetSwipe(e.currentTarget);
+        if (!s) return;
+        const dx = e.clientX - s.x, dy = e.clientY - s.y;
+        if (Math.hypot(dx, dy) > 12) ignoreClickUntil.current = Date.now() + 600;
+        if (isReplySwipe(dx, dy)) setReply(tab, s.msg);
+      }}
+      onPointerCancel={(e: React.PointerEvent<HTMLElement>) => resetSwipe(e.currentTarget)}
+      onClickCapture={(e: React.MouseEvent) => {
+        if (isMobile && Date.now() < ignoreClickUntil.current) { e.preventDefault(); e.stopPropagation(); }
+      }}
+      onClick={isMobile ? (e: React.MouseEvent) => {
+        const target = e.target as Element;
+        if (target.closest("button, a, input, textarea, audio, video, .img-msg, .file-card")) return;
+        if (target.closest(".message-surface, .msg-meta")) showMessageMenu(e, k, tab, m, caps);
+      } : undefined}
       onMouseEnter={me ? undefined : (e: React.MouseEvent) => fitActions(e.currentTarget as HTMLElement)}
       onContextMenu={(e: React.MouseEvent) => {
         if (e.defaultPrevented) return;
+        resetSwipe(e.currentTarget as HTMLElement);
+        ignoreClickUntil.current = Date.now() + 600;
         e.preventDefault();
         showMessageMenu(e, k, tab, m, caps);
       }}
@@ -101,9 +144,9 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
           {quote}
           {album ? (
             <div className={`media-grid album n${Math.min(album.length, 4)}`}>
-              {album.map((t) => <MediaView key={t.id} accountId={t.accountId} media={t.media!} sending={t.status === "sending"} tile anchorId={t.id === m.id ? undefined : t.id} onMessageMenu={(e, items) => showMessageMenu(e, k, tab, t, caps, items)} />)}
+              {album.map((t) => <MediaView key={t.id} accountId={t.accountId} media={t.media!} sending={t.status === "sending"} tile anchorId={t.id === m.id ? undefined : t.id} chatKey={k} messageId={t.id} galleryIds={album.map(t => t.id)} onMessageMenu={(e, items) => showMessageMenu(e, k, tab, t, caps, items)} />)}
             </div>
-          ) : m.media && <MediaView accountId={m.accountId} media={m.media} sending={m.status === "sending"} onMessageMenu={(e, items) => showMessageMenu(e, k, tab, m, caps, items)} />}
+          ) : m.media && <MediaView accountId={m.accountId} media={m.media} sending={m.status === "sending"} chatKey={k} messageId={m.id} onMessageMenu={(e, items) => showMessageMenu(e, k, tab, m, caps, items)} />}
           {m.text && <div className="tx" dangerouslySetInnerHTML={{ __html: fmt(m.text) }} />}
           <AnimatePresence initial={false}>
           {tr && (tr.state !== "ok" || tr.text) && (
@@ -285,7 +328,7 @@ function fitWidth(media: Media) {
   return `${Math.max(120, Math.min(maxW, Math.round(420 * media.width / media.height)))}px`;
 }
 
-function MediaView({ accountId, media, sending, tile, anchorId, onMessageMenu }: { accountId: string; media: Media; sending?: boolean; tile?: boolean; anchorId?: string; onMessageMenu: (e: React.MouseEvent, items: MenuItem[]) => void }) {
+function MediaView({ accountId, media, sending, tile, anchorId, chatKey, messageId, galleryIds, onMessageMenu }: { accountId: string; media: Media; sending?: boolean; tile?: boolean; anchorId?: string; chatKey: string; messageId: string; galleryIds?: string[]; onMessageMenu: (e: React.MouseEvent, items: MenuItem[]) => void }) {
   // my upload in flight: progress under the file's local path (see Meta)
   const up = useApp((s) => (sending && media.localPath ? s.progress[`${accountId}|${media.localPath}`] : undefined));
   const isImage = media.kind === "image" || (media.kind === "sticker" && !!media.fileRef);
@@ -296,7 +339,7 @@ function MediaView({ accountId, media, sending, tile, anchorId, onMessageMenu }:
   const [playing, setPlaying] = useState(false);
   // an album tile is square and keeps the message id so quotes can still jump to it
   const ratio = tile ? "1" : media.width && media.height ? `${media.width}/${media.height}` : undefined;
-  const box = { style: { aspectRatio: ratio, width: tile ? undefined : fitWidth(media) }, id: anchorId ? `m-${anchorId}` : undefined };
+  const box = { style: { aspectRatio: ratio, width: tile ? undefined : fitWidth(media) }, id: anchorId ? `m-${anchorId}` : undefined, "data-message-id": messageId };
   // Telegram's ~320px thumbnail once it is here, the 40px blur until then
   const poster = useAvatar(accountId, media.thumbFile ?? "") || media.thumb;
   // Telegram videos (numeric TDLib file ids) stream: playback starts while the rest downloads
@@ -308,10 +351,13 @@ function MediaView({ accountId, media, sending, tile, anchorId, onMessageMenu }:
     if (!p) toast("Chưa tải được tệp. Hãy thử lại.", "circle-alert");
     return p;
   };
-  const view = async () => {
-    if (stream) return useApp.setState({ viewer: { media, path: "", src: streamSrc(accountId, media.fileRef, media.mime), accountId } });
-    const p = await ensure();
-    if (p) useApp.setState({ viewer: { media, path: p } });
+  const view = () => {
+    const all = useApp.getState().msgs[chatKey] ?? [];
+    const albumId = all.find(m => m.id === messageId)?.albumId;
+    const ids = albumId ? all.filter(m => m.albumId === albumId).map(m => m.id) : galleryIds;
+    const context = { accountId, messageId, galleryIds: ids };
+    if (stream) return useApp.setState({ viewer: { media, path: "", src: streamSrc(accountId, media.fileRef, media.mime), ...context } });
+    useApp.setState({ viewer: { media, path: dl.path || media.localPath || "", ...context } });
   };
   const menu = (e: React.MouseEvent, viewable: boolean) => {
     e.preventDefault();
@@ -332,7 +378,7 @@ function MediaView({ accountId, media, sending, tile, anchorId, onMessageMenu }:
 
   if (media.mime === "application/x-tgsticker") {
     return (
-      <figure className="img-msg sticker" style={{ aspectRatio: ratio }} onContextMenu={(e) => menu(e, false)}>
+      <figure className="img-msg sticker" data-message-id={messageId} style={{ aspectRatio: ratio }} onClick={isMobile ? (e) => menu(e, false) : undefined} onContextMenu={(e) => menu(e, false)}>
         {dl.path ? <TgsSticker path={dl.path} poster={poster} /> : poster ? <img className="od-media" src={poster} alt="Sticker" /> : <span className="veil-spinner" />}
       </figure>
     );
@@ -399,7 +445,7 @@ function MediaView({ accountId, media, sending, tile, anchorId, onMessageMenu }:
   };
   return (
     <>
-      <div className="file-card" onContextMenu={(e) => menu(e, false)}>
+      <div className="file-card" data-message-id={messageId} onClick={isMobile ? (e) => { if (!(e.target as Element).closest("button")) menu(e, false); } : undefined} onContextMenu={(e) => menu(e, false)}>
         <span className="file-ic"><Icon name={icon} /></span>
         <span style={{ minWidth: 0 }}>
           <strong>{media.name}</strong>
