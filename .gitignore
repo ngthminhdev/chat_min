@@ -27,8 +27,12 @@ gchat-credentials.json
 .vscode/
 .idea/
 
-# audit backups (git history replaces them)
-docs/audits/*-before/
+# generated QA artifacts and completed working plans
+/docs/audits/
+/docs/screenshots/
+/docs/superpowers/plans/
+/test-results/
+/playwright-report/
 
 # os / logs
 .DS_Store
