@@ -239,8 +239,10 @@ html.mobile body .main .content .conv-head .title strong { font-size: 16px; line
 .mobile .bell-filter { flex: 1; min-width: 0; padding: 0; border: 0; }
 .mobile .bell-filter button { flex: 1; white-space: nowrap; font-size: 14px; }
 .mobile body .bell-readall { padding: 0 10px; font-size: 13px; }
-/* No hover on a phone: every message carries its time, like Telegram (desktop shows it on hover for grouped ones). */
-.mobile .msg:not(.last) .msg-col .msg-meta { position: static; opacity: 1; pointer-events: auto; }
+/* One time per continuous group; exact time remains in the held-message sheet.
+   Pending/failed and edited metadata remain visible even inside a group. */
+.mobile .msg:not(.last) .msg-col .msg-meta { display: none; }
+.mobile .msg:not(.last) .msg-col .msg-meta:is(.pending, :has(.edited)) { display: inline-flex; position: static; opacity: 1; pointer-events: auto; }
 .mobile .msg:not(.last) .msg-col .message-footer { position: static; height: auto; }
 .mobile .thread-content .back-btn .ic { transform: none; }
 /* Android WebView 124 (emulator, both GPU backends) painted a light band across the Welcome
@@ -252,3 +254,11 @@ html.mobile body .main .content .conv-head .title strong { font-size: 16px; line
 /* viewer: the media fills the stage and sits centred; no tap-to-100% on a phone (pinch is the system's) */
 .mobile .viewer-stage { height: 100%; }
 .mobile .viewer-stage img, .mobile .viewer-stage video { width: 100%; height: 100%; max-height: 100%; object-fit: contain; cursor: default; }
+
+.mobile .mobile-menu-title { color: var(--text-2); font-size: 13px; padding: 0 12px 10px; overflow-wrap: anywhere; }
+.mobile .quick-reactions { overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
+.mobile .quick-reactions button { flex: 0 0 48px; min-width: 48px; width: 48px; }
+.mobile .inbox-row .od-field > strong { display: flex; align-items: center; gap: 6px; }
+.mobile .inbox-row .od-field > strong > .ic { flex: none; color: var(--text-3); --od-icon-size: 14px; }
+.mobile .inbox-row { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.mobile .viewer-nav { display: none; }

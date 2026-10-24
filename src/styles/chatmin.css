@@ -1032,7 +1032,12 @@ body.left-collapsed.right-collapsed .main:not(.r2-page) { grid-template-columns:
 
 /* viewer: Quick Look-like — solid backdrop (no ghost of the app behind), a slim header that
    clears the traffic lights, the media centered with breathing room */
-.viewer { position: fixed; inset: 0; z-index: var(--z-toast); display: grid; grid-template-rows: auto minmax(0, 1fr); background: rgb(12 13 16 / .97); backdrop-filter: blur(24px) saturate(.8); color: #fff; }
+.viewer { position: fixed; inset: 0; z-index: var(--z-toast); display: grid; grid-template-rows: auto minmax(0, 1fr); background: rgb(12 13 16 / .8); color: #fff; }
+.viewer-nav { position: absolute; top: 50%; z-index: 1; width: 44px; height: 44px; margin-top: -22px; display: grid; place-items: center; border: 0; border-radius: var(--radius-circle); background: rgb(0 0 0 / .45); color: #fff; cursor: pointer; opacity: .7; transition: opacity .12s, background .12s; }
+.viewer-nav:hover { opacity: 1; background: rgb(0 0 0 / .65); }
+.viewer-nav .ic { --od-icon-size: 22px; }
+.viewer-nav.prev { left: 16px; }
+.viewer-nav.next { right: 16px; }
 .viewer-bar { display: flex; align-items: center; gap: 6px; height: 52px; padding: 0 16px 0 88px; border-bottom: 1px solid rgb(255 255 255 / .06); }
 .viewer-name { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px; }
 .viewer-name strong { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 600 var(--fs-md)/1.2 var(--font-sans, inherit); }
@@ -1459,6 +1464,7 @@ body:is([data-background="glass"], [data-background="clear"]) .composer-box { ba
 body:is([data-background="glass"], [data-background="clear"]) .composer-tools { padding: 0 8px 8px; }
 body:is([data-background="glass"], [data-background="clear"]) :is(.thread-compose, .r2-header, .settings-card, .inbox-shell, .thread-head, .summary-card, .pop, .context-menu, .palette, .prompt-dialog, .confirm-dialog, .emoji-pop, .appearance-panel, .tip, .toast, .msg-actions) { background: var(--app-bg); }
 /* Standalone status labels have a single, compact surface. */
+body:is([data-background="glass"], [data-background="clear"]) .service-msg { width: fit-content; margin-left: auto; margin-right: auto; padding: 3px 12px; }
 body:is([data-background="glass"], [data-background="clear"]) :is(.day-sep span, .unread-sep span, .history-start, .thread-count, .service-msg, .older-loading, .conv-empty, .side-empty) {
   background: var(--reading-surface);
   border-radius: var(--radius-sm);

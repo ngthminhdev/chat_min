@@ -1,17 +1,37 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { EASE } from "../lib/motion";
 import { isMobile } from "../lib/mobile";
-import { api, fileSrc, openPath, revealPath } from "../lib/bridge";
+import { api, fileSrc, isTauri, openPath, revealPath, streamSrc } from "../lib/bridge";
 import { fileSize } from "../lib/format";
-import { fail, saveMedia, useApp } from "../store";
+import type { Media } from "../lib/types";
+import { chatKeyOf, fail, saveMedia, useApp } from "../store";
 import { Icon } from "../ui/Icon";
 
-/** Full-window viewer: images fit the window (click for 100%), videos play with sound. */
+const gallery = (m: Media | null) => !!m && (m.kind === "image" || m.kind === "video") && !["Sticker", "GIF", "Video tròn"].includes(m.name);
+const sameMedia = (a: Media, b: Media) => (a.fileRef && a.fileRef === b.fileRef) || (!!a.localPath && a.localPath === b.localPath);
+
+/** Full-window viewer: images fit the window (click for 100%), videos play with sound.
+ *  ← → (arrows, keys, a horizontal swipe) walk every photo/video of the open chat, like Telegram. */
 export function Viewer() {
   const v = useApp((s) => s.viewer);
   const [zoom, setZoom] = useState(false);
-  const swipe = useRef<number | null>(null);
+  const swipe = useRef<{ x: number; y: number } | null>(null);
+  const list = useApp((s) => { const k = chatKeyOf(s.active); return k ? s.msgs[k] : undefined; });
+  const items = useMemo(() => (list ?? []).filter((m) => !m.deleted && gallery(m.media)).map((m) => ({ media: m.media!, accountId: m.accountId })), [list]);
+  // the store's own Media object first (demo data shares fileRefs), then by file id/path once a reload replaced the message
+  const idx = v ? (() => { const i = items.findIndex((i) => i.media === v.media); return i >= 0 ? i : items.findIndex((i) => sameMedia(i.media, v.media)); })() : -1;
+  const go = async (d: number) => {
+    const t = idx < 0 ? undefined : items[idx + d];
+    if (!t) return;
+    setZoom(false);
+    const { media, accountId } = t;
+    if (media.kind === "video" && isTauri && !media.localPath && /^\d+$/.test(media.fileRef)) {
+      return useApp.setState({ viewer: { media, path: "", src: streamSrc(accountId, media.fileRef, media.mime), accountId } });
+    }
+    const path = media.localPath || (await api.download(accountId, media.fileRef, media.name).catch((e) => (fail(e), "")));
+    if (path) useApp.setState({ viewer: { media, path, accountId } });
+  };
   // a streaming video has no local file yet: saving/opening it downloads the whole thing first
   const local = async () => {
     if (!v) return "";
@@ -27,10 +47,12 @@ export function Viewer() {
         e.preventDefault();
         keep(e.shiftKey);
       }
+      if (e.key === "ArrowLeft") void go(-1);
+      if (e.key === "ArrowRight") void go(1);
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [v]);
+  }, [v, idx, items]);
   const close = () => {
     setZoom(false);
     useApp.setState({ viewer: null });
@@ -47,14 +69,21 @@ export function Viewer() {
           exit={{ opacity: 0 }}
           transition={{ duration: 0.16 }}
           onClick={close}
-          // phone: a downward swipe closes, like every gallery
-          onTouchStart={(e) => { swipe.current = zoom ? null : e.touches[0].clientY; }}
-          onTouchEnd={(e) => { if (swipe.current != null && e.changedTouches[0].clientY - swipe.current > 90) close(); swipe.current = null; }}
+          // phone: a downward swipe closes, a sideways one moves on, like every gallery
+          onTouchStart={(e) => { swipe.current = zoom ? null : { x: e.touches[0].clientX, y: e.touches[0].clientY }; }}
+          onTouchEnd={(e) => {
+            const s = swipe.current; swipe.current = null;
+            if (!s) return;
+            const dx = e.changedTouches[0].clientX - s.x, dy = e.changedTouches[0].clientY - s.y;
+            if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy)) void go(dx < 0 ? 1 : -1);
+            else if (dy > 90) close();
+          }}
         >
           <div className="viewer-bar" onClick={(e) => e.stopPropagation()}>
             <span className="viewer-name">
               <strong>{v.media.name}</strong>
               {v.media.size > 0 && <small>{fileSize(v.media.size)}</small>}
+              {idx >= 0 && items.length > 1 && <small>{idx + 1} / {items.length}</small>}
             </span>
             <button className="tool-btn icon-only" aria-label="Lưu vào thư mục tải về" data-tip="Lưu vào thư mục tải về" data-kbd="⌘S" onClick={() => keep(false)}>
               <Icon name="download" />
@@ -72,7 +101,18 @@ export function Viewer() {
               <Icon name="x" />
             </button>
           </div>
+          {idx > 0 && !zoom && (
+            <button className="viewer-nav prev" aria-label="Ảnh trước" onClick={(e) => { e.stopPropagation(); void go(-1); }}>
+              <Icon name="chevron-left" />
+            </button>
+          )}
+          {idx >= 0 && idx < items.length - 1 && !zoom && (
+            <button className="viewer-nav next" aria-label="Ảnh sau" onClick={(e) => { e.stopPropagation(); void go(1); }}>
+              <Icon name="chevron-right" />
+            </button>
+          )}
           <motion.div
+            key={v.path || v.src}
             className="viewer-stage"
             initial={{ scale: 0.96, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
