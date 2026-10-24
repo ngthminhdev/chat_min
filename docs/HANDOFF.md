@@ -188,3 +188,10 @@ Test trên máy thật A301SH (Telegram đăng nhập sẵn), APK debug cài qua
 - **Forum**: `openChat` một forum → `forumLanding()` mở tab topic `lastTopic[k]` (persist) hoặc topic có `lastTs` mới nhất; Back từ topic vẫn về forum (General). Thông báo của topic mở đúng topic (`openAt`). Verify máy thật: "Thị trấn Qua Hốc" → "# Chuyện lạ Út Bông".
 - **Thumbnail "tạp nham"**: tin vẽ từ cache SQLite mang file id TDLib của phiên trước; phiên mới id đó là file khác (avatar người khác hiện trong ô ảnh) cho tới khi reload thay tin. `cached_messages` (lib.rs `stale_refs`) xoá id số, giữ blur base64 + path local.
 - Chưa test: gửi nhiều ảnh từ máy (album heuristic cho tin đi), video Telegram thật qua tgstream.
+
+## Desktop (2026-10-24 trưa) — viewer lướt ảnh, code block, thư mục custom
+
+- **Viewer**: ← → / mũi tên / vuốt ngang đi qua mọi ảnh+video của chat đang mở (`Viewer.tsx` lấy từ `msgs[chat]`), counter "3 / 12". Nền tối mờ phẳng (bỏ blur: trên cửa sổ glass nhìn lởm chởm). Glass: `.service-msg` thành pill gọn.
+- **Code block**: `lib/code.ts` (highlight.js core + 20 ngôn ngữ), `format.ts codeBlock()` → `.code-block` có nhãn ngôn ngữ + nút copy (click delegate ở `App.tsx`). Telegram đưa ngôn ngữ lên fence (`tg.rs` PreCode); Google Chat không có → auto-detect khi relevance ≥ 8 và ≥ 3 dòng. Màu token dùng `--purple/--green/--orange/--blue-2` của theme.
+- **Thư mục** (`components/Folders.tsx`): state `folders: Folder[]`, `folder` (đang chọn) trong store, persist. Tab strip trên sidebar (`.folder-tabs`, `.sidebar:has(.folder-tabs)` thêm 1 hàng grid). Kéo đổi chỗ (Reorder axis x). Chuột phải tab: đổi tên, màu (`ColorPicker` qua pop `color` có `onPick`), icon emoji (pop `emoji`), icon ảnh (`pickFile` → `img:<path>`), xoá. Menu chat: "Thêm vào/Bỏ khỏi <thư mục>", "Thư mục mới với hội thoại này…". Chọn tab → list phẳng theo hoạt động (`FolderChats`). Chưa có trên mobile (Inbox chips) và chưa có chọn nhiều chat cùng lúc.
+- **Search sidebar**: gõ lọc → mọi nhóm tài khoản/Ghim tự mở; bấm mới đóng.
