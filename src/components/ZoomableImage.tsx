@@ -69,6 +69,6 @@ export const ZoomableImage=forwardRef<ImageZoomControls,Props>(function Zoomable
       }else lastTap.current=null;
     }}>
     <img src={src} alt={alt} draggable={false} onLoad={e=>setNatural({width:e.currentTarget.naturalWidth,height:e.currentTarget.naturalHeight})}
-      style={{width:fit.width,height:fit.height,translate:`calc(-50% + ${value.x}px) calc(-50% + ${value.y}px)`,scale:value.scale}} />
+      style={{width:fit.width,height:fit.height,translate:`calc(-50% + ${value.x}px) calc(-50% + ${value.y}px)`,scale:String(value.scale)}} /* React 18 appends px to a numeric `scale` */ />
   </div>;
 });

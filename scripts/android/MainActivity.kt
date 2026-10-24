@@ -17,6 +17,9 @@ class MainActivity : TauriActivity() {
 
     override fun onWebViewCreate(webView: WebView) {
         super.onWebViewCreate(webView)
+        // Pinch belongs to the photo viewer. WebView ignores the viewport meta's user-scalable
+        // (useWideViewPort is off), so page zoom must be disabled here or the whole UI magnifies.
+        webView.settings.setSupportZoom(false)
         // Install after Tauri's own callback; navigation lives in the React store, not URL history.
         webView.post {
             onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
