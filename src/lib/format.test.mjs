@@ -40,3 +40,10 @@ test('fuzzy: whole words, then letters in order, accents and đ ignored', async 
   assert.equal(fuzzy('gob', 'Backend Go'), 0);
   assert.equal(fuzzy('', 'anything'), 0);
 });
+
+test("a zero-width space after a marker keeps it literal (plain-text sends, literal * in received text)", () => {
+  const z = "​";
+  assert.equal(fmt(`*${z}abc*${z} and *bold*`), `<p>*${z}abc*${z} and <strong>bold</strong></p>`);
+  assert.equal(fmt(`\`${z}x\`${z}`), `<p>\`${z}x\`${z}</p>`);
+  assert.equal(plain(`*${z}abc*${z} *b*`), "*abc* b");
+});

@@ -2,7 +2,7 @@
 // goes to the in-memory demo backend, so the UI can be checked without real accounts.
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { Account, AiView, AppState, CoreEvent, Member, Msg, StickerPack, Topic } from "./types";
+import type { Account, AiView, AppState, CoreEvent, Member, Msg, MsgPeople, StickerPack, Topic } from "./types";
 
 // `?demo`: the in-memory backend even inside a Tauri webview — the Android webview pointed at
 // the vite server (dev-only) still gets Tauri's IPC injected, which refuses a foreign origin
@@ -48,7 +48,8 @@ export const api = {
   thread: (accountId: string, chatId: string, threadId: string) => call<Msg[]>("thread", { accountId, chatId, threadId }),
   pinned: (accountId: string, chatId: string) => call<Msg[]>("pinned", { accountId, chatId }),
   members: (accountId: string, chatId: string) => call<Member[]>("members", { accountId, chatId }),
-  send: (a: { accountId: string; chatId: string; text: string; replyTo?: string; threadId?: string; file?: string; voice?: number }) => call<Msg>("send", a),
+  /** `plain`: send the text as typed, no markdown (composer toggle) */
+  send: (a: { accountId: string; chatId: string; text: string; replyTo?: string; threadId?: string; file?: string; voice?: number; plain?: boolean }) => call<Msg>("send", a),
   webAdd: (platform: string) => call<Account>("web_add", { platform }),
   webShow: (accountId: string, r: { x: number; y: number; w: number; h: number }) => call<void>("web_show", { accountId, ...r }),
   webHide: (accountId: string) => call<void>("web_hide", { accountId }),
@@ -62,12 +63,14 @@ export const api = {
   stageFiles: (paths: string[]) =>
     isTauri ? call<Staged[]>("stage_files", { paths }) : Promise.resolve(paths.map((path) => ({ path, name: path.split("/").pop() ?? path, size: 0 }))),
   clipboardFiles: () => (isTauri ? call<string[]>("clipboard_files") : Promise.resolve([] as string[])),
-  edit: (accountId: string, chatId: string, msgId: string, text: string) => call<void>("edit", { accountId, chatId, msgId, text }),
+  edit: (accountId: string, chatId: string, msgId: string, text: string, plain?: boolean) => call<void>("edit", { accountId, chatId, msgId, text, plain }),
   deleteMsg: (accountId: string, chatId: string, msgId: string) => call<void>("delete_msg", { accountId, chatId, msgId }),
   react: (accountId: string, chatId: string, msgId: string, emoji: string, add: boolean) =>
     call<void>("react", { accountId, chatId, msgId, emoji, add }),
   /** Telegram: emoji this message accepts; null = any emoji */
   reactions: (accountId: string, chatId: string, msgId: string) => call<string[] | null>("reactions", { accountId, chatId, msgId }),
+  /** who reacted / read one message (reaction tooltips, "seen by" list) */
+  msgPeople: (accountId: string, chatId: string, msgId: string) => call<MsgPeople>("msg_people", { accountId, chatId, msgId }),
   pin: (accountId: string, chatId: string, msgId: string, on: boolean) => call<void>("pin", { accountId, chatId, msgId, on }),
   markRead: (accountId: string, chatId: string, msgIds: string[]) => call<void>("mark_read", { accountId, chatId, msgIds }),
   setOpen: (accountId: string, chatId: string, open: boolean) => call<void>("set_open", { accountId, chatId, open }),

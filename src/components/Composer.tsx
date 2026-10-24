@@ -33,6 +33,7 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const lang = useApp((s) => s.aiLang[chatKey] || s.prefs.aiTo);
+  const plainSend = useApp((s) => s.plainSend);
   const [sug, setSug] = useState<ReplySuggestionsState | null>(null);
   const suggestionId = useId();
   const stickerId = useId();
@@ -233,7 +234,7 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
     const text = draft.trim();
     if (files.length && !editId && !blocked && canSend) {
       const { wire, shown } = mentions.encode(text);
-      files.forEach((f, i) => void send(chatKey, i ? "" : shown, { file: f.path, replyTo: i ? undefined : replyId || undefined, threadId, wire: i ? undefined : wire }));
+      files.forEach((f, i) => void send(chatKey, i ? "" : shown, { file: f.path, replyTo: i ? undefined : replyId || undefined, threadId, wire: i ? undefined : wire, plain: plainSend }));
       setFiles([]);
       useApp.setState((s) => ({ drafts: { ...s.drafts, [k]: "" }, replyTo: { ...s.replyTo, [k]: "" } }));
       return;
@@ -244,7 +245,7 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
       savingRef.current = true;
       setSaving(true);
       try {
-        await api.edit(a, c, editId, text);
+        await api.edit(a, c, editId, text, plainSend);
       } catch (e) {
         fail(e);
         return;
@@ -258,7 +259,7 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
       }));
     } else {
       const { wire, shown } = mentions.encode(text);
-      void send(chatKey, shown, { replyTo: replyId || undefined, threadId, wire });
+      void send(chatKey, shown, { replyTo: replyId || undefined, threadId, wire, plain: plainSend });
     }
     setOrig(null);
     dismissSuggestions();
@@ -473,6 +474,16 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
                 onClick={() => void translate()}
               >
                 {aiBusy ? <span className="veil-spinner" /> : <Icon name="languages" />}
+              </button>
+              <button
+                className={`tool-btn icon-only${plainSend ? " active" : ""}`}
+                aria-pressed={plainSend}
+                aria-label="Gửi văn bản thuần"
+                data-tip={plainSend ? "Văn bản thuần: *abc* gửi y như gõ · Bấm để bật định dạng lại" : "Gửi văn bản thuần: *abc* không in đậm, `x` không thành code"}
+                disabled={blocked || saving}
+                onClick={() => { useApp.setState((s) => ({ plainSend: !s.plainSend })); toast(plainSend ? "Định dạng *đậm* _nghiêng_ `code` bật lại" : "Văn bản thuần: gửi y như gõ"); }}
+              >
+                <Icon name="remove-formatting" />
               </button>
               <button className="lang-tag" aria-label={`Ngôn ngữ viết: ${langLabel(lang)}. Bấm để đổi`} aria-haspopup="menu" data-tip={`Ngôn ngữ viết: ${langLabel(lang)} · Bấm để đổi`} disabled={blocked || saving || aiBusy} onClick={(e) => pickLang(e.currentTarget)}>
                 {langTag(lang)}

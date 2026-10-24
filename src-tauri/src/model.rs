@@ -149,6 +149,16 @@ pub struct Msg {
     pub rev: String,
 }
 
+/// Who reacted to / read one message (reaction tooltips, "seen by" list).
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MsgPeople {
+    /// (emoji, display name) per added reaction
+    pub reactions: Vec<(String, String)>,
+    /// names of readers — Telegram only, outgoing messages in groups of ≤ 100 members
+    pub viewers: Vec<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Member {

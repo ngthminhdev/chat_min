@@ -40,7 +40,9 @@ impl Store {
              CREATE INDEX IF NOT EXISTS messages_sort ON messages (account_id, chat_id, sort);
              CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
                body, account_id UNINDEXED, chat_id UNINDEXED, id UNINDEXED,
-               tokenize = 'unicode61 remove_diacritics 2');",
+               tokenize = 'unicode61 remove_diacritics 2');
+             -- deleted Google Chat messages used to be kept as tombstones; they are hidden now
+             DELETE FROM messages WHERE json_extract(data, '$.deleted') = 1;",
         )
         .map_err(e)?;
         Ok(Self { db })

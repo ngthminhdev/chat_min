@@ -12,15 +12,17 @@ const INLINE = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<]+[^\s<.,:
 // 2 * 3 * 4 and ~/paths stay as typed
 const EMPH: [RegExp, string][] = [
   // **x**: Markdown habit, Google Chat renders it bold too
-  [/(^|[^\w*])\*\*(?=\S)([^*\n]*?\S)\*\*(?![\w*])/g, "strong"],
-  [/(^|[^\w*])\*(?=\S)([^*\n]*?\S)\*(?![\w*])/g, "strong"],
-  [/(^|[^\w_])_(?=\S)([^_\n]*?\S)_(?![\w_])/g, "em"],
-  [/(^|[^\w~])~(?=\S)([^~\n]*?\S)~(?![\w~])/g, "s"],
+  // a zero-width space right after a marker (U+200B) keeps it literal: tg.rs/gchat emit it
+  // for markup characters that are plain text, the composer's "plain text" toggle too
+  [/(^|[^\w*])\*\*(?=[^\s\u200B])([^*\n]*?\S)\*\*(?![\w*])/g, "strong"],
+  [/(^|[^\w*])\*(?=[^\s\u200B])([^*\n]*?\S)\*(?![\w*])/g, "strong"],
+  [/(^|[^\w_])_(?=[^\s\u200B])([^_\n]*?\S)_(?![\w_])/g, "em"],
+  [/(^|[^\w~])~(?=[^\s\u200B])([^~\n]*?\S)~(?![\w~])/g, "s"],
 ];
 
 function inline(s: string, me: string[]): string {
   return s
-    .split(/(`[^`\n]+`)/g)
+    .split(/(`[^`\n\u200B][^`\n]*`)/g)
     .map((part, i) => {
       if (i % 2) return `<code>${part.slice(1, -1)}</code>`;
       // links and mentions become placeholders first so emphasis never reaches inside a URL
@@ -90,9 +92,10 @@ export function plain(text: string): string {
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
     .replace(/@\{([^}]+)\}/g, "@$1")
     .replace(/`/g, "")
-    .replace(/\*\*(?=\S)([^*\n]*?\S)\*\*/g, "$1")
-    .replace(/(^|[^\w*_~])[*_~](?=\S)([^*_~\n]*?\S)[*_~](?![\w*_~])/g, "$1$2")
+    .replace(/\*\*(?=[^\s\u200B])([^*\n]*?\S)\*\*/g, "$1")
+    .replace(/(^|[^\w*_~])[*_~](?=[^\s\u200B])([^*_~\n]*?\S)[*_~](?![\w*_~])/g, "$1$2")
     .replace(/^\s*[*-]\s+/gm, "• ")
+    .replace(/\u200B/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }

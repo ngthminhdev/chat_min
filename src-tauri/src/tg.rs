@@ -1,7 +1,7 @@
 //! Telegram through TDLib. One TDLib client per account; a single thread drains
 //! `tdlib_rs::receive()` and routes every update to its account by client id. TDLib owns
 //! sync, gaps and reconnects — this module only translates updates into the shared model.
-use crate::model::{Account, Chat, LinkCard, Media, Member, Msg, Reaction, Topic};
+use crate::model::{Account, Chat, LinkCard, Media, Member, Msg, MsgPeople, Reaction, Topic};
 use crate::Core;
 use base64::Engine;
 use std::collections::{HashMap, HashSet};
@@ -743,13 +743,13 @@ impl Tg {
     }
 
     // ── writes ──────────────────────────────────────────────────────────────
-    pub async fn send(&self, core: &Core, account_id: &str, chat_id: &str, text: String, reply_to: Option<String>, topic: Option<String>, file: Option<String>, voice: Option<i32>) -> R<Msg> {
+    pub async fn send(&self, core: &Core, account_id: &str, chat_id: &str, text: String, reply_to: Option<String>, topic: Option<String>, file: Option<String>, voice: Option<i32>, plain: bool) -> R<Msg> {
         let c = self.client(account_id)?;
         let chat: i64 = chat_id.parse().map_err(|_| "bad chat id")?;
         let reply = reply_to.and_then(|r| r.parse::<i64>().ok()).map(|id| {
             enums::InputMessageReplyTo::Message(t::InputMessageReplyToMessage { message_id: id, quote: None, checklist_task_id: 0 })
         });
-        let caption = formatted(c, &text).await;
+        let caption = formatted(c, &text, plain).await;
         let content = match file {
             Some(path) if voice.is_some() => enums::InputMessageContent::InputMessageVoiceNote(t::InputMessageVoiceNote {
                 voice_note: enums::InputFile::Local(t::InputFileLocal { path }),
@@ -851,10 +851,10 @@ impl Tg {
         Ok(())
     }
 
-    pub async fn edit(&self, account_id: &str, chat_id: &str, msg_id: &str, text: String) -> R<()> {
+    pub async fn edit(&self, account_id: &str, chat_id: &str, msg_id: &str, text: String, plain: bool) -> R<()> {
         let c = self.client(account_id)?;
         let content = enums::InputMessageContent::InputMessageText(t::InputMessageText {
-            text: formatted(c, &text).await,
+            text: formatted(c, &text, plain).await,
             link_preview_options: None,
             clear_draft: false,
         });
@@ -875,6 +875,46 @@ impl Tg {
             f::add_message_reaction(chat, id, r, false, true, c).await.map_err(err)
         } else {
             f::remove_message_reaction(chat, id, r, c).await.map_err(err)
+        }
+    }
+
+    /// Who reacted (all emoji) and who read this message. Viewers only exist for my own
+    /// messages in groups of ≤ 100 members; TDLib errors elsewhere, so that list stays empty.
+    pub async fn people(&self, account_id: &str, chat_id: &str, msg_id: &str) -> R<MsgPeople> {
+        let c = self.client(account_id)?;
+        let (chat, id) = (chat_id.parse().unwrap_or(0), msg_id.parse().unwrap_or(0));
+        let mut out = MsgPeople::default();
+        if let Ok(enums::AddedReactions::AddedReactions(a)) = f::get_message_added_reactions(chat, id, None, String::new(), 100, c).await {
+            for r in a.reactions {
+                let enums::ReactionType::Emoji(e) = r.r#type else { continue };
+                let name = self.sender_name(c, &r.sender_id).await;
+                out.reactions.push((e.emoji, name));
+            }
+        }
+        if let Ok(enums::MessageViewers::MessageViewers(v)) = f::get_message_viewers(chat, id, c).await {
+            for v in v.viewers {
+                out.viewers.push(self.sender_name(c, &MessageSender::User(t::MessageSenderUser { user_id: v.user_id })).await);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Name from the user/chat caches, asking TDLib for users we have not seen yet.
+    async fn sender_name(&self, c: i32, s: &MessageSender) -> String {
+        let name = self.with(c, |a| sender(a, s).1).unwrap_or_default();
+        if !name.is_empty() {
+            return name;
+        }
+        match s {
+            MessageSender::User(u) => match f::get_user(u.user_id, c).await {
+                Ok(enums::User::User(user)) => {
+                    let name = user_name(&user);
+                    self.with(c, |a| a.users.insert(u.user_id, name.clone()));
+                    name
+                }
+                Err(_) => "Thành viên".into(),
+            },
+            MessageSender::Chat(_) => "Kênh".into(),
         }
     }
 
@@ -1076,7 +1116,11 @@ fn to_tg_markdown(text: &str) -> String {
 
 /// Text as typed in the composer → what Telegram gets: mentions as entities, markup as
 /// entities via TDLib's own markdown parser (falls back to the plain text on error).
-async fn formatted(c: i32, text: &str) -> t::FormattedText {
+/// `plain` (composer toggle): no markdown at all, `*abc*` reaches Telegram as typed.
+async fn formatted(c: i32, text: &str, plain: bool) -> t::FormattedText {
+    if plain {
+        return with_mentions(text);
+    }
     let ft = with_mentions(&to_tg_markdown(text));
     match f::parse_markdown(ft.clone(), c).await {
         Ok(enums::FormattedText::FormattedText(parsed)) => parsed,
@@ -1468,11 +1512,42 @@ fn render(ft: &t::FormattedText) -> String {
             enums::TextEntityType::TextUrl(u) => format!("[{}]({})", inner.replace(['[', ']'], ""), u.url),
             _ => continue,
         };
-        out.push_str(&slice(pos, s));
+        out.push_str(&soft_markup(&slice(pos, s)));
         out.push_str(&rendered);
         pos = end;
     }
-    out.push_str(&slice(pos, units.len()));
+    out.push_str(&soft_markup(&slice(pos, units.len())));
+    out
+}
+
+/// Markup characters that are literal text (no entity behind them) get a zero-width space
+/// after them, so neither our renderer (format.ts) nor Google Chat turns `*abc*` into bold.
+/// `_` inside URLs is left alone: a zero-width space would break the link.
+pub fn soft_markup(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 8);
+    let mut word = String::new();
+    let flush = |word: &mut String, out: &mut String| {
+        if word.contains("://") {
+            out.push_str(word);
+        } else {
+            for c in word.chars() {
+                out.push(c);
+                if matches!(c, '*' | '_' | '~' | '`') {
+                    out.push('\u{200B}');
+                }
+            }
+        }
+        word.clear();
+    };
+    for c in text.chars() {
+        if c.is_whitespace() {
+            flush(&mut word, &mut out);
+            out.push(c);
+        } else {
+            word.push(c);
+        }
+    }
+    flush(&mut word, &mut out);
     out
 }
 
@@ -1555,5 +1630,13 @@ mod tests {
             ],
         };
         assert_eq!(render(&ft), "Đã xong @{tri} xem `go` tại [đây](https://x.io)");
+    }
+
+    #[test]
+    fn soft_markup_breaks_literal_markers_but_not_urls() {
+        let z = '\u{200B}';
+        assert_eq!(soft_markup("*abc* 2*3"), format!("*{z}abc*{z} 2*{z}3"));
+        assert_eq!(soft_markup("see https://x.io/a_b_c now_"), format!("see https://x.io/a_b_c now_{z}"));
+        assert_eq!(soft_markup("`code` ~x~\nnext"), format!("`{z}code`{z} ~{z}x~{z}\nnext"));
     }
 }

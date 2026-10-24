@@ -3,7 +3,7 @@
 //! (`lastActiveTime`), and only those get their new messages fetched; the open space is
 //! also read directly, alongside. Workspace Events needs Pub/Sub + a public endpoint — no fit for a
 //! desktop app.
-use crate::model::{Account, Chat, Event, Media, Member, Msg, Reaction};
+use crate::model::{Account, Chat, Event, Media, Member, Msg, MsgPeople, Reaction};
 use crate::{now_ms, Core};
 #[cfg(not(target_os = "android"))]
 use base64::Engine;
@@ -663,6 +663,7 @@ impl GChat {
         let v = self.api(core, account_id, Method::GET, &url, None).await?;
         let me = self.me(account_id);
         let mut msgs: Vec<Msg> = v["messages"].as_array().cloned().unwrap_or_default().iter().map(|m| to_msg(account_id, &me, m)).collect();
+        msgs.retain(|m| !m.deleted); // hidden, like Google's client (see Core::put_msg)
         msgs.reverse();
         self.fill_quotes(core, account_id, space, &mut msgs, false).await;
         self.fill_photos(core, account_id, &mut msgs, false).await;
@@ -701,6 +702,7 @@ impl GChat {
         let v = self.api(core, account_id, Method::GET, &url, None).await?;
         let me = self.me(account_id);
         let mut msgs: Vec<Msg> = v["messages"].as_array().cloned().unwrap_or_default().iter().map(|m| to_msg(account_id, &me, m)).collect();
+        msgs.retain(|m| !m.deleted);
         self.fill_quotes(core, account_id, space, &mut msgs, false).await;
         self.fill_photos(core, account_id, &mut msgs, false).await;
         core.store_mut().put_msgs(&msgs)?;
@@ -925,6 +927,32 @@ impl GChat {
             }
         }
         Ok(())
+    }
+
+    /// Who reacted. Google Chat has no read receipts for other people, so `viewers` stays empty.
+    pub async fn people(&self, core: &Arc<Core>, account_id: &str, space: &str, name: &str) -> Result<MsgPeople, String> {
+        let v = self.api(core, account_id, Method::GET, &format!("{API}/{name}/reactions?pageSize=100"), None).await?;
+        let me = self.me(account_id);
+        // reaction users carry no displayName under user auth: fill from senders we have seen
+        let names: HashMap<String, String> =
+            core.store().msgs(account_id, space, 0, 500).unwrap_or_default().into_iter().map(|m| (m.sender_id, m.sender_name)).collect();
+        let reactions = v["reactions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|r| {
+                let emoji = r["emoji"]["unicode"].as_str()?.to_string();
+                let id = r["user"]["name"].as_str().unwrap_or_default();
+                let name = r["user"]["displayName"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .map(String::from)
+                    .or_else(|| names.get(id).cloned())
+                    .unwrap_or_else(|| if id == me { "Bạn".into() } else { "Thành viên".into() });
+                Some((emoji, name))
+            })
+            .collect();
+        Ok(MsgPeople { reactions, viewers: vec![] })
     }
 
     pub async fn mark_read(&self, core: &Arc<Core>, account_id: &str, space: &str) -> Result<(), String> {

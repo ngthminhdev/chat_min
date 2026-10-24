@@ -4,7 +4,7 @@ import { EASE } from "../lib/motion";
 import { fileSrc, isTauri, openPath, openUrl, revealPath, streamSrc } from "../lib/bridge";
 import { dayLabel, fileSize, fmt, hm, plain } from "../lib/format";
 import { CAP_OFF_NOTE, type Cap } from "../lib/platforms";
-import type { Chat, Media, Msg } from "../lib/types";
+import type { Chat, Media, Msg, MsgPeople } from "../lib/types";
 import { anchor, confirmDialog, fail, openThreadTab, pickReaction, retry, threadUnread, saveMedia, toast, toggleReaction, useApp, type MenuItem } from "../store";
 import { api } from "../lib/bridge";
 import { PersonAvatar, useAvatar } from "../ui/Avatar";
@@ -195,6 +195,7 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
                 className={`reaction${r.mine ? " mine" : ""}`}
                 aria-pressed={r.mine}
                 onClick={() => void toggleReaction(k, m, r.emoji)}
+                onMouseEnter={(e) => hoverTip(e.currentTarget, () => peopleOf(m).then((p) => joinNames(p.reactions.filter(([e]) => e === r.emoji).map(([, n]) => n))))}
               >
                 <span className="e"><Emoji e={r.emoji} /></span>
                 {r.count}
@@ -276,7 +277,8 @@ function Meta({ m, caps }: { m: Msg; caps: Record<Cap, boolean> }) {
   if (m.outgoing && !m.deleted) {
     if (m.status === "sending") status = up != null && up < 100 ? <span className="dl-pct" data-tip="Đang tải lên">{up}%</span> : <span data-tip="Đang gửi"><Icon name="clock" /></span>;
     else if (m.status === "failed") status = <span className="failed" data-tip="Gửi lỗi"><Icon name="circle-alert" /></span>;
-    else if (m.status === "seen" && caps.readReceipts) status = <span className="seen" data-tip="Đã xem"><Icon name="check-check" /></span>;
+    else if (m.status === "seen" && caps.readReceipts)
+      status = <span className="seen" data-tip="Đã xem" onMouseEnter={(e) => hoverTip(e.currentTarget, () => peopleOf(m).then((p) => (p.viewers.length ? `Đã xem · ${joinNames(p.viewers)}` : "Đã xem")))}><Icon name="check-check" /></span>;
     else status = <span data-tip={caps.readReceipts ? "Đã gửi" : `Đã gửi · ${CAP_OFF_NOTE.readReceipts}`}><Icon name="check" /></span>;
   }
   return (
@@ -504,6 +506,45 @@ export function startEdit(k: string, m: Msg) {
   setTimeout(() => document.getElementById("composer-input")?.focus());
 }
 
+// Who reacted / read a message: asked on hover or from the menu, cached while the message
+// stays the same (reaction counts and read status are part of the key).
+const people = new Map<string, Promise<MsgPeople>>();
+function peopleOf(m: Msg): Promise<MsgPeople> {
+  const key = `${m.accountId}|${m.chatId}|${m.id}|${m.status}|${m.reactions.map((r) => r.emoji + r.count).join()}`;
+  let p = people.get(key);
+  if (!p) {
+    p = api.msgPeople(m.accountId, m.chatId, m.id);
+    people.set(key, p);
+    p.catch(() => people.delete(key));
+  }
+  return p;
+}
+const joinNames = (names: string[]) => (names.length > 12 ? `${names.slice(0, 12).join(", ")} +${names.length - 12}` : names.join(", "));
+/** Put the fetched text in the element's tooltip and re-show it if the pointer is still there. */
+function hoverTip(el: HTMLElement, text: () => Promise<string>) {
+  text().then((t) => {
+    if (!t || !el.isConnected) return;
+    el.dataset.tip = t;
+    if (el.matches(":hover")) el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+  }).catch(() => {});
+}
+/** Phone (no hover) and the context menu: the same names as a list. */
+async function showPeople(m: Msg) {
+  const el = document.getElementById(`m-${m.id}`);
+  const at = el ? anchor(el.querySelector(".bubble") ?? el) : { x: 40, y: 80, top: 80 };
+  try {
+    const p = await peopleOf(m);
+    const items: MenuItem[] = [
+      ...p.reactions.map(([e, n]): MenuItem => ({ icon: "smile", label: `${e}  ${n}`, run: () => {} })),
+      ...p.viewers.map((n): MenuItem => ({ icon: "check-check", label: n, run: () => {} })),
+    ];
+    if (!items.length) return toast("Chưa thấy ai");
+    useApp.setState({ pop: { kind: "menu", ...at, title: p.viewers.length ? "Biểu cảm · Đã xem" : "Biểu cảm", items } });
+  } catch (e) {
+    fail(e);
+  }
+}
+
 function showMessageMenu(e: React.MouseEvent, k: string, tab: string, m: Msg, caps: Record<Cap, boolean>, mediaItems: MenuItem[] = []) {
   e.preventDefault();
   e.stopPropagation();
@@ -521,6 +562,7 @@ function menuFor(k: string, tab: string, m: Msg, caps: Record<Cap, boolean>): Me
       const el = document.getElementById(`m-${m.id}`);
       void pickReaction(k, m, el ? anchor(el.querySelector('.bubble') ?? el) : { x: 40, y: 80, top: 80 });
     } },
+    (m.reactions.length > 0 || (m.outgoing && m.status === "seen" && caps.readReceipts)) && { icon: "users", label: "Ai đã xem / thả biểu cảm", run: () => void showPeople(m) },
     caps.threads && !!m.threadId && { icon: "message-circle-reply", label: isMobile ? "Mở luồng trả lời" : "Mở luồng trả lời trong tab", run: () => openThread(k, m) },
     !!m.text && { icon: "languages", label: useApp.getState().tr[trKey(k, m.id)] ? "Ẩn bản dịch" : "Dịch", run: () => void translateMsg(k, m) },
     {

@@ -137,6 +137,13 @@ impl Core {
     }
 
     pub fn put_msg(&self, msg: Msg, is_new: bool) {
+        // Google Chat lists deleted messages (showDeleted) as a bare id + time: no sender, no
+        // thread. Google's own client hides them, so do we — drop the stored copy instead of
+        // showing a "?" tombstone at the top level (Telegram deletions already arrive as deletes).
+        if msg.deleted {
+            self.delete_msgs(&msg.account_id, &msg.chat_id, vec![msg.id]);
+            return;
+        }
         // Hold the store mutex across existence check + upsert: concurrent pollers
         // and history loads must agree on whether this ID is a first delivery.
         // reactions on my messages only show up as changed counts: diff against the stored copy
@@ -723,20 +730,27 @@ async fn send(
     thread_id: Option<String>,
     file: Option<String>,
     voice: Option<i32>,
+    // composer "plain text" toggle: *abc* stays *abc*, no bold/italic/code
+    plain: Option<bool>,
 ) -> Res<Msg> {
     let core = core.inner().clone();
+    let plain = plain.unwrap_or(false);
     if core.platform(&account_id) == "telegram" {
-        core.tg.send(&core, &account_id, &chat_id, text, reply_to, thread_id, file, voice).await
+        core.tg.send(&core, &account_id, &chat_id, text, reply_to, thread_id, file, voice, plain).await
     } else {
+        // Google Chat formats on its side: break the markers with zero-width spaces
+        let text = if plain { tg::soft_markup(&text) } else { text };
         core.gchat.send(&core, &account_id, &chat_id, text, reply_to, thread_id, file).await
     }
 }
 #[tauri::command]
-async fn edit(core: C<'_>, account_id: String, chat_id: String, msg_id: String, text: String) -> Res<()> {
+async fn edit(core: C<'_>, account_id: String, chat_id: String, msg_id: String, text: String, plain: Option<bool>) -> Res<()> {
     let core = core.inner().clone();
+    let plain = plain.unwrap_or(false);
     if core.platform(&account_id) == "telegram" {
-        core.tg.edit(&account_id, &chat_id, &msg_id, text).await
+        core.tg.edit(&account_id, &chat_id, &msg_id, text, plain).await
     } else {
+        let text = if plain { tg::soft_markup(&text) } else { text };
         core.gchat.edit(&core, &account_id, &chat_id, &msg_id, text).await
     }
 }
@@ -747,6 +761,16 @@ async fn delete_msg(core: C<'_>, account_id: String, chat_id: String, msg_id: St
         core.tg.delete(&account_id, &chat_id, &msg_id).await
     } else {
         core.gchat.delete(&core, &account_id, &chat_id, &msg_id).await
+    }
+}
+/// Who reacted / read one message, for reaction tooltips and the "seen by" list.
+#[tauri::command]
+async fn msg_people(core: C<'_>, account_id: String, chat_id: String, msg_id: String) -> Res<model::MsgPeople> {
+    let core = core.inner().clone();
+    if core.platform(&account_id) == "telegram" {
+        core.tg.people(&account_id, &chat_id, &msg_id).await
+    } else {
+        core.gchat.people(&core, &account_id, &chat_id, &msg_id).await
     }
 }
 /// Telegram: the emoji this message accepts. None = any emoji (Google Chat).
@@ -1181,6 +1205,7 @@ pub fn run() {
             delete_msg,
             react,
             reactions,
+            msg_people,
             inbox,
             storage,
             storage_set,

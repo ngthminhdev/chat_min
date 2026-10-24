@@ -2,7 +2,7 @@ import {
   ArrowDown, AtSign, AudioLines, Bell, BellOff, Check, CheckCheck, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Copy,
   CornerDownRight, Download, Ellipsis, ExternalLink, FileArchive, FileCode, FileText, Film, Folder, FolderOpen, FolderPlus, Forward, Hash, Image,
   Inbox, Info, KeyRound, Languages, Layers, Link, Lock, Mail, Megaphone, MessageCircleReply, MessageSquareText, MessagesSquare, Mic,
-  Palette, PanelLeft, PanelRight, Paperclip, Pencil, Phone, Pin, PinOff, Play, Plus, Minus, QrCode, RefreshCw, Reply, RotateCw,
+  Palette, PanelLeft, PanelRight, Paperclip, Pencil, Phone, Pin, PinOff, Play, Plus, Minus, QrCode, RefreshCw, RemoveFormatting, Reply, RotateCw,
   Search, Send, Settings, Smile, Sparkles, Sticker, Trash2, Undo2, UserPlus, Users, WifiOff, X, type LucideIcon,
   // folder icons (Folders.tsx picker)
   Bookmark, BookOpen, Bot, Briefcase, Building2, Camera, Car, Cat, Cloud, Code, Coffee, Database, Dog, Dumbbell, Flag, Flame, Gamepad2,
@@ -26,7 +26,7 @@ const ICONS = {
   "panel-left": PanelLeft, "panel-right": PanelRight, paperclip: Paperclip, pencil: Pencil, phone: Phone, pin: Pin,
   "pin-off": PinOff, play: Play, plus: Plus, minus: Minus, "qr-code": QrCode, "refresh-cw": RefreshCw, reply: Reply, "rotate-cw": RotateCw,
   search: Search, send: Send, settings: Settings, smile: Smile, sparkles: Sparkles, sticker: Sticker, "trash-2": Trash2, "undo-2": Undo2, "user-plus": UserPlus,
-  users: Users, "wifi-off": WifiOff, x: X,
+  users: Users, "wifi-off": WifiOff, x: X, "remove-formatting": RemoveFormatting,
   bookmark: Bookmark, "book-open": BookOpen, bot: Bot, briefcase: Briefcase, "building-2": Building2, camera: Camera, car: Car, cat: Cat,
   cloud: Cloud, code: Code, coffee: Coffee, database: Database, dog: Dog, dumbbell: Dumbbell, flag: Flag, flame: Flame, "gamepad-2": Gamepad2,
   gift: Gift, globe: Globe, "graduation-cap": GraduationCap, heart: Heart, home: Home, leaf: Leaf, lightbulb: Lightbulb, "message-circle": MessageCircle,
