@@ -438,7 +438,7 @@ impl Tg {
                         api_id,
                         api_hash,
                         "vi".into(),
-                        "ChatMin (macOS)".into(),
+                        (if cfg!(target_os = "android") { "ChatMin (Android)" } else { "ChatMin (macOS)" }).into(),
                         String::new(),
                         env!("CARGO_PKG_VERSION").into(),
                         c,

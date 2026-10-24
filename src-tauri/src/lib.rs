@@ -661,7 +661,22 @@ fn cached_messages(core: C<'_>, account_id: String, chat_id: String, limit: i64)
         (false, Some(first)) => store.roots(&account_id, &chat_id, first.sort)?.into_iter().filter(|m| missing.contains(m.thread_id.as_str())).collect(),
         _ => vec![],
     };
-    Ok((page, roots))
+    Ok((stale_refs(page), stale_refs(roots)))
+}
+
+/// TDLib file ids only live for one session: a cached message rendered with last run's ids
+/// downloads whatever file carries that id now (someone's avatar in a photo's slot). Keep the
+/// inline blur and local paths; the fresh ids arrive with the reload that follows.
+fn stale_refs(mut msgs: Vec<Msg>) -> Vec<Msg> {
+    let drop = |s: &mut String| if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) { s.clear() };
+    for m in &mut msgs {
+        drop(&mut m.sender_photo);
+        if let Some(media) = &mut m.media {
+            drop(&mut media.file_ref);
+            drop(&mut media.thumb_file);
+        }
+    }
+    msgs
 }
 #[tauri::command]
 async fn thread(core: C<'_>, account_id: String, chat_id: String, thread_id: String) -> Res<Vec<Msg>> {
