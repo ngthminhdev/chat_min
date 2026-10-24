@@ -12,7 +12,7 @@ import {
 import { ChatAvatar } from "../ui/Avatar";
 import { Glyph, Icon } from "../ui/Icon";
 import { TypingIndicator } from "./TypingIndicator";
-import { FolderChats, FolderTabs, folderItems } from "./Folders";
+import { FolderGroups, folderItems, inFolders } from "./Folders";
 
 /** Rows slide only while the user drags. Otherwise collapsing a section makes every
  *  Reorder.Item around it run a layout animation: scale-squished text, siblings jumping. */
@@ -34,7 +34,6 @@ export function Sidebar() {
   const filter = useApp((s) => s.filter);
   const query = useApp((s) => s.query);
   const route = useApp((s) => s.route);
-  const folder = useApp((s) => s.folder);
   const total = totalUnread(chats);
   const ordered = orderedAccounts(accounts, order);
   const accDrag = useDragAnim();
@@ -76,9 +75,7 @@ export function Sidebar() {
           </button>
         ))}
       </div>
-      <FolderTabs />
       <div className="side-scroll">
-        {folder ? <FolderChats /> : <>
         <button
           className={`nav-item all-inbox${route === "inbox" ? " active" : ""}`}
           aria-label="Tất cả hội thoại"
@@ -92,6 +89,7 @@ export function Sidebar() {
         </button>
         <Favorites />
         <Latest />
+        <FolderGroups />
         {accounts.length ? (
           <Reorder.Group axis="y" as="div" values={ordered.map((a) => a.id)} onReorder={(ids) => useApp.setState({ accountOrder: ids })}>
             {ordered.map((a, i) => (
@@ -105,7 +103,6 @@ export function Sidebar() {
             Bấm <Icon name="user-plus" /> để thêm.
           </div>
         )}
-        </>}
       </div>
     </aside>
   );
@@ -240,6 +237,8 @@ function AccountGroup({ account: a, index, chats, filter, query, drag: accDrag }
   const collapsed = useApp((s) => !!s.collapsed[a.id]) && !norm(query);
   const health = useApp((s) => s.health[a.id]?.health ?? "ok");
   const favorites = useApp((s) => s.favorites);
+  const folders = useApp((s) => s.folders);
+  const foldered = useMemo(() => inFolders(folders), [folders]);
   const rs = useRowState();
   const drag = useDragControls();
   const rowDrag = useDragAnim();
@@ -249,11 +248,11 @@ function AccountGroup({ account: a, index, chats, filter, query, drag: accDrag }
     () =>
       sortedChats(chats, a.id).filter(
         (c) =>
-          !favorites.includes(key(c.accountId, c.id)) &&
+          !favorites.includes(key(c.accountId, c.id)) && !foldered.has(key(c.accountId, c.id)) &&
           (!q || fuzzy(q, c.title) > 0) &&
           (filter === "all" || (filter === "unread" ? c.unread > 0 : c.mention)),
       ),
-    [chats, a.id, q, filter, favorites],
+    [chats, a.id, q, filter, favorites, foldered],
   );
   const unread = list.filter((c) => !c.muted).reduce((s, c) => s + c.unread, 0);
   const loading = !list.length && !q && filter === "all" && (health === "reconnecting" || health === "syncing");

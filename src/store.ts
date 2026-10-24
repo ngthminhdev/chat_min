@@ -107,9 +107,8 @@ interface State {
   threadTabs: Record<string, ThreadTab>;
   /** forum chat → topic the user opened last; opening the chat lands there (like Telegram) */
   lastTopic: Record<string, string>;
-  /** user folders (sidebar tabs) and the one selected ("" = everything) */
+  /** user folders: sidebar groups holding chats from any account */
   folders: Folder[];
-  folder: string;
   /** ChatMin's own pins: cross-account, user-ordered, shown on top of the sidebar */
   favorites: string[];
   accountOrder: string[];
@@ -204,7 +203,6 @@ export const useApp = create<State>(() => ({
   threadTabs: saved.threadTabs ?? {},
   lastTopic: saved.lastTopic ?? {},
   folders: saved.folders ?? [],
-  folder: saved.folder ?? "",
   favorites: saved.favorites ?? [],
   accountOrder: saved.accountOrder ?? [],
   expanded: {},
@@ -249,11 +247,11 @@ let persistT: ReturnType<typeof setTimeout> | undefined;
 useApp.subscribe((s) => {
   clearTimeout(persistT);
   persistT = setTimeout(() => {
-    const { tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, lastTopic, folders, folder, favorites, accountOrder, trAuto, aiLang, hidden, chatOrder, inboxSeen, inboxRead } = s;
+    const { tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, lastTopic, folders, favorites, accountOrder, trAuto, aiLang, hidden, chatOrder, inboxSeen, inboxRead } = s;
     try {
       localStorage.setItem(
         PERSIST,
-        JSON.stringify({ tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, lastTopic, folders, folder, favorites, accountOrder, trAuto, aiLang, hidden, chatOrder, inboxSeen, inboxRead }),
+        JSON.stringify({ tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, lastTopic, folders, favorites, accountOrder, trAuto, aiLang, hidden, chatOrder, inboxSeen, inboxRead }),
       );
     } catch {}
   }, 300);
