@@ -1,3 +1,4 @@
+import { highlight } from "./code.ts";
 // Text helpers shared by every view. Message markup from the backend is Google Chat's own
 // syntax — *bold*, _italic_, ~strike~, `code`, ``` blocks, "* " / "- " bullets — plus
 // @{mention} and [label](url). See render() in tg.rs and chat_markup() in gchat.rs.
@@ -57,14 +58,23 @@ function para(p: string, me: string[]): string {
   return out;
 }
 
+const COPY_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
+/** A ``` block: language label, copy button (Message.tsx handles the click), coloured code. */
+function codeBlock(code: string, lang: string): string {
+  const h = highlight(code, lang);
+  return `<div class="code-block"><div class="code-head"><span class="code-lang">${h.lang || "code"}</span><button type="button" class="code-copy" aria-label="Sao chép mã" data-tip="Sao chép">${COPY_SVG}</button></div><pre><code class="hljs">${h.html}</code></pre></div>`;
+}
+
 /** Escaped HTML for a message body. `me` = names that count as "mentions me". */
 export function fmt(text: string, me: string[] = []): string {
-  return esc(text)
-    .split(/```\n?([\s\S]*?)\n?```/g)
-    .map((part, i) =>
-      i % 2
-        ? `<pre>${part}</pre>`
-        : part
+  return text
+    .split(/```([\w+#-]*)\n?([\s\S]*?)\n?```/g)
+    .map((part, i, parts) =>
+      i % 3 === 1
+        ? codeBlock(parts[i + 1], part)
+        : i % 3 === 2
+        ? ""
+        : esc(part)
             .replace(/^\n+|\n+$/g, "")
             .split(/\n{2,}/)
             .filter((p) => p.trim())

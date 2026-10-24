@@ -1570,3 +1570,23 @@ body:is([data-background="glass"], [data-background="clear"]) .inbox-shell { bor
 .bubble .media-grid.album .img-msg { width: auto; max-height: none; margin: 0; border-radius: 4px; }
 .bubble .media-grid.album.n3 .img-msg:first-child { grid-column: span 2; aspect-ratio: 2 / 1 !important; }
 .bubble .media-grid.album .img-msg .play .ic { --od-icon-size: 18px; width: 36px; height: 36px; padding: 9px; }
+
+/* ``` blocks: language label + copy on top, highlight.js tokens on the theme's own hues (lib/code.ts, format.ts codeBlock) */
+.code-block { margin: 4px 0; border-radius: var(--radius-sm); background: color-mix(in oklab, var(--text), transparent 93%); overflow: hidden; }
+.code-head { display: flex; align-items: center; justify-content: space-between; height: 26px; padding: 0 4px 0 10px; border-bottom: 1px solid color-mix(in oklab, var(--text), transparent 90%); }
+.code-lang { color: var(--text-3); font: 500 11px/1 var(--font-mono); text-transform: lowercase; letter-spacing: .02em; }
+.code-copy { display: grid; place-items: center; width: 24px; height: 22px; border: 0; border-radius: 5px; background: transparent; color: var(--text-3); cursor: pointer; }
+.code-copy svg { width: 14px; height: 14px; }
+.code-copy:hover { color: var(--text); background: color-mix(in oklab, var(--text), transparent 88%); }
+.code-block pre { background: transparent; border-radius: 0; }
+.bubble .code-block pre { user-select: text; -webkit-user-select: text; }
+.hljs-comment, .hljs-quote { color: var(--text-3); font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag, .hljs-meta { color: var(--purple); }
+.hljs-string, .hljs-regexp, .hljs-addition, .hljs-template-tag { color: var(--green); }
+.hljs-number, .hljs-symbol, .hljs-bullet, .hljs-attr, .hljs-attribute, .hljs-selector-attr, .hljs-variable, .hljs-template-variable { color: var(--orange); }
+.hljs-title, .hljs-title.function_, .hljs-title.class_, .hljs-section, .hljs-name, .hljs-selector-id, .hljs-selector-class { color: var(--blue-2); }
+.hljs-built_in, .hljs-type, .hljs-params { color: var(--accent, var(--blue-2)); }
+.hljs-deletion { color: var(--red, #e5484d); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 700; }
+.bubble .code-block pre code, .cmsg .code-block pre code { display: block; padding: 0; border-radius: 0; background: transparent; font: inherit; }

@@ -1453,7 +1453,9 @@ fn render(ft: &t::FormattedText) -> String {
         let inner = slice(s, end);
         let rendered = match &e.r#type {
             enums::TextEntityType::Code => format!("`{}`", inner.replace('`', "ʼ")),
-            enums::TextEntityType::Pre | enums::TextEntityType::PreCode(_) => format!("```\n{}\n```", inner.trim_matches('\n').replace("```", "ʼʼʼ")),
+            enums::TextEntityType::Pre => format!("```\n{}\n```", inner.trim_matches('\n').replace("```", "ʼʼʼ")),
+            // the language rides on the fence, like markdown: ```cpp
+            enums::TextEntityType::PreCode(p) => format!("```{}\n{}\n```", p.language, inner.trim_matches('\n').replace("```", "ʼʼʼ")),
             enums::TextEntityType::Bold => wrap(&inner, '*'),
             enums::TextEntityType::Italic => wrap(&inner, '_'),
             enums::TextEntityType::Strikethrough => wrap(&inner, '~'),

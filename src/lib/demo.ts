@@ -64,6 +64,7 @@ m(T, "-1001839204417", "Huy Đặng", at(0, "10:06"), "@{Trí Võ} check giúp a
 m(T, "-1001839204417", "Mai Anh Trịnh", at(0, "10:11"), "Staging đang trả 502 ở /v1/budgets, có ai vừa đụng gì không ạ 😅");
 
 m(T, "-1002214558830", "Tuấn Bùi", at(0, "08:02"), "Điểm tập trung: bờ Hồ, đối diện Tháp Rùa, 4h45 sáng thứ Bảy. Xe 16 chỗ đón ở đó luôn");
+m(T, "-1002214558830", "Tuấn Bùi", at(0, "08:03"), "Bài hôm nay nhé mọi người\n```cpp\nclass Solution {\npublic:\n    static constexpr int dayPassed[] = {0, 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};\n\n    int convert(string& date) {\n        int month = (date[0] - '0') * 10 + date[1] - '0';\n        return dayPassed[month] + (date[3] - '0') * 10 + date[4] - '0'; // 1-based\n    }\n};\n```");
 m(T, "-1002214558830", "Hà My", at(0, "08:10"), "Mọi người chuyển quỹ 1.500.000đ trước thứ Hai nha, ai chuyển rồi thả tim giúp em", { reactions: [{ emoji: "❤️", count: 6, mine: true }] });
 m(T, "-1002214558830", "me", at(0, "08:15"), "Đã chuyển nha My");
 m(T, "-1002214558830", "Duy Phạm", at(0, "09:58"), "Homestay ở Đồng Văn còn 2 phòng thôi, chốt luôn không mọi người?");
@@ -83,6 +84,7 @@ m(T, "-1001120457788", "Phong Vũ", at(0, "10:12"), "Bên mình dùng cho stream
 // ── Google Chat · QC Corp
 const G = "gc-demo";
 const rot = m(G, "spaces/AAAA8xQm2Lk", "Sarah Chen", at(0, "08:55"), "Heads-up: rotating the staging Postgres credentials at 14:00 ICT. Services pulling from Vault pick it up automatically; anything with a hard-coded DSN will break.", { reactions: [{ emoji: "👀", count: 4, mine: false }], threadId: "spaces/AAAA8xQm2Lk/threads/t1" });
+m(G, "spaces/AAAA8xQm2Lk", "Sarah Chen", at(0, "08:56"), "Config mới cho staging:\n```\n{\n  \"db\": { \"host\": \"pg-staging.internal\", \"port\": 5432, \"ssl\": true },\n  \"pool\": { \"min\": 2, \"max\": 10 },\n  \"rotateEvery\": \"30d\"\n}\n```");
 m(G, "spaces/AAAA8xQm2Lk", "Minh Trần", at(0, "09:02"), "payments-worker vẫn đọc DSN từ env file, em chuyển sang Vault agent trước 13h ạ", { threadId: rot.threadId, threadReply: true });
 m(G, "spaces/AAAA8xQm2Lk", "Sarah Chen", at(0, "09:05"), "Thanks Minh 🙏", { threadId: rot.threadId, threadReply: true });
 m(G, "spaces/AAAA8xQm2Lk", "me", at(0, "09:20"), "Build Tools pipeline đã đọc từ Vault rồi, không ảnh hưởng.", { threadId: rot.threadId, threadReply: true, status: "sent" });

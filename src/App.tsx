@@ -49,6 +49,19 @@ export default function App() {
     retryBoot();
   }, []);
 
+  // the copy button of a ``` block: format.ts renders it as plain HTML inside any message body
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      const btn = (e.target as HTMLElement).closest?.(".code-copy");
+      const code = btn?.parentElement?.nextElementSibling?.textContent;
+      if (!btn || code == null) return;
+      e.stopPropagation();
+      void navigator.clipboard.writeText(code).then(() => toast("Đã sao chép mã", "copy"));
+    };
+    document.addEventListener("click", onClick, true);
+    return () => document.removeEventListener("click", onClick, true);
+  }, []);
+
   useEffect(() => {
     if (isMobile) return;
     const compact = window.matchMedia("(max-width: 1180px)");
