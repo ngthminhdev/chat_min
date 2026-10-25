@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { listTime, plain } from "../lib/format";
-import { THEMES } from "../lib/themes";
-import { inboxKey, inboxUnread, key, openAt, useApp, openSearch } from "../store";
+import { themeBase } from "../lib/themes";
+import { inboxKey, inboxUnread, key, openAt, useApp, openSearch, toggleTheme } from "../store";
 import { useShallow } from "zustand/react/shallow";
 import { startWizard } from "../views/Wizard";
 import { Icon } from "../ui/Icon";
@@ -10,16 +10,7 @@ import { useMobileBack } from "../mobile";
 import { isMobile } from "../lib/mobile";
 
 export function Titlebar() {
-  const theme = useApp((s) => s.prefs.theme);
-  const menu = useRef<HTMLDetailsElement>(null);
-
-  useEffect(() => {
-    const close = (e: MouseEvent) => {
-      if (menu.current?.open && !menu.current.contains(e.target as Node)) menu.current.open = false;
-    };
-    document.addEventListener("click", close);
-    return () => document.removeEventListener("click", close);
-  }, []);
+  const dark = useApp((s) => themeBase(s.prefs.theme) === "dark");
 
   return (
     <header className="titlebar" data-tauri-drag-region>
@@ -33,42 +24,15 @@ export function Titlebar() {
       </button>
       <div className="toolbar" data-tauri-drag-region>
         <Notifications />
-        <details
-          className="appearance-menu"
-          ref={menu}
-          onKeyDown={(e) => {
-            if (e.key === "Escape" && menu.current?.open) {
-              e.stopPropagation();
-              menu.current.open = false;
-            }
-          }}
+        <button
+          className="tool-btn icon-only lg"
+          type="button"
+          aria-label={dark ? "Chuyển sang giao diện sáng" : "Chuyển sang giao diện tối"}
+          data-tip={dark ? "Giao diện sáng" : "Giao diện tối"}
+          onClick={() => toggleTheme()}
         >
-          <summary className="tool-btn icon-only lg" aria-label="Giao diện" data-tip="Giao diện">
-            <Icon name="palette" />
-          </summary>
-          <div className="appearance-panel">
-            <label htmlFor="theme-select">Giao diện</label>
-            <select
-              className="theme-select"
-              id="theme-select"
-              value={theme}
-              onChange={(e) => {
-                const v = e.target.value;
-                useApp.setState((s) => ({ prefs: { ...s.prefs, theme: v === "dark" ? "" : v } }));
-                if (menu.current) menu.current.open = false;
-              }}
-            >
-              <option value="">Bearded Arc · dark</option>
-              {THEMES.filter((t) => t.id !== "dark" && t.id !== "default-dark").map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.label}
-                  {t.base === "light" ? " · light" : ""}
-                </option>
-              ))}
-            </select>
-            <span>Áp dụng cho toàn bộ cửa sổ</span>
-          </div>
-        </details>
+          <Icon name={dark ? "sun" : "moon"} />
+        </button>
         <button className="tool-btn icon-only lg" type="button" aria-label="Thêm tài khoản" data-tip="Thêm tài khoản" data-kbd="⌘N" onClick={() => startWizard()}>
           <Icon name="user-plus" />
         </button>

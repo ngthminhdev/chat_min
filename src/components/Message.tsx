@@ -30,9 +30,11 @@ interface Props {
   threadOpen: boolean;
   /** this message plus the photos/videos that follow it in one album: rendered as a grid under one time stamp */
   album?: Msg[];
+  /** the newest message of mine that was read: show who read it as a row of small avatars */
+  seenBy?: boolean;
 }
 
-export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps, first, last, fresh, replies, threadOpen, album }: Props) {
+export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps, first, last, fresh, replies, threadOpen, album, seenBy }: Props) {
   const tr = useApp((s) => s.tr[trKey(k, m.id)]);
   // only when the platform didn't send the quote itself: an O(n) find per message on every
   // store change made long chats crawl
@@ -195,6 +197,7 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
                 className={`reaction${r.mine ? " mine" : ""}`}
                 aria-pressed={r.mine}
                 onClick={() => void toggleReaction(k, m, r.emoji)}
+                data-tip={`${r.count} người thả ${r.emoji}`}
                 onMouseEnter={(e) => hoverTip(e.currentTarget, () => peopleOf(m).then((p) => joinNames(p.reactions.filter(([e]) => e === r.emoji).map(([, n]) => n))))}
               >
                 <span className="e"><Emoji e={r.emoji} /></span>
@@ -207,6 +210,7 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
         </AnimatePresence>
         <Meta m={m} caps={caps} />
         </div>
+        {seenBy && caps.readReceipts && chat.kind !== "dm" && <SeenBy m={m} />}
         {caps.threads && chat.threaded && <ThreadLink k={k} m={m} replies={replies} open={threadOpen} />}
         {m.status === "failed" && (
           <div className="fail-row">
@@ -278,7 +282,7 @@ function Meta({ m, caps }: { m: Msg; caps: Record<Cap, boolean> }) {
     if (m.status === "sending") status = up != null && up < 100 ? <span className="dl-pct" data-tip="Đang tải lên">{up}%</span> : <span data-tip="Đang gửi"><Icon name="clock" /></span>;
     else if (m.status === "failed") status = <span className="failed" data-tip="Gửi lỗi"><Icon name="circle-alert" /></span>;
     else if (m.status === "seen" && caps.readReceipts)
-      status = <span className="seen" data-tip="Đã xem" onMouseEnter={(e) => hoverTip(e.currentTarget, () => peopleOf(m).then((p) => (p.viewers.length ? `Đã xem · ${joinNames(p.viewers)}` : "Đã xem")))}><Icon name="check-check" /></span>;
+      status = <span className="seen" data-tip="Đã xem" onMouseEnter={(e) => hoverTip(e.currentTarget, () => peopleOf(m).then((p) => (p.viewers.length ? `Đã xem · ${joinNames(p.viewers.map(([n]) => n))}` : "Đã xem")))}><Icon name="check-check" /></span>;
     else status = <span data-tip={caps.readReceipts ? "Đã gửi" : `Đã gửi · ${CAP_OFF_NOTE.readReceipts}`}><Icon name="check" /></span>;
   }
   return (
@@ -519,13 +523,36 @@ function peopleOf(m: Msg): Promise<MsgPeople> {
   }
   return p;
 }
+/** Messenger-style row of small avatars under my last read message (Telegram groups ≤ 100). */
+function SeenBy({ m }: { m: Msg }) {
+  const [viewers, setViewers] = useState<[string, string][]>([]);
+  const sig = `${m.id}|${m.status}`;
+  useEffect(() => {
+    let alive = true;
+    peopleOf(m).then((p) => alive && setViewers(p.viewers)).catch(() => {});
+    return () => { alive = false; };
+  }, [sig]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!viewers.length) return null;
+  const shown = viewers.slice(0, 5);
+  const rest = viewers.slice(5);
+  return (
+    <div className="seen-by" aria-label={`Đã xem: ${joinNames(viewers.map(([n]) => n))}`}>
+      {shown.map(([name, photo], i) => (
+        <span key={i} data-tip={name}><PersonAvatar name={name} size="sm" accountId={m.accountId} photo={photo} /></span>
+      ))}
+      {rest.length > 0 && <span className="more" data-tip={joinNames(rest.map(([n]) => n))}>+{rest.length}</span>}
+    </div>
+  );
+}
 const joinNames = (names: string[]) => (names.length > 12 ? `${names.slice(0, 12).join(", ")} +${names.length - 12}` : names.join(", "));
 /** Put the fetched text in the element's tooltip and re-show it if the pointer is still there. */
 function hoverTip(el: HTMLElement, text: () => Promise<string>) {
   text().then((t) => {
     if (!t || !el.isConnected) return;
+    // Only the text: the tooltip (Overlays, 350 ms after the real mouseover) reads data-tip
+    // when it shows. Re-dispatching a mouseover here made React fire onMouseEnter again →
+    // hoverTip again → endless microtask loop (WebContent 100% CPU, app frozen).
     el.dataset.tip = t;
-    if (el.matches(":hover")) el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
   }).catch(() => {});
 }
 /** Phone (no hover) and the context menu: the same names as a list. */
@@ -536,7 +563,7 @@ async function showPeople(m: Msg) {
     const p = await peopleOf(m);
     const items: MenuItem[] = [
       ...p.reactions.map(([e, n]): MenuItem => ({ icon: "smile", label: `${e}  ${n}`, run: () => {} })),
-      ...p.viewers.map((n): MenuItem => ({ icon: "check-check", label: n, run: () => {} })),
+      ...p.viewers.map(([n]): MenuItem => ({ icon: "check-check", label: n, run: () => {} })),
     ];
     if (!items.length) return toast("Chưa thấy ai");
     useApp.setState({ pop: { kind: "menu", ...at, title: p.viewers.length ? "Biểu cảm · Đã xem" : "Biểu cảm", items } });

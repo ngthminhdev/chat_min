@@ -253,7 +253,7 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
       return null;
     case "msg_people":
       await wait(150);
-      return { reactions: [["👍", "Linh Nguyễn"], ["👍", "Huy Đặng"], ["❤️", "Mai Anh Trịnh"]], viewers: ["Linh Nguyễn", "Huy Đặng", "Quân Lê"] };
+      return { reactions: [["👍", "Linh Nguyễn"], ["👍", "Huy Đặng"], ["❤️", "Mai Anh Trịnh"]], viewers: [["Linh Nguyễn", ""], ["Huy Đặng", ""], ["Quân Lê", ""], ["Mai Anh Trịnh", ""], ["Bảo Phạm", ""], ["Thu Hà", ""], ["Đức Anh", ""]] };
     case "web_show":
     case "web_hide":
     case "web_reload":

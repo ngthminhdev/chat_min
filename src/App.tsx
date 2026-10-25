@@ -260,6 +260,7 @@ function useGlobalHandlers() {
       if (k === "Escape") {
         if (s.viewer) return st({ viewer: null });
         if (s.dialog) return st({ dialog: null });
+        if (s.themePicker) return st({ themePicker: false });
         if (s.forward) return st({ forward: null });
         if (s.pop) return st({ pop: null });
         if (s.palette) return st({ palette: null });
@@ -275,7 +276,7 @@ function useGlobalHandlers() {
         if (s.route === "inbox" || s.route === "settings" || s.route === "search") return st({ route: "shell" });
         return;
       }
-      if (!mod || s.dialog) return;
+      if (!mod || s.dialog || s.themePicker) return;
       const lower = k.toLowerCase();
       // Modal controls own navigation; background shortcuts must not change chats/accounts.
       if ((s.palette || s.pop) && !["k", "f"].includes(lower)) return;

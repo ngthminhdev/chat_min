@@ -251,6 +251,9 @@ function MessageList({ k }: { k: string }) {
       </div>
     );
   } else {
+    // my newest read message carries the "seen by" avatars
+    let lastSeenId: string | undefined;
+    for (let i = visible.length - 1; i >= 0 && !lastSeenId; i--) if (visible[i].outgoing && visible[i].status === "seen") lastSeenId = visible[i].id;
     body = (
       <>
         {older === "loading" && <div className="older-loading"><span className="veil-spinner" /></div>}
@@ -277,6 +280,7 @@ function MessageList({ k }: { k: string }) {
                 first={first}
                 last={last}
                 album={album}
+                seenBy={m.id === lastSeenId}
                 fresh={arrival(m)}
                 replies={m.threadId ? replies[m.threadId] : undefined}
                 threadOpen={!!m.threadId && threadTabs.includes(threadTabKey(k, m.threadId))}

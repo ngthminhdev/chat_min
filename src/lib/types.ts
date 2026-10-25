@@ -93,8 +93,8 @@ export interface Msg {
 }
 
 export interface Member { id: string; name: string; status: string; role: string }
-/** who reacted (emoji, name) and who read a message (Telegram groups only) */
-export interface MsgPeople { reactions: [string, string][]; viewers: string[] }
+/** who reacted (emoji, name) and who read a message as (name, photo) — Telegram groups only */
+export interface MsgPeople { reactions: [string, string][]; viewers: [string, string][] }
 
 export type CoreEvent =
   | { type: "accounts"; accounts: Account[] }

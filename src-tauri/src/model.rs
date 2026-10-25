@@ -155,8 +155,9 @@ pub struct Msg {
 pub struct MsgPeople {
     /// (emoji, display name) per added reaction
     pub reactions: Vec<(String, String)>,
-    /// names of readers — Telegram only, outgoing messages in groups of ≤ 100 members
-    pub viewers: Vec<String>,
+    /// (name, photo) of readers — Telegram only, outgoing messages in groups of ≤ 100 members.
+    /// photo = local path or TDLib file id, like `Msg.sender_photo`
+    pub viewers: Vec<(String, String)>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

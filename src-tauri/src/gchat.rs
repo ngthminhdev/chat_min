@@ -272,7 +272,27 @@ impl GChat {
             acc.running = true;
         }
         tauri::async_runtime::spawn(async move {
-            core.gchat.run(&core, &account.id, first_sync).await;
+            // supervisor: the poller must not stay dead. A panic (one bad message once
+            // killed it silently for good) restarts it in 5s; a session Google called
+            // expired is retried every minute, so a transient 400/401 heals by itself
+            let mut first = first_sync;
+            loop {
+                let run = std::panic::AssertUnwindSafe(core.gchat.run(&core, &account.id, first));
+                let outcome = futures::FutureExt::catch_unwind(run).await;
+                first = false;
+                let stopped = core.gchat.accs.lock().unwrap().get(&account.id).map_or(true, |a| a.stopped);
+                if stopped {
+                    break;
+                }
+                let wait = match outcome {
+                    Ok(()) => 60,
+                    Err(_) => {
+                        eprintln!("[gchat] poller panicked (see panic.log), restarting in 5s");
+                        5
+                    }
+                };
+                tokio::time::sleep(Duration::from_secs(wait)).await;
+            }
             if let Some(a) = core.gchat.accs.lock().unwrap().get_mut(&account.id) {
                 a.running = false;
             }
@@ -1359,8 +1379,9 @@ fn chat_markup(ft: &str, names: &HashMap<String, String>) -> String {
         out.push_str(&rest[..i]);
         let tail = &rest[i..];
         let Some(j) = tail.find('>') else {
-            out.push_str(tail);
-            return out;
+            // no token can start here: the rest is text, and still needs unescaping below
+            rest = tail;
+            break;
         };
         let tok = &tail[1..j];
         let rendered = if tok.contains('<') || tok.starts_with(char::is_whitespace) {
@@ -1424,7 +1445,10 @@ fn restore_code_blocks(formatted: &str, text: &str) -> String {
         };
         let body = &unescape(body); // "\[2\]" in formattedText is "[2]" in text
         let restored = flat.find(body.as_str()).and_then(|i| {
-            let (from, to) = (at[flat[..i].chars().count()], at[flat[..i + body.len()].chars().count() - 1] + 1);
+            let from = at[flat[..i].chars().count()];
+            let last = at[flat[..i + body.len()].chars().count() - 1];
+            // `at` holds char starts: the last char may be multi-byte ("ạ", "│")
+            let to = last + text[last..].chars().next().map_or(1, char::len_utf8);
             let orig = &text[from..to];
             orig.contains('\n').then(|| format!("```\n{orig}\n```"))
         });
@@ -1591,4 +1615,21 @@ mod tests {
         assert_eq!(msg.text, "📞 Cuộc gọi đã kết thúc");
         assert!(!msg.edited);
     }
+
+    /// A "<" with no ">" after it used to return before `unescape` ran: "\\>" stayed literal.
+    #[test]
+    fn unescapes_after_a_lone_less_than() {
+        let names = HashMap::new();
+        assert_eq!(super::chat_markup("cat \\> out.csv \\<\\<'EOF'\nuser\\_id", &names), "cat > out.csv <<'EOF'\nuser_id");
+        assert_eq!(super::chat_markup("a < b and <https://x.y|site>", &names), "a < b and [site](https://x.y)");
+    }
+
+    /// A real message once panicked here ("byte index … inside 'ạ'") and killed the poller.
+    #[test]
+    fn code_block_ending_in_multibyte_char() {
+        let text = "issue:\nCược 100k\nTrừ 250k ạ";
+        let formatted = "issue:\n    Cược 100kTrừ 250k ạ\n";
+        assert_eq!(super::restore_code_blocks(formatted, text), "issue:\n```\nCược 100k\nTrừ 250k ạ\n```\n");
+    }
 }
+

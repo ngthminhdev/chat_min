@@ -27,7 +27,6 @@ html, body { overflow: hidden; }
 .titlebar .search { cursor: default; font: inherit; color: var(--text-3); }
 .titlebar .search > span { flex: 1; text-align: left; }
 .titlebar .search:hover { border-color: var(--line-2); color: var(--text-2); }
-.theme-select { height: 28px; padding: 0 8px; color: var(--text-2); background: var(--pane-2); border: 1px solid var(--line); border-radius: var(--radius-md); font: var(--fs-md) var(--font-mono); }
 .tool-btn.icon-only.lg { width: 28px; min-width: 28px; height: 28px; border-radius: var(--radius-md); color: var(--text-2); }
 .tool-btn:hover { color: var(--text); }
 
@@ -204,6 +203,10 @@ button.tab-close { padding: 0; border: 0; background: transparent; font-family: 
 .message-footer { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; min-width: 0; width: 100%; }
 .message-footer > .reactions { flex: 1; min-width: 0; }
 .message-footer > .msg-meta { flex: none; min-height: 22px; margin: 0 4px 0 auto; }
+/* who read my last message: a row of tiny avatars, like Messenger */
+.seen-by { display: flex; justify-content: flex-end; align-items: center; gap: 3px; margin: 3px 4px 0; }
+.seen-by .avatar.sm { width: 18px; height: 18px; font-size: 9px; }
+.seen-by .more { color: var(--text-3); font: var(--fs-xs)/1 var(--font-mono); padding-left: 2px; }
 .reaction { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 7px; border: 1px solid var(--line); border-radius: var(--radius-pill); background: var(--pane-2); color: var(--text-2); font: var(--fs-sm) var(--font-mono); }
 .reaction:hover { border-color: var(--line-2); background: var(--pane-3); }
 .reaction.mine { background: var(--accent-soft); border-color: var(--accent-soft-strong); color: var(--text); }
@@ -430,13 +433,6 @@ button.tab-close { padding: 0; border: 0; background: transparent; font-family: 
 .titlebar { grid-template-columns: var(--left-w) minmax(240px, 1fr) var(--right-w); }
 .titlebar .search { width: min(100%, 400px); justify-self: center; }
 .toolbar { gap: 4px; }
-.appearance-menu { position: relative; }
-.appearance-menu summary { list-style: none; cursor: pointer; display: grid; place-items: center; }
-.appearance-menu summary::-webkit-details-marker { display: none; }
-.appearance-panel { position: absolute; top: 36px; right: 0; z-index: var(--z-menu); display: grid; gap: 12px; width: 240px; padding: 16px; background: var(--glass); backdrop-filter: blur(20px); border: 1px solid var(--line-2); border-radius: var(--radius-lg); }
-.appearance-panel label { color: var(--text); font-weight: 600; }
-.appearance-panel > span { color: var(--text-3); font-size: var(--fs-md); }
-.theme-select { width: 100%; }
 .sidebar { background: var(--window); }
 .sidebar .sidebar-top { padding: 16px 12px 0; }
 .sidebar .mini-tabs { padding: 8px 12px; }
@@ -1463,7 +1459,7 @@ body:is([data-background="glass"], [data-background="clear"]) .composer-inner {
 body:is([data-background="glass"], [data-background="clear"]) .composer-inner:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px var(--focus-ring); }
 body:is([data-background="glass"], [data-background="clear"]) .composer-box { background: transparent; border: 0; box-shadow: none; padding: 8px; }
 body:is([data-background="glass"], [data-background="clear"]) .composer-tools { padding: 0 8px 8px; }
-body:is([data-background="glass"], [data-background="clear"]) :is(.thread-compose, .r2-header, .settings-card, .inbox-shell, .thread-head, .summary-card, .pop, .context-menu, .palette, .prompt-dialog, .confirm-dialog, .emoji-pop, .appearance-panel, .tip, .toast, .msg-actions) { background: var(--app-bg); }
+body:is([data-background="glass"], [data-background="clear"]) :is(.thread-compose, .r2-header, .settings-card, .inbox-shell, .thread-head, .summary-card, .pop, .context-menu, .palette, .prompt-dialog, .confirm-dialog, .emoji-pop, .tip, .toast, .msg-actions) { background: var(--app-bg); }
 /* Standalone status labels have a single, compact surface. */
 body:is([data-background="glass"], [data-background="clear"]) .service-msg { width: fit-content; margin-left: auto; margin-right: auto; padding: 3px 12px; }
 body:is([data-background="glass"], [data-background="clear"]) :is(.day-sep span, .unread-sep span, .history-start, .thread-count, .service-msg, .older-loading, .conv-empty, .side-empty) {

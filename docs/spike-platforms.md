@@ -81,3 +81,31 @@ Lai: UI thống nhất cho TG + GChat (có API), tab webview cho Messenger + Zal
 
 Chưa xác minh: WKWebView có chặn UA trên facebook.com/messages không; WKWebView có expose
 Web Notification không (nhiều khả năng không, cần shim).
+
+## Messenger — tra cứu lại 2026-10-24 → vẫn webview; UI thống nhất chỉ khả thi qua sidecar
+
+Hiện trạng code: `web.rs` mở `https://www.messenger.com/` (vẫn trả 200, redirect phía JS về
+`facebook.com/messages`) — nên đổi URL thẳng. Android: chỉ mở app/trình duyệt ngoài.
+
+Đường đi để có UI thống nhất (đọc/gửi trong ChatMin, không webview):
+
+| Hướng | Ngôn ngữ / license | E2EE DM (mặc định từ 12/2023) | Độ chín | Chi phí |
+|---|---|---|---|---|
+| `mautrix-meta` `pkg/messagix` + `whatsmeow` (Go, AGPL-3.0) | Go 1.26 (máy có 1.25.5) | Có — E2EE Messenger chạy qua hạ tầng WhatsApp, bridge dùng `whatsmeow` + `libsignal`; v26.10 (16/10/2026) backfill lịch sử E2EE bằng PIN backup | Cao: release hằng tháng, Beeper dùng; đã có lần vỡ khi Meta đổi server (v0.2608.1) | Cao: `pkg/connector` ~25 file / ~250 KB là phần glue Matrix, phải viết lại glue riêng (login cookie, sự kiện, media, E2EE device). `cmd/lscli` chỉ là decoder payload, không phải client mẫu |
+| `bhhoang/fbapi-unofficial` (Node, MIT) | Node 22 | Có 1:1 (Noise + Signal tự cài), `listenMqtt` nhận tin đã giải mã, `restoreE2EEBackup` bằng mã khôi phục; **không** nhóm E2EE | Thấp: fork 0 star, 1 người, không npm; vỡ khi `LS_VERSION_ID`/`DOC_ID` đổi | Thấp (1–2 ngày spike qua sidecar Node stdio JSON) nhưng phải ship Node runtime |
+| `mewisme/meta.go` (Go, AGPL-3.0) | Go | Có (khai báo) | Rất thấp: 0 star, 1 tác giả, commit từ 09/2026, chưa có tag release | Chưa đáng thử |
+| Chạy nguyên `mautrix-meta` + homeserver Matrix nhỏ, ChatMin làm Matrix client | Go + Rust | Có | Cao nhưng kéo cả Matrix stack | Quá nặng cho app cá nhân |
+| Rust crate | — | — | Không có gì sống (crate `fb_messenger` 2021 chỉ gửi) | — |
+
+Rủi ro chung mọi hướng không chính thức: Meta có thể checkpoint/khoá tài khoản (docs mautrix cảnh báo
+rõ, khuyên bật 2FA); login bằng cookie `c_user`/`xs`/`datr`/`sb` lấy từ trình duyệt; mọi lib đều
+vỡ khi Meta đổi protocol. API chính thức vẫn chỉ Page/IG Pro; API interop DMA chỉ EU.
+
+**Kết luận:** giữ webview (sửa URL → `facebook.com/messages`, thêm shim notification nếu cần).
+Nếu muốn UI thống nhất: spike `fbapi-unofficial` bằng tài khoản phụ 1–2 ngày để đo độ ổn định;
+làm thật thì sidecar Go trên `pkg/messagix` + `whatsmeow` (cần nâng Go 1.26, chấp nhận AGPL +
+công viết glue vài tuần). Không khuyến nghị dùng tài khoản chính để thử.
+
+Nguồn: mau.fi/blog/2026-10-mautrix-release, github.com/mautrix/meta (ROADMAP.md, go.mod,
+cmd/lscli), docs.mau.fi/bridges/go/meta/authentication.html, github.com/bhhoang/fbapi-unofficial,
+github.com/mewisme/meta.go, techcrunch.com 2026-02-19, news.ycombinator.com/item?id=47052007.

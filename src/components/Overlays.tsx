@@ -6,11 +6,12 @@ import { bare, EMOJI, nextEmojiIndex, searchEmoji } from "../lib/micro-ux";
 import { COLORS, COLOR_LABELS } from "../lib/platforms";
 import { IconPicker } from "./Folders";
 import type { Chat, Msg } from "../lib/types";
-import { dismissToast, forwardMsg, key, loadLatest, loadTopics, openChat, splitKey, useApp, openSearch, type Pop, type Toast } from "../store";
+import { dismissToast, forwardMsg, key, loadLatest, loadTopics, openChat, splitKey, useApp, openSearch, setTheme, toggleTheme, type Pop, type Toast } from "../store";
 import { removeAccount, renameAccount } from "../App";
 import { startWizard } from "../views/Wizard";
 import { ChatAvatar, PersonAvatar } from "../ui/Avatar";
 import { Glyph, Icon, type IconName } from "../ui/Icon";
+import { ThemeGrid } from "../ui/ThemeGrid";
 import { isMobile } from "../lib/mobile";
 
 /** Long-press sheet: the reactions people actually use, in Telegram's order. */
@@ -59,6 +60,7 @@ export function Overlays() {
       <Palette />
       <Popover />
       <DialogLayer />
+      <ThemePicker />
       <ForwardSheet />
       <Toasts />
       <Tooltip />
@@ -71,6 +73,8 @@ const COMMANDS: [IconName, string, string, () => void][] = [
   ["user-plus", "Thêm tài khoản", "⌘N", () => startWizard()],
   ["message-square-text", "Tìm trong tin nhắn", "⌘⇧F", () => openSearch()],
   ["inbox", "Tất cả hội thoại", "", () => useApp.setState({ route: "inbox" })],
+  ["moon", "Đổi giao diện sáng/tối", "", () => toggleTheme()],
+  ["palette", "Chọn giao diện…", "", () => useApp.setState({ themePicker: true })],
   ["settings", "Cài đặt", "⌘,", () => useApp.setState({ route: "settings" })],
   ["pencil", "Đổi tên tài khoản hiện tại", "⌘E", () => renameAccount()],
   ["panel-right", "Ẩn/hiện chi tiết hội thoại", "⌘R", () => useApp.setState((s) => ({ rightCollapsed: !s.rightCollapsed }))],
@@ -546,6 +550,49 @@ function DialogLayer() {
               </button>
             </div>
           </motion.form>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+// ── theme picker: ⌘K → "Chọn giao diện…" ───────────────────────────────────
+function ThemePicker() {
+  const open = useApp((s) => s.themePicker);
+  const theme = useApp((s) => s.prefs.theme);
+  const ref = useRef<HTMLDivElement>(null);
+  const restoreFocus = useOverlayFocus(ref, open);
+  const close = () => useApp.setState({ themePicker: false });
+  return (
+    <AnimatePresence onExitComplete={restoreFocus}>
+      {open && (
+        <motion.div
+          className="modal"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0, transition: { duration: 0.1 } }}
+          onMouseDown={(e) => e.target === e.currentTarget && close()}
+        >
+          <motion.div
+            className="prompt-dialog"
+            ref={ref}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="theme-picker-title"
+            initial={{ opacity: 0, scale: 0.97, y: 6 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.98 }}
+            transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
+          >
+            <h3 id="theme-picker-title">Chọn giao diện</h3>
+            <p className="prompt-dialog-msg">Áp dụng ngay cho toàn bộ cửa sổ và được lưu lại.</p>
+            <div className="theme-picker-scroll">
+              <ThemeGrid value={theme} onChange={setTheme} />
+            </div>
+            <div className="prompt-dialog-foot">
+              <button type="button" className="tool-btn primary" onClick={close}>Xong</button>
+            </div>
+          </motion.div>
         </motion.div>
       )}
     </AnimatePresence>

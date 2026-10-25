@@ -28,6 +28,7 @@ base64 = "0.22"
 futures = "0.3"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+libc = "0.2"
 
 [profile.release]
 lto = true
@@ -39,6 +40,6 @@ tauri-plugin-window-state = "2"
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSPasteboard", "NSPasteboardItem"] }
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSNotification", "NSArray", "NSEnumerator", "NSOperation", "NSString", "NSURL", "NSUserNotification", "block2"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSNotification", "NSArray", "NSEnumerator", "NSOperation", "NSString", "NSURL", "NSDictionary", "NSError", "NSObject", "block2"] }
 block2 = "0.6"
-mac-notification-sys = "0.6"
+objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "UNUserNotificationCenter", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotification", "UNNotificationSound", "UNNotificationSettings", "UNNotificationTrigger", "block2"] }

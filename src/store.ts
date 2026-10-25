@@ -7,6 +7,7 @@ import { queueToast } from "./lib/toast-queue";
 import { isMobile } from "./lib/mobile";
 import { mobileConversationVisible } from "./lib/mobile-navigation";
 import { PLATFORMS, type Cap } from "./lib/platforms";
+import { themeBase } from "./lib/themes";
 import type { Account, Chat, CoreEvent, Folder, Health, Media, Msg, Topic } from "./lib/types";
 import type { IconName } from "./ui/Icon";
 
@@ -125,6 +126,8 @@ interface State {
   forward: { msg: Msg; to: string } | null;
   pop: Pop | null;
   dialog: Dialog | null;
+  /** ⌘K → "Chọn giao diện…": the theme chip grid modal */
+  themePicker: boolean;
   toasts: Toast[];
   prefs: Prefs;
   notif: Record<string, NotifyPrefs>;
@@ -219,6 +222,7 @@ export const useApp = create<State>(() => ({
   forward: null,
   pop: null,
   dialog: null,
+  themePicker: false,
   toasts: [],
   notifyPermission: "granted",
   prefs: { size: 13, theme: "", uiFont: "", monoFont: "", compact: false, aiMe: "Vietnamese", aiTo: "English", ...saved.prefs,
@@ -323,7 +327,15 @@ export const confirmDialog = (title: string, message: string, ok: string, onOk: 
   set({ dialog: { kind: "confirm", title, message, ok, onOk } });
 export const promptDialog = (title: string, value: string, onOk: (v: string) => void) =>
   set({ dialog: { kind: "prompt", title, value, onOk } });
-export const fail = (e: unknown) => toast(String(e), "circle-alert");
+/** raw provider errors → what the user can act on */
+const ERRORS: [RegExp, string][] = [
+  [/reaction isn't available/i, "Chat này không cho thả biểu cảm đó (nhóm giới hạn biểu cảm)"],
+  [/REACTIONS_TOO_MANY/i, "Telegram chỉ cho tối đa 3 biểu cảm mỗi tin (Premium) hoặc 1"],
+];
+export const fail = (e: unknown) => {
+  const raw = String(e);
+  toast(ERRORS.find(([re]) => re.test(raw))?.[1] ?? raw, "circle-alert");
+};
 
 // ── boot & events ───────────────────────────────────────────────────────────
 let eventOff: (() => void) | null = null;
@@ -900,14 +912,34 @@ export function retry(k: string, m: Msg) {
 
 /** Reaction picker limited to what the platform accepts (Telegram chats restrict reactions). */
 export async function pickReaction(k: string, m: Msg, at: { x: number; y: number; top: number }) {
-  const only = await api.reactions(m.accountId, m.chatId, m.id).catch(() => null);
+  const only = await allowedReactions(m);
   if (only && !only.length) return toast("Chat này không cho thả biểu cảm", "info");
   set({ pop: { kind: "emoji", ...at, only: only ?? undefined, onPick: (emoji) => void toggleReaction(k, m, emoji) } });
+}
+
+// Telegram chats can limit reactions to a list (or turn them off): a chip someone added
+// before the limit, or the phone's quick row, can hold an emoji this chat no longer accepts
+const allowed = new Map<string, Promise<string[] | null>>();
+export function allowedReactions(m: Msg): Promise<string[] | null> {
+  const key = `${m.accountId}|${m.chatId}|${m.id}`;
+  let p = allowed.get(key);
+  if (!p) {
+    p = api.reactions(m.accountId, m.chatId, m.id).catch(() => null);
+    allowed.set(key, p);
+  }
+  return p;
 }
 
 export async function toggleReaction(k: string, m: Msg, emoji: string) {
   const r = m.reactions.find((x) => x.emoji === emoji);
   const add = !r?.mine;
+  if (add) {
+    const only = await allowedReactions(m);
+    if (only && !only.includes(emoji)) {
+      toast(only.length ? `Chat này không cho thả ${emoji} — bấm 🙂 để chọn biểu cảm khác` : "Chat này không cho thả biểu cảm", "info");
+      return;
+    }
+  }
   // optimistic: the platform confirms through a message update
   const reactions = add
     ? r ? m.reactions.map((x) => (x === r ? { ...x, count: x.count + 1, mine: true } : x)) : [...m.reactions, { emoji, count: 1, mine: true }]
@@ -922,6 +954,16 @@ export async function toggleReaction(k: string, m: Msg, emoji: string) {
 }
 
 /** Dedicated message search, independent of the command palette. */
+/** "" = the default dark theme (Bearded Arc). */
+export function setTheme(theme: string) {
+  set((s) => ({ prefs: { ...s.prefs, theme } }));
+}
+
+/** Titlebar sun/moon: flip between the default dark and Min Light. */
+export function toggleTheme() {
+  setTheme(themeBase(useApp.getState().prefs.theme) === "dark" ? "light" : "");
+}
+
 export function openSearch(scope = "") {
   set({ route: "search", palette: null, pop: null, searchScope: scope, searchAccount: scope ? splitKey(scope)[0] : "" });
 }

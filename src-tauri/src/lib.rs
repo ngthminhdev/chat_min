@@ -1065,6 +1065,21 @@ pub fn run() {
             let cache_dir = app.path().app_cache_dir()?;
             std::fs::create_dir_all(&data_dir)?;
             std::fs::create_dir_all(&cache_dir)?;
+            // a release build launched from Finder has no stderr, so every eprintln
+            // ([recv], [notify], [gchat], a panic that silently ends a poller) was lost:
+            // point fd 2 at <cache>/app.log, started over past 4 MB
+            #[cfg(unix)]
+            {
+                let path = cache_dir.join("app.log");
+                if std::fs::metadata(&path).map(|m| m.len() > 4 << 20).unwrap_or(false) {
+                    let _ = std::fs::remove_file(&path);
+                }
+                if let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+                    use std::os::fd::AsRawFd;
+                    unsafe { libc::dup2(f.as_raw_fd(), 2) };
+                    eprintln!("── ChatMin {} started {}", env!("CARGO_PKG_VERSION"), chrono::Local::now().format("%m-%d %H:%M:%S"));
+                }
+            }
             let config: Config = std::fs::read_to_string(data_dir.join("config.json"))
                 .ok()
                 .and_then(|s| serde_json::from_str(&s).ok())

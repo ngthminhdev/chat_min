@@ -297,7 +297,7 @@ fn open(app: &AppHandle, target: &str) {
 }
 
 /// Clicking a notification opens its chat. Elsewhere the plugin reports the click; on macOS
-/// it can't (notify-rust sends without wait_for_click), so `show` handles macOS itself.
+/// our own `UNUserNotificationCenter` delegate does (`mac`), set up here.
 pub fn on_click(app: &AppHandle) {
     #[cfg(not(target_os = "macos"))]
     {
@@ -310,46 +310,15 @@ pub fn on_click(app: &AppHandle) {
         });
     }
     #[cfg(target_os = "macos")]
-    let _ = mac_notification_sys::set_application(&app.config().identifier);
+    mac::install(app);
 }
-
-/// Notifications still waiting for a click on macOS, one small thread each. An ignored
-/// notification keeps its thread until it leaves Notification Center, so past this many
-/// they're sent without waiting (a click then only brings ChatMin forward).
-#[cfg(target_os = "macos")]
-static WAITING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-#[cfg(target_os = "macos")]
-const MAX_WAITING: usize = 200;
 
 /// `chat`: "account|chat", the key the frontend opens when the notification is clicked.
 fn show(app: &AppHandle, title: &str, body: &str, chat: &str) {
     #[cfg(target_os = "macos")]
     {
-        use std::sync::atomic::Ordering::SeqCst;
-        let (app, title, body, chat) = (app.clone(), title.to_string(), body.to_string(), chat.to_string());
-        let wait = WAITING.fetch_add(1, SeqCst) < MAX_WAITING;
-        let spawned = std::thread::Builder::new().name("notify".into()).stack_size(128 * 1024).spawn(move || {
-            let mut n = mac_notification_sys::Notification::new();
-            n.sound(mac_notification_sys::Sound::Default).wait_for_click(wait);
-            let res = mac_notification_sys::send_notification(&title, None, &body, Some(&n));
-            WAITING.fetch_sub(1, SeqCst);
-            match res {
-                Ok(mac_notification_sys::NotificationResponse::Click) => {
-                    eprintln!("[notify] clicked");
-                    let h = app.clone();
-                    let _ = app.run_on_main_thread(move || open(&h, &chat));
-                }
-                Ok(_) => {}
-                Err(e) => eprintln!("[notify] {e}"),
-            }
-        });
-        match spawned {
-            Ok(_) => eprintln!("[notify] shown"),
-            Err(e) => {
-                WAITING.fetch_sub(1, SeqCst);
-                eprintln!("[notify] {e}");
-            }
-        }
+        let _ = app;
+        mac::show(title, body, chat);
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -367,22 +336,135 @@ fn show(app: &AppHandle, title: &str, body: &str, chat: &str) {
 /// "Who · Chat" otherwise), or all of them.
 fn clear_delivered(app: &AppHandle, title: Option<String>) {
     #[cfg(target_os = "macos")]
-    let _ = app.run_on_main_thread(move || {
-        #[allow(deprecated)] // NSUserNotification: what mac-notification-sys delivers through
-        {
-            let center = objc2_foundation::NSUserNotificationCenter::defaultUserNotificationCenter();
-            let Some(title) = title else { return center.removeAllDeliveredNotifications() };
-            let tail = format!(" · {title}");
-            for n in center.deliveredNotifications().iter() {
-                let t = n.title().map(|t| t.to_string()).unwrap_or_default();
-                if t == title || t.ends_with(&tail) {
-                    center.removeDeliveredNotification(&n);
-                }
-            }
-        }
-    });
+    {
+        let _ = app;
+        mac::clear(title);
+    }
     #[cfg(not(target_os = "macos"))]
     let _ = (app, title);
+}
+
+/// macOS notifications through the UserNotifications framework. The old
+/// `NSUserNotificationCenter` (what mac-notification-sys / notify-rust use) is silently
+/// ignored on macOS 26: the app never even appeared in System Settings → Notifications.
+/// Needs a signed .app bundle (`bundle.macOS.signingIdentity` in tauri.conf.json).
+#[cfg(target_os = "macos")]
+mod mac {
+    use objc2::rc::Retained;
+    use objc2::runtime::{Bool, ProtocolObject};
+    use objc2::{define_class, msg_send, AnyThread, DefinedClass};
+    use objc2_foundation::{NSArray, NSDictionary, NSError, NSObject, NSObjectProtocol, NSString};
+    use objc2_user_notifications::{
+        UNAuthorizationOptions, UNMutableNotificationContent, UNNotification, UNNotificationPresentationOptions, UNNotificationRequest, UNNotificationResponse,
+        UNNotificationSound, UNUserNotificationCenter, UNUserNotificationCenterDelegate,
+    };
+    use std::ptr::NonNull;
+    use tauri::AppHandle;
+
+    struct Ivars {
+        app: AppHandle,
+    }
+
+    define_class!(
+        #[unsafe(super(NSObject))]
+        #[name = "ChatMinNotificationDelegate"]
+        #[ivars = Ivars]
+        struct Delegate;
+
+        unsafe impl NSObjectProtocol for Delegate {}
+
+        unsafe impl UNUserNotificationCenterDelegate for Delegate {
+            // `rings` already decided this one should show, ChatMin in front or not
+            #[unsafe(method(userNotificationCenter:willPresentNotification:withCompletionHandler:))]
+            fn will_present(&self, _center: &UNUserNotificationCenter, _n: &UNNotification, done: &block2::DynBlock<dyn Fn(UNNotificationPresentationOptions)>) {
+                done.call((UNNotificationPresentationOptions::Banner | UNNotificationPresentationOptions::List | UNNotificationPresentationOptions::Sound,));
+            }
+
+            #[unsafe(method(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:))]
+            fn did_receive(&self, _center: &UNUserNotificationCenter, response: &UNNotificationResponse, done: &block2::DynBlock<dyn Fn()>) {
+                let info = response.notification().request().content().userInfo();
+                let chat = info.objectForKey(&*NSString::from_str("chat")).and_then(|v| v.downcast::<NSString>().ok()).map(|s| s.to_string()).unwrap_or_default();
+                eprintln!("[notify] clicked");
+                let app = self.ivars().app.clone();
+                let h = app.clone();
+                let _ = app.run_on_main_thread(move || super::open(&h, &chat));
+                done.call(());
+            }
+        }
+    );
+
+    impl Delegate {
+        fn new(app: AppHandle) -> Retained<Self> {
+            let this = Self::alloc().set_ivars(Ivars { app });
+            unsafe { msg_send![super(this), init] }
+        }
+    }
+
+    /// `UNUserNotificationCenter` aborts the process outside a .app bundle (`cargo tauri dev`).
+    fn bundled() -> bool {
+        std::env::current_exe().map(|p| p.to_string_lossy().contains(".app/Contents/MacOS/")).unwrap_or(false)
+    }
+
+    pub fn install(app: &AppHandle) {
+        if !bundled() {
+            eprintln!("[notify] not a .app bundle: macOS notifications off");
+            return;
+        }
+        let center = UNUserNotificationCenter::currentNotificationCenter();
+        let delegate = Delegate::new(app.clone());
+        center.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+        std::mem::forget(delegate); // the center only holds it weakly; one object for the process' life
+        let done = block2::RcBlock::new(|granted: Bool, err: *mut NSError| {
+            eprintln!("[notify] permission granted={}{}", granted.as_bool(), if err.is_null() { String::new() } else { format!(" ({:?})", unsafe { &*err }) });
+        });
+        center.requestAuthorizationWithOptions_completionHandler(UNAuthorizationOptions::Alert | UNAuthorizationOptions::Sound | UNAuthorizationOptions::Badge, &done);
+    }
+
+    pub fn show(title: &str, body: &str, chat: &str) {
+        if !bundled() {
+            return;
+        }
+        let content = UNMutableNotificationContent::new();
+        content.setTitle(&NSString::from_str(title));
+        content.setBody(&NSString::from_str(body));
+        content.setSound(Some(&UNNotificationSound::defaultSound()));
+        let info = NSDictionary::from_slices(&[&*NSString::from_str("chat")], &[&*NSString::from_str(chat)]);
+        unsafe { content.setUserInfo(&Retained::cast_unchecked::<NSDictionary>(info)) };
+        let id = NSString::from_str(&format!("chatmin-{}", crate::now_ms()));
+        let request = UNNotificationRequest::requestWithIdentifier_content_trigger(&id, &content, None);
+        let done = block2::RcBlock::new(|err: *mut NSError| {
+            if err.is_null() {
+                eprintln!("[notify] shown");
+            } else {
+                eprintln!("[notify] {:?}", unsafe { &*err });
+            }
+        });
+        UNUserNotificationCenter::currentNotificationCenter().addNotificationRequest_withCompletionHandler(&request, Some(&done));
+    }
+
+    pub fn clear(title: Option<String>) {
+        if !bundled() {
+            return;
+        }
+        let center = UNUserNotificationCenter::currentNotificationCenter();
+        let Some(title) = title else { return center.removeAllDeliveredNotifications() };
+        let tail = format!(" · {title}");
+        let done = block2::RcBlock::new(move |delivered: NonNull<NSArray<UNNotification>>| {
+            let delivered = unsafe { delivered.as_ref() };
+            let ids: Vec<Retained<NSString>> = delivered
+                .iter()
+                .filter(|n| {
+                    let t = n.request().content().title().to_string();
+                    t == title || t.ends_with(&tail)
+                })
+                .map(|n| n.request().identifier())
+                .collect();
+            if !ids.is_empty() {
+                UNUserNotificationCenter::currentNotificationCenter().removeDeliveredNotificationsWithIdentifiers(&NSArray::from_retained_slice(&ids));
+            }
+        });
+        center.getDeliveredNotificationsWithCompletionHandler(&done);
+    }
 }
 
 /// An emoji someone else added to `new` since `old` (counts minus my own reaction).

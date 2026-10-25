@@ -29,6 +29,8 @@ struct Acc {
     photos: HashMap<i64, String>,
     chats: HashMap<i64, Chat>,
     read_outbox: HashMap<i64, i64>,
+    /// every emoji Telegram accepts as a reaction (updateActiveEmojiReactions)
+    active_reactions: Vec<String>,
     supergroups: HashMap<i64, i64>,
     /// supergroup ids that are forums (have topics)
     forums: HashSet<i64>,
@@ -330,6 +332,9 @@ impl Tg {
                         core.emit(crate::model::Event::FileProgress { account_id, file_ref: key, pct });
                     }
                 }
+            }
+            Update::ActiveEmojiReactions(u) => {
+                self.with(c, |a| a.active_reactions = u.emojis);
             }
             Update::ChatReadOutbox(u) => {
                 self.with(c, |a| a.read_outbox.insert(u.chat_id, u.last_read_outbox_message_id));
@@ -893,7 +898,9 @@ impl Tg {
         }
         if let Ok(enums::MessageViewers::MessageViewers(v)) = f::get_message_viewers(chat, id, c).await {
             for v in v.viewers {
-                out.viewers.push(self.sender_name(c, &MessageSender::User(t::MessageSenderUser { user_id: v.user_id })).await);
+                let name = self.sender_name(c, &MessageSender::User(t::MessageSenderUser { user_id: v.user_id })).await;
+                let photo = self.with(c, |a| a.photos.get(&v.user_id).cloned()).flatten().unwrap_or_default();
+                out.viewers.push((name, photo));
             }
         }
         Ok(out)
@@ -909,7 +916,12 @@ impl Tg {
             MessageSender::User(u) => match f::get_user(u.user_id, c).await {
                 Ok(enums::User::User(user)) => {
                     let name = user_name(&user);
-                    self.with(c, |a| a.users.insert(u.user_id, name.clone()));
+                    self.with(c, |a| {
+                        a.users.insert(u.user_id, name.clone());
+                        if let Some(p) = &user.profile_photo {
+                            a.photos.insert(u.user_id, file_ref(&p.small));
+                        }
+                    });
                     name
                 }
                 Err(_) => "Thành viên".into(),
@@ -918,9 +930,25 @@ impl Tg {
         }
     }
 
-    /// Emoji this message accepts: chats can limit reactions and some need Premium.
+    /// Emoji this message accepts. The chat's own setting is exact: "all" means every active
+    /// emoji reaction, "some" is the admin's list (TDLib rejects anything else with
+    /// "The reaction isn't available for the message"). Falls back to the per-message
+    /// top/recent/popular lists when the active list hasn't arrived yet.
     pub async fn reactions(&self, account_id: &str, chat_id: &str, msg_id: &str) -> R<Vec<String>> {
         let c = self.client(account_id)?;
+        if let Ok(enums::Chat::Chat(chat)) = f::get_chat(chat_id.parse().unwrap_or(0), c).await {
+            match chat.available_reactions {
+                enums::ChatAvailableReactions::Some(s) => {
+                    return Ok(s.reactions.into_iter().filter_map(|r| match r { enums::ReactionType::Emoji(e) => Some(e.emoji), _ => None }).collect());
+                }
+                enums::ChatAvailableReactions::All(_) => {
+                    let active = self.with(c, |a| a.active_reactions.clone()).unwrap_or_default();
+                    if !active.is_empty() {
+                        return Ok(active);
+                    }
+                }
+            }
+        }
         let enums::AvailableReactions::AvailableReactions(a) =
             f::get_message_available_reactions(chat_id.parse().unwrap_or(0), msg_id.parse().unwrap_or(0), 8, c).await.map_err(err)?;
         let mut out: Vec<String> = vec![];
