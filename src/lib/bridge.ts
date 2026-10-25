@@ -27,6 +27,18 @@ export function onEvent(cb: (e: CoreEvent) => void): () => void {
   return () => { disposed = true; off(); };
 }
 
+export interface AppShortcut {
+  key: string; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; inField: boolean;
+}
+
+/** Provider webviews route app navigation back to the same handler as the React shell. */
+export function onAppShortcut(cb: (shortcut: AppShortcut) => void): () => void {
+  let off = () => {};
+  let disposed = false;
+  if (isTauri) listen<AppShortcut>("chatmin-shortcut", (e) => { if (!disposed) cb(e.payload); }).then((u) => { if (disposed) u(); else off = u; });
+  return () => { disposed = true; off(); };
+}
+
 export const api = {
   appState: () => call<AppState>("app_state"),
   configSet: (a: { tgApiId?: string; tgApiHash?: string; gchatJson?: string }) => call<void>("config_set", a),
@@ -51,9 +63,10 @@ export const api = {
   /** `plain`: send the text as typed, no markdown (composer toggle) */
   send: (a: { accountId: string; chatId: string; text: string; replyTo?: string; threadId?: string; file?: string; voice?: number; plain?: boolean; asFile?: boolean }) => call<Msg>("send", a),
   webAdd: (platform: string) => call<Account>("web_add", { platform }),
-  webShow: (accountId: string, r: { x: number; y: number; w: number; h: number }) => call<void>("web_show", { accountId, ...r }),
+  webShow: (accountId: string, chatId: string, r: { x: number; y: number; w: number; h: number }, navigate = false) => call<void>("web_show", { accountId, chatId, navigate, ...r }),
   webHide: (accountId: string) => call<void>("web_hide", { accountId }),
   webReload: (accountId: string) => call<void>("web_reload", { accountId }),
+  webDevtools: (accountId: string) => call<void>("web_devtools", { accountId }),
   stickers: (accountId: string) => call<StickerPack[]>("stickers", { accountId }),
   sendSticker: (a: { accountId: string; chatId: string; threadId?: string; fileId: number; width: number; height: number; emoji: string }) => call<Msg>("send_sticker", a),
   /** base64 bytes → a cache file path that `send` can upload */
@@ -88,6 +101,9 @@ export const api = {
   /** translate/translate_to/translate_many → string[]; suggest → Suggestion[] */
   aiRun: <T = string>(task: string, texts: string[], me: string, to: string) => call<T[]>("ai_run", { task, texts, me, to }),
   emojiPalette: () => call<void>("emoji_palette"),
+  /** browser for outside links: `current` "" = system default; `installed` = known browsers found on the machine */
+  browser: () => call<{ current: string; installed: string[] }>("browser"),
+  browserSet: (name: string) => call<void>("browser_set", { name }),
   storage: () => call<StorageView>("storage"),
   storageSet: (a: { downloadDir?: string; cacheMb?: number; keepDays?: number }) => call<void>("storage_set", a),
   /** bytes freed; `all` empties the media cache */
@@ -111,10 +127,10 @@ export const fileSrc = (path: string) => (isTauri && path && !path.startsWith("d
 const STREAM_BASE = /Android/i.test(navigator.userAgent) ? "http://tgstream.localhost" : "tgstream://localhost";
 export const streamSrc = (accountId: string, fileRef: string, mime: string) => `${STREAM_BASE}/${accountId}/${fileRef}?${mime || "video/mp4"}`;
 
+// through Rust so the browser picked in settings applies everywhere
 export async function openUrl(url: string) {
   if (!isTauri) return void window.open(url, "_blank", "noopener");
-  const { openUrl } = await import("@tauri-apps/plugin-opener");
-  await openUrl(url);
+  await call<void>("open_url", { url });
 }
 
 // through Rust: files I sent live at their original path, outside the opener plugin's scope

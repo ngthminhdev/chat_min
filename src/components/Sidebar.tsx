@@ -92,8 +92,8 @@ export function Sidebar() {
         <FolderGroups />
         {accounts.length ? (
           <Reorder.Group axis="y" as="div" values={ordered.map((a) => a.id)} onReorder={(ids) => useApp.setState({ accountOrder: ids })}>
-            {ordered.map((a, i) => (
-              <AccountGroup key={a.id} account={a} index={i} chats={chats} filter={filter} query={query} drag={accDrag} />
+            {ordered.map((a) => (
+              <AccountGroup key={a.id} account={a} chats={chats} filter={filter} query={query} drag={accDrag} />
             ))}
           </Reorder.Group>
         ) : (
@@ -184,7 +184,7 @@ function Latest() {
   const rows = useMemo(
     () =>
       Object.entries(chats)
-        .filter(([k, c]) => !favorites.includes(k) && c.kind !== "web" && c.lastTs > 0)
+        .filter(([k, c]) => !favorites.includes(k) && c.lastTs > 0)
         .sort((a, b) => b[1].lastTs - a[1].lastTs)
         .slice(0, 10),
     [chats, favorites],
@@ -232,7 +232,7 @@ export function rowProps(k: string, c: Chat, a: Account | undefined, rs: ReturnT
   };
 }
 
-function AccountGroup({ account: a, index, chats, filter, query, drag: accDrag }: { account: Account; index: number; chats: Record<string, Chat>; filter: string; query: string; drag: ReturnType<typeof useDragAnim> }) {
+function AccountGroup({ account: a, chats, filter, query, drag: accDrag }: { account: Account; chats: Record<string, Chat>; filter: string; query: string; drag: ReturnType<typeof useDragAnim> }) {
   // typing in the filter opens every group so the matches show; a click still folds it afterwards
   const collapsed = useApp((s) => !!s.collapsed[a.id]) && !norm(query);
   const health = useApp((s) => s.health[a.id]?.health ?? "ok");
@@ -273,7 +273,6 @@ function AccountGroup({ account: a, index, chats, filter, query, drag: accDrag }
         aria-label={`${a.name} · ${PLATFORMS[a.platform].name}${unread ? ` · ${unread} chưa đọc` : ""}`}
         aria-expanded={!collapsed}
         data-tip={`${PLATFORMS[a.platform].name} · ${a.handle}`}
-        data-kbd={index < 9 ? `⌘${index + 1}` : undefined}
         onClick={() => useApp.setState((s) => ({ collapsed: { ...s.collapsed, [a.id]: !collapsed } }))}
       >
         <Icon name="chevron-down" className="chev" />

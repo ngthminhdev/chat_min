@@ -233,6 +233,7 @@ export function Settings() {
           {!accounts.length && <p>Thêm tài khoản để thiết lập thông báo.</p>}
         </section>
 
+        {!isMobile && <BrowserCard />}
         <StorageCard />
 
         {!isMobile && <section className="settings-card">
@@ -377,6 +378,24 @@ function preview(p: NotifyPrefs) {
 
 const CACHE_MB: [number, string][] = [[1024, "1 GB"], [2048, "2 GB"], [5120, "5 GB"], [10240, "10 GB"], [0, "Không giới hạn"]];
 const KEEP_DAYS: [number, string][] = [[3, "3 ngày"], [7, "1 tuần"], [30, "1 tháng"], [0, "Mãi mãi"]];
+
+/** Which browser gets outside links: Google sign-in, links in messages, Messenger/Zalo pop-ups. */
+function BrowserCard() {
+  const [v, setV] = useState<{ current: string; installed: string[] } | null>(null);
+  useEffect(() => { void api.browser().then(setV).catch(fail); }, []);
+  const set = (name: string) => void api.browserSet(name).then(() => setV((s) => s && { ...s, current: name })).catch(fail);
+  return (
+    <section className="settings-card">
+      <h3>Liên kết ngoài</h3>
+      <Row title="Trình duyệt mở liên kết" help="Đăng nhập Google, link trong tin nhắn và cửa sổ Messenger/Zalo mở ra ngoài." icon="external-link">
+        <select className="settings-select" aria-label="Trình duyệt mở liên kết" value={v?.current ?? ""} onChange={(e) => set(e.target.value)}>
+          <option value="">Mặc định của máy</option>
+          {v?.installed.map((n) => <option key={n} value={n}>{n}</option>)}
+        </select>
+      </Row>
+    </section>
+  );
+}
 
 /** Like Telegram's "Storage usage": cache limit, how long media stays, where saves go. */
 function StorageCard() {

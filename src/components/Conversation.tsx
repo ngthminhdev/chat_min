@@ -319,10 +319,13 @@ function WebConversation({ chatKey }: { chatKey: string }) {
   const chat = useApp((s) => s.chats[chatKey]);
   const platform = useApp((s) => s.accounts.find((a) => a.id === chat?.accountId)?.platform);
   const account = useApp((s) => s.accounts.find((a) => a.id === chat?.accountId));
+  const webHealth = useApp((s) => chat ? s.health[chat.accountId] : undefined);
   // the webview is native and always on top: step aside while an overlay is up
   const covered = useApp((s) => !!(s.palette || s.pop || s.dialog || s.viewer));
   const host = useRef<HTMLDivElement>(null);
   const id = chat?.accountId ?? "";
+  const chatId = chat?.id ?? "web";
+  const reopen = useApp((s) => s.toLatest);
   useEffect(() => {
     const el = host.current;
     if (!el || !id || isMobile) return;
@@ -330,9 +333,14 @@ function WebConversation({ chatKey }: { chatKey: string }) {
       void api.webHide(id);
       return;
     }
+    let lastRect = "";
     const place = () => {
       const r = el.getBoundingClientRect();
-      void api.webShow(id, { x: r.left, y: r.top, w: r.width, h: r.height }).catch((e) => toast(String(e), "circle-alert"));
+      const rect = `${r.left},${r.top},${r.width},${r.height}`;
+      if (rect === lastRect) return;
+      const navigate = !lastRect;
+      lastRect = rect;
+      void api.webShow(id, chatId, { x: r.left, y: r.top, w: r.width, h: r.height }, navigate).catch((e) => toast(String(e), "circle-alert"));
     };
     place();
     const ro = new ResizeObserver(place);
@@ -343,7 +351,7 @@ function WebConversation({ chatKey }: { chatKey: string }) {
       window.removeEventListener("resize", place);
       void api.webHide(id);
     };
-  }, [id, covered]);
+  }, [id, chatId, covered, reopen]);
   if (!chat) return null;
   // phone: no child webview in Tauri Android — hand the site to the system (its app, if installed)
   if (isMobile) return (
@@ -365,11 +373,14 @@ function WebConversation({ chatKey }: { chatKey: string }) {
         </button>
         <ChatAvatar chat={chat} platform={platform} />
         <div className="title">
-          <strong>{account?.name ?? chat.title}</strong>
-          <span>{chat.description.replace(/^https:\/\//, "").replace(/\/$/, "")} · đăng nhập ngay trong khung bên dưới</span>
+          <strong>{chat.title}</strong>
+          <span role={webHealth?.health === "expired" ? "status" : undefined}>{account?.name ?? ""} · {webHealth && webHealth.health !== "ok" ? webHealth.text : chat.description.replace(/^https:\/\//, "").replace(/\/$/, "")}</span>
         </div>
         <button className="tool-btn icon-only" aria-label="Tải lại" data-tip="Tải lại trang" onClick={() => void api.webReload(id)}>
           <Icon name="rotate-cw" />
+        </button>
+        <button className="tool-btn icon-only" aria-label="Web Inspector" data-tip="Web Inspector (debug)" onClick={() => void api.webDevtools(id)}>
+          <Icon name="terminal" />
         </button>
       </div>
       <div className="web-host" ref={host}>

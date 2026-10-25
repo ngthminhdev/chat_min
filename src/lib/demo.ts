@@ -257,6 +257,7 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
     case "web_show":
     case "web_hide":
     case "web_reload":
+    case "web_devtools":
       return;
     case "web_add":
       throw new Error("Messenger / Zalo chỉ chạy trong app ChatMin, không có trong bản demo trình duyệt");

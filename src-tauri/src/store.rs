@@ -94,6 +94,12 @@ impl Store {
         Ok(rows.filter_map(|r| r.ok()).filter_map(|s| serde_json::from_str(&s).ok()).collect())
     }
 
+    pub fn account_chats(&self, account_id: &str) -> R<Vec<Chat>> {
+        let mut st = self.db.prepare("SELECT data FROM chats WHERE account_id = ?1").map_err(e)?;
+        let rows = st.query_map([account_id], |r| r.get::<_, String>(0)).map_err(e)?;
+        Ok(rows.filter_map(|r| r.ok()).filter_map(|s| serde_json::from_str(&s).ok()).collect())
+    }
+
     pub fn chat(&self, account_id: &str, id: &str) -> R<Option<Chat>> {
         let s: Option<String> = self
             .db
@@ -374,5 +380,24 @@ mod tests {
         s.put_msg(&m).unwrap();
         assert!(!s.put_msg_if_new(&m).unwrap());
         assert!(s.put_msg_if_new(&msg("new-id", 123, "new message at same millisecond")).unwrap());
+    }
+}
+
+#[cfg(test)]
+mod account_chat_tests {
+    use super::*;
+    #[test]
+    fn web_snapshot_reads_only_its_account_and_preserves_cached_chats() {
+        let store = Store::memory();
+        for account in ["zalo-1", "messenger-1", "tg-1"] {
+            store.put_chat(&Chat { account_id: account.into(), id: "same-id".into(), muted: true, unread: 6, ..Default::default() }).unwrap();
+        }
+        let rows = store.account_chats("zalo-1").unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].account_id, "zalo-1");
+        assert!(rows[0].muted);
+        assert_eq!(rows[0].unread, 6);
+        assert!(store.account_chats("missing").unwrap().is_empty());
+        assert_eq!(store.chats().unwrap().len(), 3);
     }
 }

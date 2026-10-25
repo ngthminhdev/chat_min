@@ -51,7 +51,7 @@ export function Tabs() {
       focusTab(target);
     }}>
       <AnimatePresence initial={false}>
-        {tabs.map((k) => {
+        {tabs.map((k, index) => {
           const meta = threadTabs[k];
           const c = chats[meta ? meta.chatKey : k];
           if (!c) return null;
@@ -70,6 +70,8 @@ export function Tabs() {
               role="tab"
               tabIndex={on ? 0 : -1}
               data-tab-key={k}
+              data-tip={meta ? meta.title : c.title}
+              data-kbd={index < 8 ? `⌘${index + 1}` : index === tabs.length - 1 ? "⌘9" : undefined}
               aria-selected={on}
               style={{ "--conn": `var(--conn-${a?.color ?? "blue"})` } as React.CSSProperties}
               onClick={() => void openChat(k)}

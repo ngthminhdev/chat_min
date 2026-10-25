@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { MotionConfig } from "motion/react";
-import { api, isTauri, openUrl } from "./lib/bridge";
+import { api, isTauri, onAppShortcut, openUrl, type AppShortcut } from "./lib/bridge";
 import { windowAppearance } from "./lib/appearance";
 import { Effect, EffectState, getCurrentWindow } from "@tauri-apps/api/window";
 import { PLATFORMS } from "./lib/platforms";
@@ -260,11 +260,14 @@ export function removeAccount(id = activeAccount()?.id) {
 function useGlobalHandlers() {
   useEffect(() => {
     const st = useApp.setState;
-    const onKey = (e: KeyboardEvent) => {
+    type AppKey = Omit<AppShortcut, "inField"> & { inField?: boolean; code?: string; target?: EventTarget | null; isComposing?: boolean; preventDefault: () => void };
+    const onKey = (e: AppKey) => {
+      if (e.isComposing || e.altKey) return;
       const s = useApp.getState();
       const mod = e.metaKey || e.ctrlKey;
-      const k = e.key;
-      const inField = (e.target as HTMLElement).matches?.("input, textarea, select");
+      const k = e.code === "BracketLeft" ? "[" : e.code === "BracketRight" ? "]" : e.key;
+      const target = e.target as HTMLElement | null | undefined;
+      const inField = e.inField ?? !!(target?.isContentEditable || target?.closest?.('input, textarea, select, [contenteditable]:not([contenteditable="false"])'));
       if (k === "Escape") {
         if (s.viewer) return st({ viewer: null });
         if (s.dialog) return st({ dialog: null });
@@ -309,6 +312,10 @@ function useGlobalHandlers() {
       if (k === ",") {
         e.preventDefault();
         return st({ route: "settings" });
+      }
+      if (k === "Tab" && e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        return cycleTab(e.shiftKey ? -1 : 1);
       }
       if (k === "[" || k === "]") {
         e.preventDefault();
@@ -375,10 +382,12 @@ function useGlobalHandlers() {
         st({ typing: Object.fromEntries(Object.entries(t).map(([k, v]) => [k, v.until < now ? { who: "", until: 0 } : v])) });
       }
     }, 1000);
+    const offShortcut = onAppShortcut((shortcut) => onKey({ ...shortcut, preventDefault() {} }));
     document.addEventListener("keydown", onKey);
     document.addEventListener("click", onClick);
     window.addEventListener("focus", onFocus);
     return () => {
+      offShortcut();
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("click", onClick);
       window.removeEventListener("focus", onFocus);

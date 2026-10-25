@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { persistedUiChanged } from "./lib/ui-persistence";
 import { api, onEvent, saveFile } from "./lib/bridge";
 import { plain } from "./lib/format";
 import { windowAppearance, type BackgroundMode } from "./lib/appearance";
@@ -252,7 +253,8 @@ const set = useApp.setState;
 
 // persist the UI bits that should survive a restart (never message content)
 let persistT: ReturnType<typeof setTimeout> | undefined;
-useApp.subscribe((s) => {
+useApp.subscribe((s, previous) => {
+  if (!persistedUiChanged(s, previous)) return;
   clearTimeout(persistT);
   persistT = setTimeout(() => {
     const { tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, lastTopic, folders, favorites, accountOrder, trAuto, aiLang, plainSend, hidden, chatOrder, inboxSeen, inboxRead } = s;
@@ -420,7 +422,7 @@ export function applyEvent(e: CoreEvent) {
       }
       set((s) => ({ chats: { ...s.chats, [k]: e.chat } }));
       // the open chat stays read while it is on screen
-      if ((e.chat.unread > 0 || e.chat.mention) && isWatching(k)) markRead(k);
+      if (e.chat.kind !== "web" && (e.chat.unread > 0 || e.chat.mention) && isWatching(k)) markRead(k);
       return;
     }
     case "chatRemoved": {
@@ -534,13 +536,13 @@ export async function openChat(k: string) {
   set({ tabs, active: k, route: "shell", inspTab: s.active === k ? s.inspTab : (() => { const c = s.chats[chatKeyOf(k) ?? k]; return c?.threaded || c?.forum ? "threads" : "info"; })(), ...(isMobile ? { leftCollapsed: true, rightCollapsed: true } : window.matchMedia("(max-width: 760px)").matches ? { leftCollapsed: true } : {}) });
   const chatKey = chatKeyOf(k);
   if (!chatKey) return;
-  // web apps (Messenger, Zalo) live in their own webview: nothing to load or mark here
-  if (get().chats[chatKey]?.kind === "web") return;
   const [accountId, chatId] = splitKey(chatKey);
   if (prevChat && prevChat !== chatKey && get().chats[prevChat]?.kind !== "web") {
     void api.setOpen(...splitKey(prevChat), false).catch(() => {});
     trimLoaded(prevChat);
   }
+  // The website owns read receipts; the native view controls web notification focus.
+  if (get().chats[chatKey]?.kind === "web") return;
   void api.setOpen(accountId, chatId, true).catch(() => {});
   if (!get().msgs[chatKey]) await showCached(chatKey);
   if (!get().msgs[chatKey]) await loadLatest(chatKey);
@@ -795,6 +797,9 @@ async function fillScreen(k: string) {
 
 let readT: Record<string, ReturnType<typeof setTimeout>> = {};
 export function markRead(k: string) {
+  // Web providers have no mark-read REST endpoint. Opening the actual thread lets the
+  // website acknowledge it; never zero its badge locally then call Google Chat.
+  if (get().chats[k]?.kind === "web") { void openChat(k); return; }
   clearTimeout(readT[k]);
   readT[k] = setTimeout(() => {
     const chat = get().chats[k];

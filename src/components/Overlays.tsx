@@ -47,6 +47,8 @@ function useOverlayFocus(ref: React.RefObject<HTMLElement>, open: boolean) {
   // can reset focus back to <body>. Preserve focus set by a newly opened chat/dialog.
   return () => {
     requestAnimationFrame(() => {
+      // A provider webview may now own native focus. Do not steal it back to the shell.
+      if (!document.hasFocus()) return;
       if (document.activeElement && document.activeElement !== document.body) return;
       const target = previous.current?.isConnected && previous.current !== document.body ? previous.current : document.querySelector<HTMLElement>(".titlebar .search");
       target?.focus();

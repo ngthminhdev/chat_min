@@ -98,7 +98,7 @@ impl GChat {
             ],
         )
         .unwrap();
-        open_browser(url.as_str());
+        core.open_url(url.as_str());
 
         let wait = async {
             loop {
@@ -1288,15 +1288,6 @@ fn save_token(core: &Core, account_id: &str, refresh: &str) -> std::io::Result<(
 fn load_token(core: &Core, account_id: &str) -> Option<String> {
     let v: Value = serde_json::from_str(&std::fs::read_to_string(token_path(core, account_id)).ok()?).ok()?;
     v["refresh_token"].as_str().map(String::from)
-}
-
-#[cfg(not(target_os = "android"))]
-fn open_browser(url: &str) {
-    // the user's default browser may not be the one signed in to Workspace; prefer Chrome
-    let chrome = std::process::Command::new("open").args(["-a", "Google Chrome", url]).status();
-    if !matches!(chrome, Ok(s) if s.success()) {
-        let _ = std::process::Command::new("open").arg(url).status();
-    }
 }
 
 #[cfg(not(target_os = "android"))]

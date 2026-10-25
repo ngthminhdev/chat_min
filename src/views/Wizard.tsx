@@ -476,7 +476,7 @@ function GoogleAuth({ setError, back, done }: AuthProps) {
         <div className="oauth-wait">
           <Icon name="external-link" />
           <h3>{isMobile ? "Chọn tài khoản và cấp quyền Google" : "Đang đợi bạn đăng nhập trong browser"}</h3>
-          <p>{isMobile ? "Hoàn tất chọn tài khoản Workspace và cấp quyền trong cửa sổ Google, rồi quay lại ChatMin." : "Chrome đã mở trang đồng ý của Google. Chọn tài khoản Workspace và bấm Cho phép, rồi quay lại đây."}</p>
+          <p>{isMobile ? "Hoàn tất chọn tài khoản Workspace và cấp quyền trong cửa sổ Google, rồi quay lại ChatMin." : "Trình duyệt đã mở trang đồng ý của Google. Chọn tài khoản Workspace và bấm Cho phép, rồi quay lại đây."}</p>
         </div>
         <Actions>
           <button type="button" className="tool-btn" onClick={() => void api.loginCancel()}>Huỷ đăng nhập</button>

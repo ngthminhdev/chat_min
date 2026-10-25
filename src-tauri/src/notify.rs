@@ -43,6 +43,10 @@ fn photo_source<'a>(chat: &'a Chat, msg: &'a Msg) -> &'a str {
     else { "" }
 }
 
+fn web_body<'a>(prefs: &Prefs, body: &'a str) -> &'a str {
+    if prefs.preview && !body.trim().is_empty() { body } else { "Bạn có tin nhắn mới" }
+}
+
 /// Messages older than this when they reach us (catch-up after the Mac slept or the app
 /// was closed) don't ring one by one: they go into one "while you were away" summary.
 const STALE_MS: i64 = 10 * 60 * 1000;
@@ -197,15 +201,15 @@ impl Notifier {
         }
     }
 
-    /// Messenger / Zalo only report a count (from the page title).
-    pub fn web(&self, app: &AppHandle, chat: &Chat, grew_to: i32) {
+    /// Messenger / Zalo: a thread row changed (body = its preview, or just a count).
+    pub fn web(&self, app: &AppHandle, chat: &Chat, body: &str) {
         if chat.muted || self.watching(app, &chat.account_id, &chat.id) {
             return;
         }
         let p = self.prefs.lock().unwrap().get(&chat.account_id).cloned().unwrap_or_default();
         let now_hm = chrono::Local::now().format("%H:%M").to_string();
         if p.enabled && !p.mentions && !p.quiet_at(&now_hm) {
-            show(app, &chat.title, &format!("{grew_to} tin nhắn chưa đọc"), &format!("{}|{}", chat.account_id, chat.id));
+            show(app, &chat.title, web_body(&p, body), &format!("{}|{}", chat.account_id, chat.id));
         }
     }
 
@@ -618,5 +622,17 @@ mod tests {
         let day = Prefs { quiet: true, from: "12:00".into(), to: "13:00".into(), ..Default::default() };
         assert!(day.quiet_at("12:30") && !day.quiet_at("13:00") && !day.quiet_at("11:59"));
         assert!(!Prefs::default().quiet_at("23:30"));
+    }
+}
+
+#[cfg(test)]
+mod web_privacy_tests {
+    use super::*;
+    #[test]
+    fn web_previews_respect_privacy_and_empty_messages() {
+        let private = Prefs { preview: false, ..Default::default() };
+        assert_eq!(web_body(&private, "secret message"), "Bạn có tin nhắn mới");
+        assert_eq!(web_body(&Prefs::default(), ""), "Bạn có tin nhắn mới");
+        assert_eq!(web_body(&Prefs::default(), "hello"), "hello");
     }
 }

@@ -51,6 +51,8 @@ struct Config {
     ai: ai::AiConfig,
     /// where "Lưu vào…" puts files; "" = ~/Downloads/ChatMin
     download_dir: String,
+    /// app that opens outside links, e.g. "Microsoft Edge"; "" = the system default
+    browser: String,
     /// media cache limit in MB; None = 2048, Some(0) = no limit
     cache_mb: Option<u64>,
     /// keep cached media this many days since last use; None = 30, Some(0) = forever
@@ -80,6 +82,8 @@ pub struct Core {
     pub tg: Tg,
     pub gchat: GChat,
     pub notifier: notify::Notifier,
+    /// Messenger/Zalo: the thread each account's webview should be showing (None = site default)
+    pub web_open: Mutex<HashMap<String, Option<String>>>,
 }
 
 impl Core {
@@ -88,6 +92,13 @@ impl Core {
     }
     pub fn store(&self) -> MutexGuard<'_, Store> {
         self.store.lock().unwrap()
+    }
+    /// Opens a link in the browser picked in settings, else the system default.
+    pub fn open_url(&self, url: &str) {
+        let b = self.config.lock().unwrap().browser.clone();
+        if b.is_empty() || tauri_plugin_opener::open_url(url, Some(b.as_str())).is_err() {
+            let _ = tauri_plugin_opener::open_url(url, None::<&str>);
+        }
     }
     pub fn store_mut(&self) -> MutexGuard<'_, Store> {
         self.store.lock().unwrap()
@@ -294,7 +305,7 @@ impl Core {
             let grew = n > chat.unread;
             chat.unread = n;
             if grew {
-                self.notifier.web(&self.app, &chat, n);
+                self.notifier.web(&self.app, &chat, &format!("{n} tin nhắn chưa đọc"));
             }
             self.put_chat(chat);
         }
@@ -430,6 +441,32 @@ fn storage_set(core: C, download_dir: Option<String>, cache_mb: Option<u64>, kee
     let core = core.inner().clone();
     tauri::async_runtime::spawn(async move { core.clean_storage(false).await });
     Ok(())
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowserView {
+    current: String,
+    installed: Vec<String>,
+}
+/// The chosen browser plus the known ones found in /Applications.
+#[tauri::command]
+fn browser(core: C) -> BrowserView {
+    let installed = ["Microsoft Edge", "Google Chrome", "Safari", "Firefox", "Brave Browser", "Arc"]
+        .into_iter()
+        .filter(|n| std::path::Path::new(&format!("/Applications/{n}.app")).exists())
+        .map(String::from)
+        .collect();
+    BrowserView { current: core.config.lock().unwrap().browser.clone(), installed }
+}
+#[tauri::command]
+fn browser_set(core: C, name: String) -> Res<()> {
+    let mut c = core.config.lock().unwrap();
+    c.browser = name;
+    write_private(&core.data_dir.join("config.json"), &serde_json::to_string_pretty(&*c).unwrap()).map_err(|e| e.to_string())
+}
+#[tauri::command]
+fn open_url(core: C, url: String) {
+    core.open_url(&url);
 }
 /// Trim now (`all`: empty the media cache). Returns bytes freed.
 #[tauri::command]
@@ -584,14 +621,19 @@ fn emoji_palette(app: tauri::AppHandle) {
 /// Webview errors (no console in release builds) land in the app's stderr log.
 #[tauri::command]
 fn log_js(core: C, msg: String) {
-    eprintln!("[js] {msg}");
-    // release builds have no console: keep the last ~1 MB in <cache>/js.log
-    let path = core.cache_dir.join("js.log");
-    if std::fs::metadata(&path).map(|m| m.len() > 1 << 20).unwrap_or(false) {
-        let _ = std::fs::remove_file(&path);
-    }
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
-        let _ = std::io::Write::write_all(&mut f, format!("{} {msg}\n", chrono::Local::now().format("%m-%d %H:%M:%S")).as_bytes());
+    core.log_line("js.log", &msg);
+}
+impl Core {
+    /// Release builds have no console: keep the last ~1 MB of `file` in the cache dir.
+    pub fn log_line(&self, file: &str, msg: &str) {
+        eprintln!("[{file}] {msg}");
+        let path = self.cache_dir.join(file);
+        if std::fs::metadata(&path).map(|m| m.len() > 1 << 20).unwrap_or(false) {
+            let _ = std::fs::remove_file(&path);
+        }
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            let _ = std::io::Write::write_all(&mut f, format!("{} {msg}\n", chrono::Local::now().format("%m-%d %H:%M:%S")).as_bytes());
+        }
     }
 }
 #[derive(serde::Serialize)]
@@ -839,7 +881,9 @@ async fn set_open(core: C<'_>, account_id: String, chat_id: String, open: bool) 
     if core.platform(&account_id) == "telegram" {
         core.tg.set_open(&account_id, &chat_id, open).await
     } else {
-        core.gchat.focus(&account_id, open.then_some(chat_id));
+        if core.platform(&account_id) == "gchat" {
+            core.gchat.focus(&account_id, open.then_some(chat_id));
+        }
         Ok(())
     }
 }
@@ -850,19 +894,21 @@ async fn set_muted(core: C<'_>, account_id: String, chat_id: String, muted: bool
     } else {
         let mut chat = core.store().chat(&account_id, &chat_id)?.ok_or("Không thấy chat")?;
         chat.muted = muted;
-        core.store().put_chat(&chat)?;
-        core.emit(Event::Chat { chat });
+        core.put_chat(chat);
         Ok(())
     }
 }
 #[tauri::command]
 fn web_add(core: C, platform: String) -> Res<Account> {
-    web::add(&core, &platform)
+    let account = web::add(&core, &platform)?;
+    let (c, a) = (core.inner().clone(), account.clone());
+    core.app.run_on_main_thread(move || web::start_background(&c, &a)).map_err(|e| e.to_string())?;
+    Ok(account)
 }
 #[tauri::command]
-fn web_show(core: C, account_id: String, x: f64, y: f64, w: f64, h: f64) -> Res<()> {
+fn web_show(core: C, account_id: String, chat_id: String, x: f64, y: f64, w: f64, h: f64, navigate: Option<bool>) -> Res<()> {
     let a = core.store().accounts()?.into_iter().find(|a| a.id == account_id).ok_or("Không thấy account")?;
-    web::show(core.inner(), &a, x, y, w, h)
+    web::show(core.inner(), &a, &chat_id, x, y, w, h, navigate.unwrap_or(false))
 }
 #[tauri::command]
 fn web_hide(core: C, account_id: String) {
@@ -871,6 +917,10 @@ fn web_hide(core: C, account_id: String) {
 #[tauri::command]
 fn web_reload(core: C, account_id: String) {
     web::reload(&core, &account_id);
+}
+#[tauri::command]
+fn web_devtools(core: C, account_id: String) {
+    web::devtools(&core, &account_id);
 }
 #[tauri::command]
 async fn stickers(core: C<'_>, account_id: String) -> Res<Vec<tg::StickerPack>> {
@@ -1139,6 +1189,7 @@ pub fn run() {
                 tg: Tg::default(),
                 gchat: GChat::default(),
                 notifier: Default::default(),
+                web_open: Default::default(),
             });
             app.manage(core.clone());
             core.notifier.set_island(&core.app, core.config.lock().unwrap().notification_island.unwrap_or(true));
@@ -1173,9 +1224,13 @@ pub fn run() {
                     }
                     "gchat" => GChat::start(core.clone(), a, false),
                     _ => {
-                        // web apps load lazily when their row is opened; the count starts over
-                        core.put_chat(web::chat_of(&a));
+                        // Preserve cached rows/badges, and start receiving before a tab is opened.
+                        let empty = core.store().account_chats(&a.id)?.is_empty();
+                        if empty {
+                            core.put_chat(web::chat_of(&a));
+                        }
                         core.set_health(&a.id, "ok", "Web", 0);
+                        web::start_background(&core, &a);
                     }
                 }
             }
@@ -1275,6 +1330,10 @@ pub fn run() {
             storage,
             storage_set,
             storage_clean,
+            browser,
+            browser_set,
+            open_url,
+            web_devtools,
             presence,
             pin,
             mark_read,
