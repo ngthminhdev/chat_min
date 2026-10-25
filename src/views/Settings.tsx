@@ -47,6 +47,15 @@ export function Settings() {
   const health = useApp((s) => s.health);
   const notif = useApp((s) => s.notif);
   const permission = useApp((s) => s.notifyPermission);
+  const mac = !isMobile && /Mac/.test(navigator.platform);
+  const [island, setIsland] = useState(true);
+  const [islandSaving, setIslandSaving] = useState(false);
+  useEffect(() => {
+    if (!mac) return;
+    let live = true;
+    void api.notifyIsland().then((enabled) => { if (live) setIsland(enabled); }).catch(fail);
+    return () => { live = false; };
+  }, [mac]);
   const setPrefs = (p: Partial<typeof prefs>) => useApp.setState((s) => ({ prefs: { ...s.prefs, ...p } }));
   const setNotif = (id: string, p: Partial<NotifyPrefs>) =>
     useApp.setState((s) => ({ notif: { ...s.notif, [id]: { ...DEFAULT_NOTIFY, ...s.notif[id], ...p } } }));
@@ -172,6 +181,14 @@ export function Settings() {
 
         <section className="settings-card">
           <h3>Thông báo</h3>
+          {mac && (
+            <Row title="Notification Island" help="Chỉ báo ở notch, không trùng banner góc phải. Màu theo giao diện ChatMin; rê chuột để xem các nhóm tin. Island chạy im lặng theo cài đặt ChatMin; tắt để dùng banner và Focus macOS." icon="bell">
+              <Toggle checked={island} disabled={islandSaving} label="Notification Island" onChange={(enabled) => {
+                setIslandSaving(true);
+                void api.notifyIsland(enabled).then(setIsland).catch(fail).finally(() => setIslandSaving(false));
+              }} />
+            </Row>
+          )}
           {isMobile && permission !== "granted" && (
             <Row title="Quyền thông báo" help={permission === "denied" ? "Android đang chặn thông báo của ChatMin. Mở Cài đặt → Ứng dụng → ChatMin → Thông báo để bật." : "ChatMin chưa được phép gửi thông báo."} icon="bell-off">
               <button className="tool-btn primary" onClick={() => void api.notifyPermission(true).then((state) => useApp.setState({ notifyPermission: state })).catch(fail)}>
@@ -181,11 +198,11 @@ export function Settings() {
           )}
           <Row
             title="Kiểm tra thông báo"
-            help={isMobile ? "Gửi một thông báo thử. Nếu không thấy, kiểm tra quyền Thông báo của ChatMin trong Cài đặt Android." : "Gửi một thông báo macOS ngay. Không thấy thì mở System Settings → Notifications → ChatMin. Space Google Chat báo khi có @nhắc tên, thread mới, hoặc trả lời trong thread bạn đã nhắn — như Google Chat."}
+            help={isMobile ? "Gửi một thông báo thử. Nếu không thấy, kiểm tra quyền Thông báo của ChatMin trong Cài đặt Android." : mac && island ? "Hiện thông báo thử ở notch. Rê chuột lên để giữ thông báo, bấm × để đóng." : "Gửi thông báo hệ thống ngay. Nếu không thấy, kiểm tra quyền thông báo của ChatMin trong cài đặt hệ thống."}
             icon="bell"
           >
-            <button className="tool-btn" onClick={() => void api.notifyTest().then(() => toast("Đã gửi thông báo thử", "bell")).catch(fail)}>
-              Gửi thông báo thử
+            <button className="tool-btn" onClick={() => void api.notifyTest().catch(fail)}>
+              {mac && island ? "Xem thử ở notch" : "Gửi thông báo thử"}
             </button>
           </Row>
           {accounts.map((a) => {
@@ -193,7 +210,7 @@ export function Settings() {
             return (
               <div key={a.id} className="notification-account">
                 <h4>{a.name}</h4>
-                <Row title="Thông báo" help={isMobile ? "Bật thông báo cho tài khoản này." : "Bật thông báo macOS cho tài khoản này."} icon="bell">
+                <Row title="Thông báo" help="Bật thông báo cho tài khoản này." icon="bell">
                   <Toggle checked={p.enabled} label={`Thông báo ${a.name}`} onChange={(v) => setNotif(a.id, { enabled: v })} />
                 </Row>
                 <Row title="Chỉ khi được nhắc tên" help="Chỉ báo khi bạn được nhắc tên.">

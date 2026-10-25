@@ -5,6 +5,7 @@ import { windowAppearance } from "./lib/appearance";
 import { Effect, EffectState, getCurrentWindow } from "@tauri-apps/api/window";
 import { PLATFORMS } from "./lib/platforms";
 import { themeBase } from "./lib/themes";
+import { readIslandAppearance } from "./lib/island-appearance";
 import {
   boot, chatKeyOf, closeTab, confirmDialog, isThreadTab, cycleTab, jumpUnread, markRead, promptDialog, toast, useApp, DEFAULT_NOTIFY,
   openChat, openSearch,
@@ -89,6 +90,13 @@ export default function App() {
     else delete document.body.dataset.theme;
     document.body.classList.toggle("light", !!prefs.theme && themeBase(prefs.theme) === "light");
     document.body.classList.toggle("chatmin-compact", prefs.compact);
+    if (isTauri && !isMobile) {
+      try {
+        void api.notifyAppearance(readIslandAppearance()).catch((e) => api.logJs(`island appearance: ${e}`));
+      } catch (e) {
+        void api.logJs(`island appearance: ${e}`);
+      }
+    }
   }, [prefs]);
 
   useEffect(() => {

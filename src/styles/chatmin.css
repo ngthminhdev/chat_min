@@ -191,6 +191,11 @@ button.tab-close { padding: 0; border: 0; background: transparent; font-family: 
 .file-card { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 320px; max-width: 100%; margin: 2px 0 4px; padding: 8px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--window); }
 .file-card .file-ic { width: 36px; height: 36px; display: grid; place-items: center; border-radius: var(--radius-md); background: var(--pane-3); color: var(--blue-2); }
 .file-card .file-ic .ic { --od-icon-size: 18px; }
+/* photo/video sent as a file: its thumbnail stands in for the icon (bigger, like Telegram) */
+.file-card .file-thumb { position: relative; width: 52px; height: 52px; padding: 0; border: 0; overflow: hidden; cursor: pointer; }
+.file-card .file-thumb:disabled { cursor: default; }
+.file-card .file-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.file-card .file-thumb .ic { position: absolute; --od-icon-size: 16px; color: #fff; filter: drop-shadow(0 1px 2px rgb(0 0 0 / .6)); }
 .file-card strong { display: block; font-size: var(--fs-md); font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .file-card small { display: block; color: var(--text-3); font: var(--fs-xs) var(--font-mono); }
 .link-card { display: grid; gap: 3px; width: 420px; max-width: 100%; margin: 6px 0 2px; padding: 9px 11px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--window); }
@@ -278,6 +283,11 @@ button.tab-close { padding: 0; border: 0; background: transparent; font-family: 
 .attach-meta b { font-size: var(--fs-sm); font-weight: 600; color: var(--text); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .attach-meta small { font-size: var(--fs-xs, 11px); color: var(--text-3, var(--text-2)); }
 .attach-chip .tool-btn { width: 24px; height: 24px; flex: none; }
+/* Telegram: compressed photo/video (preview) vs uncompressed file */
+.attach-mode { display: inline-flex; align-items: center; gap: 6px; align-self: center; height: 28px; padding: 0 10px; border: 1px solid var(--line); border-radius: var(--radius-pill); background: var(--pane-2); color: var(--text-2); font: inherit; font-size: var(--fs-sm); cursor: pointer; }
+.attach-mode:hover { border-color: var(--line-2); color: var(--text); }
+.attach-mode.on { border-color: var(--accent-soft-strong); background: var(--accent-soft); color: var(--text); }
+.attach-mode .ic { --od-icon-size: 14px; }
 .composer-box.dropping { outline: 2px solid var(--accent-secondary); outline-offset: 2px; }
 .content { position: relative; }
 .drop-overlay { position: absolute; inset: 0; z-index: 40; display: grid; place-items: center; padding: 16px; background: color-mix(in oklab, var(--app-bg), transparent 15%); backdrop-filter: blur(6px); pointer-events: none; }
@@ -858,7 +868,7 @@ body.left-collapsed.right-collapsed .main:not(.r2-page) { grid-template-columns:
   body.left-collapsed .sidebar .thread-peek,
   body.left-collapsed .sidebar .row-expand,
   body.left-collapsed .sidebar .chat-row > .od-stack,
-  body.left-collapsed .sidebar .acc-head > :is(.chev, .acc-name, .badge, .account-health, .grip) { display: none; }
+  body.left-collapsed .sidebar .acc-head > :is(.chev, .conn-dot, .acc-name, .badge, .account-health, .grip) { display: none; }
   body.left-collapsed .sidebar .side-scroll { padding: 6px 4px; overflow-x: hidden; scrollbar-width: none; }
   body.left-collapsed .sidebar .side-scroll::-webkit-scrollbar { width: 0; height: 0; }
   body.left-collapsed .sidebar .sec-more { display: flex; align-items: center; justify-content: center; gap: 0; width: 40px; min-width: 0; min-height: 32px; margin: 2px 0; padding: 4px 0; white-space: nowrap; color: var(--cm-muted); }
@@ -866,8 +876,7 @@ body.left-collapsed.right-collapsed .main:not(.r2-page) { grid-template-columns:
   body.left-collapsed .sidebar .sec-more-count { display: inline; font: 11px var(--font-mono); }
   body.left-collapsed .sidebar .sec-more:not([aria-expanded="true"]) > .ic { display: none; }
   body.left-collapsed .sidebar .all-inbox { width: 40px; min-height: 36px; margin-bottom: 4px; }
-  body.left-collapsed .sidebar .acc-head { grid-template-columns: 9px 14px; justify-content: center; gap: 4px; width: 40px; min-height: 32px; margin: 12px 0 4px; padding: 4px 0; }
-  body.left-collapsed .sidebar .acc-head.fav-head { grid-template-columns: 14px; }
+  body.left-collapsed .sidebar .acc-head { grid-template-columns: 14px; justify-content: center; gap: 0; width: 40px; min-height: 32px; margin: 12px 0 4px; padding: 4px 0; }
   body.left-collapsed .sidebar .chat-row { grid-template-columns: 30px; justify-content: center; gap: 0; width: 40px; min-height: 40px; padding: 5px; }
   body.left-collapsed .sidebar .chat-row.active { background: var(--surface-selected); box-shadow: inset 0 0 0 1px var(--accent-soft-strong); }
   body.left-collapsed .sidebar .chat-row.unread::after { content: ""; position: absolute; right: 3px; top: 3px; width: 6px; height: 6px; border-radius: var(--radius-circle); background: var(--accent-secondary); box-shadow: 0 0 0 2px var(--window); }
@@ -1388,6 +1397,11 @@ body:is([data-background="glass"], [data-background="clear"]) :is(.acc-group, .f
   margin-top: 12px;
 }
 body:is([data-background="glass"], [data-background="clear"]) :is(.acc-group, .fav-group) > .acc-head { margin: 0; padding: 10px 6px; }
+/* Icon rail: the 40px rows fill the card edge to edge — card padding/border would clip them. */
+@media (min-width: 761px) {
+  body.left-collapsed:is([data-background="glass"], [data-background="clear"]) .sidebar :is(.acc-group, .fav-group) { width: 40px; padding: 0 0 4px; border: 0; margin-top: 8px; }
+  body.left-collapsed:is([data-background="glass"], [data-background="clear"]) .sidebar :is(.acc-group, .fav-group) > .acc-head { margin: 0 0 2px; padding: 8px 0 4px; }
+}
 body:is([data-background="glass"], [data-background="clear"]) .all-inbox {
   background: var(--reading-surface);
   border-radius: var(--radius-md);

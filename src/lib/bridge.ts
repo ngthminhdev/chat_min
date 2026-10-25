@@ -49,7 +49,7 @@ export const api = {
   pinned: (accountId: string, chatId: string) => call<Msg[]>("pinned", { accountId, chatId }),
   members: (accountId: string, chatId: string) => call<Member[]>("members", { accountId, chatId }),
   /** `plain`: send the text as typed, no markdown (composer toggle) */
-  send: (a: { accountId: string; chatId: string; text: string; replyTo?: string; threadId?: string; file?: string; voice?: number; plain?: boolean }) => call<Msg>("send", a),
+  send: (a: { accountId: string; chatId: string; text: string; replyTo?: string; threadId?: string; file?: string; voice?: number; plain?: boolean; asFile?: boolean }) => call<Msg>("send", a),
   webAdd: (platform: string) => call<Account>("web_add", { platform }),
   webShow: (accountId: string, r: { x: number; y: number; w: number; h: number }) => call<void>("web_show", { accountId, ...r }),
   webHide: (accountId: string) => call<void>("web_hide", { accountId }),
@@ -96,6 +96,8 @@ export const api = {
   /** per-account notification settings: Rust decides and sends notifications (notify.rs) */
   notifyPrefs: (prefs: Record<string, unknown>) => (isTauri ? call<void>("notify_prefs", { prefs }) : Promise.resolve()),
   notifyTest: () => (isTauri ? call<void>("notify_test") : Promise.resolve()),
+  notifyIsland: (enabled?: boolean) => (isTauri ? call<boolean>("notify_island", { enabled }) : Promise.resolve(enabled ?? true)),
+  notifyAppearance: (appearance: import("./island-appearance").IslandAppearance) => (isTauri ? call<void>("notify_appearance", { appearance }) : Promise.resolve()),
   /** Android: "granted" | "denied" | "prompt"; `ask` shows the system dialog when undecided */
   notifyPermission: (ask: boolean) => (isTauri ? call<string>("notify_permission", { ask }) : Promise.resolve("granted")),
   /** phone: app on screen or not — Rust mutes the open chat only while it is actually visible */

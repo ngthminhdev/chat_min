@@ -52,6 +52,9 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
   const recorder = useRecorder();
   /** pasted / dropped files waiting for Enter; the draft goes out as the first one's caption */
   const [files, setFiles] = useState<Staged[]>([]);
+  /** Telegram: photos/videos go out uncompressed, as documents (Telegram's "send as file") */
+  const [asFile, setAsFile] = useState(false);
+  useEffect(() => { if (!files.length) setAsFile(false); }, [files.length]);
   const [dropping, setDropping] = useState(false);
   const [attaching, setAttaching] = useState(false);
   const attachmentPending = useRef(false);
@@ -218,7 +221,7 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
     const text = draft.trim();
     if (files.length && !editId && !blocked && canSend) {
       const { wire, shown } = mentions.encode(text);
-      files.forEach((f, i) => void send(chatKey, i ? "" : shown, { file: f.path, replyTo: i ? undefined : replyId || undefined, threadId, wire: i ? undefined : wire, plain: plainSend }));
+      files.forEach((f, i) => void send(chatKey, i ? "" : shown, { file: f.path, replyTo: i ? undefined : replyId || undefined, threadId, wire: i ? undefined : wire, plain: plainSend, asFile }));
       setFiles([]);
       useApp.setState((s) => ({ drafts: { ...s.drafts, [k]: "" }, replyTo: { ...s.replyTo, [k]: "" } }));
       return;
@@ -257,7 +260,9 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
     const run = attachmentRun.current;
     try {
       const paths = await (media ? pickMedia() : pickFiles());
-      if (run === attachmentRun.current) await stage(paths);
+      if (run !== attachmentRun.current) return;
+      if (isMobile && paths.length) setAsFile(!media);
+      await stage(paths);
     } catch (e) { if (run === attachmentRun.current) fail(e); }
     finally { attachmentPending.current = false; setAttaching(false); }
   };
@@ -326,9 +331,22 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
           {files.length > 0 && (
             <motion.div className="attach-bar" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.16, ease: EASE }}>
               <AnimatePresence initial={false}>
+                {account?.platform === "telegram" && files.some((f) => IMG.test(f.name) || VID.test(f.name)) && (
+                  <button
+                    type="button"
+                    key="as-file"
+                    className={`attach-mode${asFile ? " on" : ""}`}
+                    aria-pressed={asFile}
+                    data-tip={asFile ? "Gửi nguyên bản, người nhận thấy dạng tệp" : "Telegram nén ảnh/video và hiện xem trước"}
+                    onClick={() => setAsFile((v) => !v)}
+                  >
+                    <Icon name={asFile ? "file-text" : "image"} />
+                    {asFile ? "Gửi dạng tệp" : "Gửi dạng ảnh/video"}
+                  </button>
+                )}
                 {files.map((f) => (
                   <motion.div className="attach-chip" key={f.path} title={f.path} layout initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }}>
-                    {IMG.test(f.name) ? <img src={fileSrc(f.path)} alt="" /> : <span className="attach-ic"><Icon name={VID.test(f.name) ? "film" : "file-text"} /></span>}
+                    {IMG.test(f.name) && !asFile ? <img src={fileSrc(f.path)} alt="" /> : <span className="attach-ic"><Icon name={VID.test(f.name) && !asFile ? "film" : "file-text"} /></span>}
                     <span className="attach-meta">
                       <b>{f.name}</b>
                       <small>{fileSize(f.size)}</small>

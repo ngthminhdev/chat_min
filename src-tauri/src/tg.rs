@@ -748,7 +748,7 @@ impl Tg {
     }
 
     // ── writes ──────────────────────────────────────────────────────────────
-    pub async fn send(&self, core: &Core, account_id: &str, chat_id: &str, text: String, reply_to: Option<String>, topic: Option<String>, file: Option<String>, voice: Option<i32>, plain: bool) -> R<Msg> {
+    pub async fn send(&self, core: &Core, account_id: &str, chat_id: &str, text: String, reply_to: Option<String>, topic: Option<String>, file: Option<String>, voice: Option<i32>, plain: bool, as_file: bool) -> R<Msg> {
         let c = self.client(account_id)?;
         let chat: i64 = chat_id.parse().map_err(|_| "bad chat id")?;
         let reply = reply_to.and_then(|r| r.parse::<i64>().ok()).map(|id| {
@@ -765,7 +765,7 @@ impl Tg {
             }),
             Some(path) => {
                 let input = enums::InputFile::Local(t::InputFileLocal { path: path.clone() });
-                if is_image(&path) {
+                if !as_file && is_image(&path) {
                     enums::InputMessageContent::InputMessagePhoto(t::InputMessagePhoto {
                         photo: input,
                         thumbnail: None,
@@ -777,7 +777,7 @@ impl Tg {
                         self_destruct_type: None,
                         has_spoiler: false,
                     })
-                } else if is_video(&path) {
+                } else if !as_file && is_video(&path) {
                     // duration/size 0: TDLib and the clients read them from the file
                     enums::InputMessageContent::InputMessageVideo(t::InputMessageVideo {
                         video: input,
@@ -798,7 +798,8 @@ impl Tg {
                     enums::InputMessageContent::InputMessageDocument(t::InputMessageDocument {
                         document: input,
                         thumbnail: None,
-                        disable_content_type_detection: false,
+                        // "send as file": TDLib would otherwise turn a .mp4 back into a video
+                        disable_content_type_detection: as_file,
                         caption: Some(caption),
                     })
                 }
@@ -1316,15 +1317,6 @@ fn with_thumb(mut m: Media, th: Option<&t::Thumbnail>) -> Media {
     m
 }
 
-/// Photos and videos sent "as file" (no compression): previewed like media when WebKit can render them.
-fn document_kind(mime: &str) -> &'static str {
-    match mime {
-        "image/jpeg" | "image/png" | "image/gif" | "image/webp" | "image/heic" => "image",
-        "video/mp4" | "video/quicktime" | "video/webm" | "video/x-m4v" => "video",
-        _ => "file",
-    }
-}
-
 fn to_msg(a: &Acc, m: &t::Message) -> Msg {
     let (sender_id, sender_name, sender_photo) = sender(a, &m.sender_id);
     let mut out = Msg {
@@ -1396,11 +1388,12 @@ fn to_msg(a: &Acc, m: &t::Message) -> Msg {
                 out.media = Some(file_media("image", "photo.jpg", "image/jpeg", &s.photo, s.width, s.height, x.photo.minithumbnail.as_ref()));
             }
         }
+        // photos/videos sent "as file" stay files (like Telegram): a card with their thumbnail, not a preview
         MessageContent::MessageDocument(x) => {
             out.kind = "media".into();
             out.text = render(&x.caption);
             let d = &x.document;
-            out.media = Some(with_thumb(file_media(document_kind(&d.mime_type), &d.file_name, &d.mime_type, &d.document, 0, 0, d.minithumbnail.as_ref()), d.thumbnail.as_ref()));
+            out.media = Some(with_thumb(file_media("file", &d.file_name, &d.mime_type, &d.document, 0, 0, d.minithumbnail.as_ref()), d.thumbnail.as_ref()));
         }
         MessageContent::MessageVideo(x) => {
             out.kind = "media".into();

@@ -6,6 +6,8 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
+#[cfg(target_os = "macos")]
+static SYSTEM_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 #[cfg(not(target_os = "macos"))]
 use tauri_plugin_notification::NotificationExt;
 
@@ -32,6 +34,13 @@ impl Prefs {
     fn quiet_at(&self, now: &str) -> bool {
         self.quiet && if self.from <= self.to { now >= self.from.as_str() && now < self.to.as_str() } else { now >= self.from.as_str() || now < self.to.as_str() }
     }
+}
+
+/// Match the person named in a message notification; a group photo is not its sender.
+fn photo_source<'a>(chat: &'a Chat, msg: &'a Msg) -> &'a str {
+    if !msg.sender_photo.is_empty() { &msg.sender_photo }
+    else if chat.kind == "dm" { if chat.photo.is_empty() { &chat.photo_ref } else { &chat.photo } }
+    else { "" }
 }
 
 /// Messages older than this when they reach us (catch-up after the Mac slept or the app
@@ -65,6 +74,17 @@ pub struct Notifier {
 }
 
 impl Notifier {
+    pub fn set_island(&self, app: &AppHandle, enabled: bool) {
+        #[cfg(target_os = "macos")]
+        {
+            SYSTEM_MODE.store(!enabled, std::sync::atomic::Ordering::Relaxed);
+            let _ = app.run_on_main_thread(move || {
+                if enabled { mac::silence(); } else { crate::island::clear(None); }
+            });
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = app;
+    }
     pub fn set_foreground(&self, fg: bool) {
         self.background.store(!fg, std::sync::atomic::Ordering::Relaxed);
     }
@@ -137,7 +157,7 @@ impl Notifier {
         };
         // a thread reply opens its thread: in the space it's folded out of sight
         let thread = if m.thread_reply { m.thread_id.as_str() } else { "" };
-        show(app, &title, &body, &format!("{}|{}\n{}\n{thread}", m.account_id, m.chat_id, m.id));
+        show_photo(app, &title, &body, &format!("{}|{}\n{}\n{thread}", m.account_id, m.chat_id, m.id), photo_source(chat, m));
         Ring::Now
     }
 
@@ -200,6 +220,11 @@ impl Notifier {
         // read (here, on the phone, on the web): its banners in Notification Center go too
         if was > 0 && n == 0 {
             clear_delivered(app, if total == 0 { None } else { Some(chat.title.clone()) });
+            #[cfg(target_os = "macos")]
+            {
+                let key = if total == 0 { None } else { Some(format!("{}|{}", chat.account_id, chat.id)) };
+                let _ = app.run_on_main_thread(move || crate::island::clear(key.as_deref()));
+            }
         }
         let mut badge = self.badge.lock().unwrap();
         if *badge != total {
@@ -315,13 +340,39 @@ pub fn on_click(app: &AppHandle) {
 
 /// `chat`: "account|chat", the key the frontend opens when the notification is clicked.
 fn show(app: &AppHandle, title: &str, body: &str, chat: &str) {
+    show_photo(app, title, body, chat, "");
+}
+fn show_photo(app: &AppHandle, title: &str, body: &str, chat: &str, photo: &str) {
     #[cfg(target_os = "macos")]
     {
-        let _ = app;
-        mac::show(title, body, chat);
+        // Serialize native delivery and mode-switch cleanup on the same main thread.
+        let (title, body, target) = (title.to_owned(), body.to_owned(), chat.to_owned());
+        let handle = app.clone();
+        let photo = photo.to_owned();
+        if let Err(error) = app.run_on_main_thread(move || {
+            if SYSTEM_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+                mac::show(&title, &body, &target);
+            } else {
+                let callback_app = handle.clone();
+                let open = std::rc::Rc::new(move |target: &str| open(&callback_app, target));
+                if !crate::island::show(&title, &body, &target, &photo, open) {
+                    eprintln!("[island] display unavailable; system banners remain disabled");
+                } else if !photo.is_empty() {
+                    tauri::async_runtime::spawn(async move {
+                        let account = target.split('|').next().unwrap_or("");
+                        if let Some(path) = crate::island_media::resolve(&handle, account, &photo).await {
+                            let _ = handle.run_on_main_thread(move || crate::island::set_avatar(&target, &photo, &path));
+                        }
+                    });
+                }
+            }
+        }) {
+            eprintln!("[notify] native delivery dispatch failed: {error}");
+        }
     }
     #[cfg(not(target_os = "macos"))]
     {
+        let _ = photo;
         let n = app.notification().builder().title(title).body(body).sound("default").extra("chat", chat);
         #[cfg(mobile)]
         let n = n.channel_id(CHANNEL).icon("ic_stat_chatmin");
@@ -377,7 +428,10 @@ mod mac {
             // `rings` already decided this one should show, ChatMin in front or not
             #[unsafe(method(userNotificationCenter:willPresentNotification:withCompletionHandler:))]
             fn will_present(&self, _center: &UNUserNotificationCenter, _n: &UNNotification, done: &block2::DynBlock<dyn Fn(UNNotificationPresentationOptions)>) {
-                done.call((UNNotificationPresentationOptions::Banner | UNNotificationPresentationOptions::List | UNNotificationPresentationOptions::Sound,));
+                let options = if super::SYSTEM_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+                    UNNotificationPresentationOptions::Banner | UNNotificationPresentationOptions::List | UNNotificationPresentationOptions::Sound
+                } else { UNNotificationPresentationOptions::empty() };
+                done.call((options,));
             }
 
             #[unsafe(method(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:))]
@@ -421,7 +475,7 @@ mod mac {
     }
 
     pub fn show(title: &str, body: &str, chat: &str) {
-        if !bundled() {
+        if !bundled() || !super::SYSTEM_MODE.load(std::sync::atomic::Ordering::Relaxed) {
             return;
         }
         let content = UNMutableNotificationContent::new();
@@ -433,6 +487,11 @@ mod mac {
         let id = NSString::from_str(&format!("chatmin-{}", crate::now_ms()));
         let request = UNNotificationRequest::requestWithIdentifier_content_trigger(&id, &content, None);
         let done = block2::RcBlock::new(|err: *mut NSError| {
+            // A request submitted just before switching modes may complete after cleanup.
+            if !super::SYSTEM_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+                silence();
+                return;
+            }
             if err.is_null() {
                 eprintln!("[notify] shown");
             } else {
@@ -465,6 +524,14 @@ mod mac {
         });
         center.getDeliveredNotificationsWithCompletionHandler(&done);
     }
+
+    pub fn silence() {
+        if !bundled() { return; }
+        let center = UNUserNotificationCenter::currentNotificationCenter();
+        center.removeAllPendingNotificationRequests();
+        center.removeAllDeliveredNotifications();
+        eprintln!("[notify] island-only mode: cleared pending/delivered system banners");
+    }
 }
 
 /// An emoji someone else added to `new` since `old` (counts minus my own reaction).
@@ -476,6 +543,19 @@ pub fn new_reaction(old: &Msg, new: &Msg) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notice_uses_sender_photo_and_only_falls_back_to_the_matching_private_chat() {
+        let mut chat = Chat { kind: "dm".into(), photo: "/cache/chat.jpg".into(), photo_ref: "123".into(), ..Default::default() };
+        let mut msg = Msg { sender_photo: "https://example.test/person.jpg".into(), ..Default::default() };
+        assert_eq!(photo_source(&chat, &msg), "https://example.test/person.jpg");
+        msg.sender_photo.clear();
+        assert_eq!(photo_source(&chat, &msg), "/cache/chat.jpg");
+        chat.photo.clear();
+        assert_eq!(photo_source(&chat, &msg), "123");
+        chat.kind = "group".into();
+        assert_eq!(photo_source(&chat, &msg), "");
+    }
 
     #[test]
     fn reaction_diff() {

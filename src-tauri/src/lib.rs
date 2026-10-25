@@ -8,6 +8,19 @@ mod model;
 mod store;
 mod tg;
 mod notify;
+#[cfg(any(target_os = "macos", test))]
+mod island_queue;
+mod island_style;
+#[cfg(target_os = "macos")]
+mod island;
+#[cfg(target_os = "macos")]
+mod island_view;
+#[cfg(target_os = "macos")]
+mod island_media;
+
+/// Native UI QA without loading credentials, opening accounts, or starting provider listeners.
+#[cfg(all(target_os = "macos", debug_assertions))]
+pub fn preview_notification_island() { island::preview(); }
 mod storage;
 mod web;
 
@@ -44,6 +57,9 @@ struct Config {
     keep_days: Option<u32>,
     /// threads/topics that never ring nor reach the bell: "account|chat|thread"
     muted_threads: Vec<String>,
+    /// None preserves the default: native notch island on macOS.
+    notification_island: Option<bool>,
+    notification_appearance: Option<island_style::Appearance>,
 }
 
 #[derive(Clone, Serialize)]
@@ -732,11 +748,13 @@ async fn send(
     voice: Option<i32>,
     // composer "plain text" toggle: *abc* stays *abc*, no bold/italic/code
     plain: Option<bool>,
+    // Telegram: photos/videos as an uncompressed document instead of a photo/video message
+    as_file: Option<bool>,
 ) -> Res<Msg> {
     let core = core.inner().clone();
     let plain = plain.unwrap_or(false);
     if core.platform(&account_id) == "telegram" {
-        core.tg.send(&core, &account_id, &chat_id, text, reply_to, thread_id, file, voice, plain).await
+        core.tg.send(&core, &account_id, &chat_id, text, reply_to, thread_id, file, voice, plain, as_file.unwrap_or(false)).await
     } else {
         // Google Chat formats on its side: break the markers with zero-width spaces
         let text = if plain { tg::soft_markup(&text) } else { text };
@@ -980,6 +998,33 @@ fn notify_test(app: tauri::AppHandle) {
     notify::test(&app);
 }
 
+#[tauri::command]
+fn notify_island(core: C<'_>, enabled: Option<bool>) -> Res<bool> {
+    let mut config = core.config.lock().unwrap();
+    if let Some(enabled) = enabled {
+        let mut next = config.clone();
+        next.notification_island = Some(enabled);
+        write_private(&core.data_dir.join("config.json"), &serde_json::to_string_pretty(&next).unwrap()).map_err(|e| e.to_string())?;
+        *config = next;
+        core.notifier.set_island(&core.app, enabled);
+    }
+    Ok(config.notification_island.unwrap_or(true))
+}
+
+#[tauri::command]
+fn notify_appearance(core: C<'_>, appearance: island_style::Appearance) -> Res<()> {
+    if !appearance.valid() { return Err("Màu thông báo không hợp lệ".into()); }
+    let mut config = core.config.lock().unwrap();
+    if config.notification_appearance == Some(appearance) { return Ok(()); }
+    let mut next = config.clone();
+    next.notification_appearance = Some(appearance);
+    write_private(&core.data_dir.join("config.json"), &serde_json::to_string_pretty(&next).unwrap()).map_err(|e| e.to_string())?;
+    *config = next;
+    #[cfg(target_os = "macos")]
+    core.app.run_on_main_thread(move || island::configure(appearance)).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Android: current notification permission, asking the system when `ask` and not yet decided.
 #[tauri::command]
 fn notify_permission(app: tauri::AppHandle, ask: bool) -> String {
@@ -1096,6 +1141,11 @@ pub fn run() {
                 notifier: Default::default(),
             });
             app.manage(core.clone());
+            core.notifier.set_island(&core.app, core.config.lock().unwrap().notification_island.unwrap_or(true));
+            #[cfg(target_os = "macos")]
+            if let Some(appearance) = core.config.lock().unwrap().notification_appearance {
+                island::configure(appearance);
+            }
             // keep the media cache inside its limits: shortly after launch, then every 6 hours
             let c = core.clone();
             tauri::async_runtime::spawn(async move {
@@ -1235,6 +1285,8 @@ pub fn run() {
             search,
             notify_prefs,
             notify_test,
+            notify_island,
+            notify_appearance,
             notify_permission,
             set_foreground,
         ])

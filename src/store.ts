@@ -879,7 +879,7 @@ export async function forwardMsg(m: Msg, to: string, { comment = "", threadId }:
 }
 
 /** `wire`: the text the platform gets when it differs from the one shown (mentions) */
-export async function send(k: string, text: string, { wire, ...opts }: { replyTo?: string; threadId?: string; file?: string; voice?: number; wire?: string; plain?: boolean } = {}) {
+export async function send(k: string, text: string, { wire, ...opts }: { replyTo?: string; threadId?: string; file?: string; voice?: number; wire?: string; plain?: boolean; asFile?: boolean } = {}) {
   const [accountId, chatId] = splitKey(k);
   const temp: Msg = {
     accountId, chatId, id: `local-${++localId}`, sort: Number.MAX_SAFE_INTEGER - 1000 + localId, senderId: "", senderName: "", senderPhoto: "",

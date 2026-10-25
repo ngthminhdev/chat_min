@@ -365,13 +365,23 @@ function MediaView({ accountId, media, sending, tile, anchorId, chatKey, message
     if (stream) return useApp.setState({ viewer: { media, path: "", src: streamSrc(accountId, media.fileRef, media.mime), ...context } });
     useApp.setState({ viewer: { media, path: dl.path || media.localPath || "", ...context } });
   };
+  // a photo/video sent as a file: Telegram's thumbnail in the icon slot, opens in the viewer
+  const asView: Media | null = media.kind !== "file" ? null
+    : /^image\/(jpeg|png|gif|webp|heic)$/.test(media.mime) ? { ...media, kind: "image" }
+    : /^video\/(mp4|quicktime|webm|x-m4v)$/.test(media.mime) ? { ...media, kind: "video" } : null;
+  const openView = () => {
+    if (!asView) return;
+    const context = { accountId, messageId };
+    if (isTauri && asView.kind === "video" && !dl.path && /^\d+$/.test(media.fileRef)) return useApp.setState({ viewer: { media: asView, path: "", src: streamSrc(accountId, media.fileRef, media.mime), ...context } });
+    useApp.setState({ viewer: { media: asView, path: dl.path || media.localPath || "", ...context } });
+  };
   const menu = (e: React.MouseEvent, viewable: boolean) => {
     e.preventDefault();
     e.stopPropagation();
     const items: MenuItem[] = media.url
       ? [{ icon: "external-link", label: "Mở trên Google Drive", run: () => void openUrl(media.url) }]
       : [
-          ...(viewable ? [{ icon: "image" as const, label: "Xem", run: () => void view() }] : []),
+          ...(viewable ? [{ icon: "image" as const, label: "Xem", run: () => void view() }] : asView ? [{ icon: "image" as const, label: "Xem", run: openView }] : []),
           { icon: "external-link", label: "Mở bằng app mặc định", run: () => void ensure().then((p) => { if (p) openPath(p).catch(fail); }) },
           ...(!isMobile ? [{ icon: "folder-open" as const, label: "Hiện trong Finder", run: () => void ensure().then((p) => { if (p) revealPath(p).catch(fail); }) }] : []),
           { icon: "download", label: "Lưu vào thư mục tải về", run: () => void ensure().then((p) => { if (p) void saveMedia(p, media.name, false); }) },
@@ -452,7 +462,14 @@ function MediaView({ accountId, media, sending, tile, anchorId, chatKey, message
   return (
     <>
       <div className="file-card" data-message-id={messageId} onClick={isMobile ? (e) => { if (!(e.target as Element).closest("button")) menu(e, false); } : undefined} onContextMenu={(e) => menu(e, false)}>
-        <span className="file-ic"><Icon name={icon} /></span>
+        {poster && !voice ? (
+          <button type="button" className="file-ic file-thumb" aria-label={asView ? `Xem ${media.name}` : media.name} disabled={!asView} onClick={openView}>
+            <img src={poster} alt="" />
+            {asView?.kind === "video" && <Icon name="play" />}
+          </button>
+        ) : (
+          <span className="file-ic"><Icon name={icon} /></span>
+        )}
         <span style={{ minWidth: 0 }}>
           <strong>{media.name}</strong>
           <small>{media.url ? "Google Drive" : sending ? `Đang tải lên${up != null ? ` ${up}%` : "…"}` : [fileSize(media.size), dl.path ? "đã tải" : ""].filter(Boolean).join(" · ")}</small>
