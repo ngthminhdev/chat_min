@@ -1,5 +1,5 @@
 import type { Media } from "./types";
-import { norm } from "./format.ts";
+import { fmtCount, norm } from "./format.ts";
 
 export function mediaSection(media: Pick<Media, "kind"> | null): "files" | "media" | null {
   if (media?.kind === "image" || media?.kind === "video") return "media";
@@ -11,6 +11,12 @@ export function fileActionLabel(media: Pick<Media, "name" | "url" | "kind">, dow
   if (media.url) return `Mở ${media.name} trên Google Drive`;
   if (media.kind === "voice") return downloaded ? "Phát tin nhắn thoại" : "Tải và phát tin nhắn thoại";
   return `${downloaded ? "Mở" : "Tải và mở"} ${media.name}`;
+}
+
+/** An unexpanded preview is a lower bound once it reaches the 20-reply cap. */
+export function threadReplyCountLabel(loaded: number, nextToken?: string): string {
+  const more = nextToken === undefined ? loaded >= 20 : !!nextToken;
+  return `${fmtCount(loaded)}${more ? "+" : ""}`;
 }
 
 /** Emoji + Vietnamese name + searchable aliases. First sixteen are quick reactions. */

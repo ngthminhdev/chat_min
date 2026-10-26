@@ -54,10 +54,14 @@ export const api = {
   accountRemove: (id: string) => call<void>("account_remove", { id }),
   messages: (accountId: string, chatId: string, before: number, limit: number) =>
     call<Msg[]>("messages", { accountId, chatId, before, limit }),
+  primaryMessages: (accountId: string, chatId: string, before: number, limit: number) =>
+    call<{ messages: Msg[]; before: number; hasMore: boolean }>("primary_messages", { accountId, chatId, before, limit }),
   presence: () => (isTauri ? call<string[]>("presence") : Promise.resolve([] as string[])),
   inbox: (limit: number) => call<Msg[]>("inbox", { limit }),
-  cachedMessages: (accountId: string, chatId: string, limit: number) => call<[Msg[], Msg[]]>("cached_messages", { accountId, chatId, limit }),
-  thread: (accountId: string, chatId: string, threadId: string) => call<Msg[]>("thread", { accountId, chatId, threadId }),
+  cachedMessages: (accountId: string, chatId: string, limit: number, primary = false) => call<[Msg[], Msg[]]>("cached_messages", { accountId, chatId, limit, primary }),
+  thread: (accountId: string, chatId: string, threadId: string, pageToken = "", limit = 20) =>
+    call<{ messages: Msg[]; nextPageToken: string }>("thread", { accountId, chatId, threadId, pageToken, limit }),
+  threadRoot: (accountId: string, chatId: string, threadId: string) => call<Msg[]>("thread_root", { accountId, chatId, threadId }),
   pinned: (accountId: string, chatId: string) => call<Msg[]>("pinned", { accountId, chatId }),
   members: (accountId: string, chatId: string) => call<Member[]>("members", { accountId, chatId }),
   /** `plain`: send the text as typed, no markdown (composer toggle) */

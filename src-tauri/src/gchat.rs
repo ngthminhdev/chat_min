@@ -685,11 +685,44 @@ impl GChat {
         let mut msgs: Vec<Msg> = v["messages"].as_array().cloned().unwrap_or_default().iter().map(|m| to_msg(account_id, &me, m)).collect();
         msgs.retain(|m| !m.deleted); // hidden, like Google's client (see Core::put_msg)
         msgs.reverse();
+        hydrate_cached_media(&core.cache_dir, &mut msgs);
         self.fill_quotes(core, account_id, space, &mut msgs, false).await;
         self.fill_photos(core, account_id, &mut msgs, false).await;
         core.store_mut().put_msgs(&msgs)?;
         self.enrich_later(core, account_id, space, msgs.clone(), before == 0);
         Ok(msgs)
+    }
+
+    /// Scan bounded remote pages for main messages. A reply-only page advances the
+    /// main cursor but must never mean that primary history has ended.
+    pub async fn primary_history(&self, core: &Arc<Core>, account_id: &str, space: &str, before: i64) -> Result<PrimaryPage, String> {
+        let me = self.me(account_id);
+        let mut cursor = before;
+        let mut messages = Vec::new();
+        let mut has_more = true;
+        let mut token = String::new();
+        for _ in 0..5 {
+            let mut url = format!("{API}/{space}/messages?pageSize=100&orderBy=createTime%20desc&showDeleted=true");
+            if before > 0 {
+                url.push_str(&format!("&filter={}", enc(&format!("createTime < \"{}\"", ms_rfc3339(before)))));
+            }
+            if !token.is_empty() { url.push_str(&format!("&pageToken={}", enc(&token))); }
+            let v = self.api(core, account_id, Method::GET, &url, None).await?;
+            let mut page: Vec<Msg> = v["messages"].as_array().cloned().unwrap_or_default().iter().map(|m| to_msg(account_id, &me, m)).collect();
+            if let Some(oldest) = page.iter().map(|m| m.sort).min() { cursor = oldest; }
+            token = v["nextPageToken"].as_str().unwrap_or("").to_string();
+            has_more = !token.is_empty();
+            page.retain(|m| !m.deleted);
+            core.store_mut().put_msgs(&page)?;
+            messages.extend(page.into_iter().filter(|m| !m.thread_reply));
+            if !messages.is_empty() || !has_more { break; }
+        }
+        messages.sort_by_key(|m| m.sort);
+        hydrate_cached_media(&core.cache_dir, &mut messages);
+        self.fill_quotes(core, account_id, space, &mut messages, false).await;
+        self.fill_photos(core, account_id, &mut messages, false).await;
+        self.enrich_later(core, account_id, space, messages.clone(), false);
+        Ok(PrimaryPage { messages, before: cursor, has_more })
     }
 
     /// Quotes of messages outside the cache, avatars and the read state each cost another
@@ -714,20 +747,23 @@ impl GChat {
         });
     }
 
-    pub async fn thread(&self, core: &Arc<Core>, account_id: &str, space: &str, thread: &str) -> Result<Vec<Msg>, String> {
-        let url = format!(
-            "{API}/{space}/messages?pageSize=200&orderBy=createTime%20asc&filter={}",
-            enc(&format!("thread.name = \"{thread}\""))
-        );
-        let v = self.api(core, account_id, Method::GET, &url, None).await?;
-        let me = self.me(account_id);
-        let mut msgs: Vec<Msg> = v["messages"].as_array().cloned().unwrap_or_default().iter().map(|m| to_msg(account_id, &me, m)).collect();
-        msgs.retain(|m| !m.deleted);
-        self.fill_quotes(core, account_id, space, &mut msgs, false).await;
-        self.fill_photos(core, account_id, &mut msgs, false).await;
-        core.store_mut().put_msgs(&msgs)?;
-        self.enrich_later(core, account_id, space, msgs.clone(), false);
-        Ok(msgs)
+    pub async fn thread(&self, core: &Arc<Core>, account_id: &str, space: &str, thread: &str, page_token: &str, limit: i32) -> Result<ThreadPage, String> {
+        self.read_thread(core, account_id, space, thread, page_token, limit, false).await
+    }
+
+    pub async fn thread_root(&self, core: &Arc<Core>, account_id: &str, space: &str, thread: &str) -> Result<Vec<Msg>, String> {
+        Ok(self.read_thread(core, account_id, space, thread, "", 1, true).await?.messages)
+    }
+
+    async fn read_thread(&self, core: &Arc<Core>, account_id: &str, space: &str, thread: &str, page_token: &str, limit: i32, root: bool) -> Result<ThreadPage, String> {
+        let v = self.api(core, account_id, Method::GET, &thread_url(space, thread, page_token, limit, root), None).await?;
+        let mut page = parse_thread_page(account_id, &self.me(account_id), &v);
+        hydrate_cached_media(&core.cache_dir, &mut page.messages);
+        self.fill_quotes(core, account_id, space, &mut page.messages, false).await;
+        self.fill_photos(core, account_id, &mut page.messages, false).await;
+        core.store_mut().put_msgs(&page.messages)?;
+        self.enrich_later(core, account_id, space, page.messages.clone(), false);
+        Ok(page)
     }
 
     async fn fill_quotes(&self, core: &Arc<Core>, account_id: &str, space: &str, msgs: &mut [Msg], net: bool) {
@@ -794,8 +830,7 @@ impl GChat {
     pub async fn download(&self, core: &Arc<Core>, account_id: &str, resource: &str, name: &str) -> Result<String, String> {
         let dir = core.cache_dir.join("gchat");
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        let safe: String = name.chars().map(|c| if c.is_alphanumeric() || ".-_".contains(c) { c } else { '_' }).collect();
-        let path = dir.join(format!("{:x}-{safe}", hash(resource)));
+        let path = download_path(&core.cache_dir, resource, name);
         if path.exists() {
             return Ok(path.to_string_lossy().into());
         }
@@ -1152,6 +1187,38 @@ fn space_chat(account_id: &str, s: &Value, existing: Option<&Chat>) -> Chat {
     c
 }
 
+/// A bounded page, oldest first for rendering; the opaque Google token walks backwards.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrimaryPage {
+    pub messages: Vec<Msg>,
+    pub before: i64,
+    pub has_more: bool,
+}
+
+#[derive(serde::Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadPage {
+    pub messages: Vec<Msg>,
+    pub next_page_token: String,
+}
+
+fn thread_url(space: &str, thread: &str, page_token: &str, limit: i32, root: bool) -> String {
+    let size = if root { 1 } else { limit.clamp(1, 20) };
+    let order = if root { "asc" } else { "desc" };
+    let mut url = format!("{API}/{space}/messages?pageSize={size}&orderBy=createTime%20{order}&filter={}", enc(&format!("thread.name = \"{thread}\"")));
+    if !root && !page_token.is_empty() {
+        url.push_str(&format!("&pageToken={}", enc(page_token)));
+    }
+    url
+}
+
+fn parse_thread_page(account_id: &str, me: &str, v: &Value) -> ThreadPage {
+    let mut messages: Vec<Msg> = v["messages"].as_array().into_iter().flatten().map(|m| to_msg(account_id, me, m)).filter(|m| !m.deleted).collect();
+    messages.sort_by_key(|m| m.sort);
+    ThreadPage { messages, next_page_token: v["nextPageToken"].as_str().unwrap_or("").into() }
+}
+
 fn to_msg(account_id: &str, me: &str, m: &Value) -> Msg {
     let name = m["name"].as_str().unwrap_or_default();
     let space = name.split("/messages/").next().unwrap_or_default();
@@ -1183,7 +1250,7 @@ fn to_msg(account_id: &str, me: &str, m: &Value) -> Msg {
     // blocks (fence dropped, newlines removed, 4 spaces in front), so those come back from `text`
     if !formatted.is_empty() {
         let raw = m["text"].as_str().unwrap_or_default();
-        text = chat_markup(&restore_code_blocks(formatted, raw), &names);
+        text = keep_line_breaks(&chat_markup(&restore_code_blocks(formatted, raw), &names), &text);
     }
     // a Meet huddle ("Call ended") carries no text: only a RICH_LINK annotation whose
     // status Google rewrites in place, so it must not read as an edit either
@@ -1303,6 +1370,50 @@ fn jwt_claims(jwt: &str) -> Value {
 fn enc(s: &str) -> String {
     reqwest::Url::parse_with_params("http://x/", &[("q", s)]).unwrap().query().unwrap()[2..].to_string()
 }
+
+fn download_path(cache_dir: &std::path::Path, resource: &str, name: &str) -> std::path::PathBuf {
+    let safe: String = name.chars().map(|c| if c.is_alphanumeric() || ".-_".contains(c) { c } else { '_' }).collect();
+    cache_dir.join("gchat").join(format!("{:x}-{safe}", hash(resource)))
+}
+
+/// Restore local image geometry before sending history to the webview. Reading the
+/// file header does not decode image pixels and runs outside the native UI thread.
+pub(crate) fn hydrate_cached_media(cache_dir: &std::path::Path, msgs: &mut [Msg]) {
+    for msg in msgs {
+        if !msg.account_id.starts_with("gc-") { continue; }
+        let Some(media) = msg.media.as_mut().filter(|m| m.kind == "image") else { continue };
+        let path = if media.local_path.is_empty() { download_path(cache_dir, &media.file_ref, &media.name) } else { std::path::PathBuf::from(&media.local_path) };
+        if !path.is_file() { continue; }
+        media.local_path = path.to_string_lossy().into();
+        if media.width <= 0 || media.height <= 0 {
+            if let Some((width, height)) = cached_image_dimensions(&path) {
+                media.width = width;
+                media.height = height;
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn cached_image_dimensions(path: &std::path::Path) -> Option<(i32,i32)> {
+    use objc2_core_foundation::{CFBoolean, CFDictionary, CFNumber, CFRetained, CFString, CFType, CFURL};
+    use objc2_image_io::{CGImageSource, kCGImageSourceShouldCache};
+    let url = CFURL::from_file_path(path)?;
+    let no = CFBoolean::new(false);
+    unsafe {
+        let options = CFDictionary::<CFString,CFType>::from_slices(&[kCGImageSourceShouldCache], &[no.as_ref()]);
+        let source = CGImageSource::with_url(&url, Some(options.as_opaque()))?;
+        let properties = source.properties_at_index(0, Some(options.as_opaque()))?;
+        // ImageIO property dictionaries have CFString keys and CoreFoundation values.
+        let properties = CFRetained::cast_unchecked::<CFDictionary<CFString,CFType>>(properties);
+        let number = |key: &str| properties.get(&CFString::from_str(key))?.downcast::<CFNumber>().ok()?.as_i32();
+        let (width,height) = (number("PixelWidth")?, number("PixelHeight")?);
+        if width <= 0 || height <= 0 { return None; }
+        Some(if matches!(number("Orientation"), Some(5..=8)) { (height,width) } else { (width,height) })
+    }
+}
+#[cfg(not(target_os = "macos"))]
+fn cached_image_dimensions(_path: &std::path::Path) -> Option<(i32,i32)> { None }
 
 fn hash(s: &str) -> u64 {
     use std::hash::{Hash, Hasher};
@@ -1451,6 +1562,74 @@ fn restore_code_blocks(formatted: &str, text: &str) -> String {
     out
 }
 
+/// The rich composer's formattedText is Markdown with line breaks of its own: every line a
+/// paragraph ("\n\n") and long lines hard-wrapped at 80 columns. `text` has the lines as
+/// typed, so between each pair of chars both share, `markup` takes `text`'s line-break
+/// count; its bold/italic markers stay put. Text that doesn't line up (links or mentions
+/// written differently) keeps `markup` as it is.
+fn keep_line_breaks(markup: &str, text: &str) -> String {
+    const MARK: [char; 4] = ['*', '_', '~', '`'];
+    let gap_char = |c: &char| c.is_whitespace() || MARK.contains(c);
+    let bare = |s: &str| s.chars().filter(|c| !gap_char(c)).collect::<String>();
+    if bare(markup) != bare(text) {
+        return markup.to_string();
+    }
+    let t: Vec<char> = text.chars().collect();
+    let breaks = |from: usize, to: usize| t[from..to].iter().filter(|&&c| c == '\n').count();
+    let (mut i, mut out, mut gap) = (0, String::new(), String::new());
+    for c in markup.chars() {
+        let mut j = i;
+        while t.get(j).is_some_and(gap_char) {
+            j += 1;
+        }
+        if gap_char(&c) {
+            gap.push(c);
+            continue;
+        }
+        if t.get(j) != Some(&c) {
+            return markup.to_string();
+        }
+        out += &with_breaks(&gap, breaks(i, j));
+        out.push(c);
+        gap.clear();
+        i = j + 1;
+    }
+    out += with_breaks(&gap, breaks(i, t.len())).trim_end_matches(' ');
+    out
+}
+
+/// `gap` (whitespace and markers between two chars) with `n` line breaks instead of its own:
+/// the first run holding a newline gets them all, the others become a space or nothing.
+fn with_breaks(gap: &str, n: usize) -> String {
+    if gap.matches('\n').count() == n {
+        return gap.to_string();
+    }
+    let (mut out, mut placed) = (String::new(), false);
+    let mut chars = gap.chars().peekable();
+    while let Some(c) = chars.next() {
+        if !c.is_whitespace() {
+            out.push(c);
+            continue;
+        }
+        let mut run = String::from(c);
+        while let Some(w) = chars.next_if(|w| w.is_whitespace()) {
+            run.push(w);
+        }
+        if !run.contains('\n') {
+            out += &run;
+        } else if n == 0 {
+            out.push(' ');
+        } else if !placed {
+            out += &"\n".repeat(n);
+            placed = true;
+        }
+    }
+    if !placed && n > 0 {
+        out += &"\n".repeat(n);
+    }
+    out
+}
+
 /// `chat-user data-user="users/1"` → "users/1" for tag "chat-user", attribute "data-user"
 fn attr<'a>(tok: &'a str, tag: &str, name: &str) -> Option<&'a str> {
     let rest = tok.strip_prefix(tag)?.trim_start().strip_prefix(name)?.strip_prefix("=\"")?;
@@ -1497,6 +1676,56 @@ fn unescape(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn cached_google_images_have_geometry_and_path_before_the_first_render() {
+        let dir = std::env::temp_dir().join(format!("chatmin-cached-image-{}", crate::now_ms()));
+        let path = download_path(&dir, "spaces/test/media/picture", "ảnh chụp.png");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, include_bytes!("../icons/128x128@2x.png")).unwrap();
+        let mut msgs = vec![Msg { account_id: "gc-test".into(), media: Some(Media {
+            kind: "image".into(), name: "ảnh chụp.png".into(), file_ref: "spaces/test/media/picture".into(), ..Default::default()
+        }), ..Default::default() }];
+        hydrate_cached_media(&dir, &mut msgs);
+        let media = msgs[0].media.as_ref().unwrap();
+        assert_eq!((media.width, media.height), (256,256));
+        assert_eq!(std::path::Path::new(&media.local_path), path);
+        msgs[0].media.as_mut().unwrap().width = 120;
+        msgs[0].media.as_mut().unwrap().height = 240;
+        hydrate_cached_media(&dir, &mut msgs);
+        let media = msgs[0].media.as_ref().unwrap();
+        assert_eq!((media.width, media.height), (120,240), "known provider dimensions remain authoritative");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn thread_queries_are_bounded_and_paged_from_the_newest_end() {
+        let url = reqwest::Url::parse(&thread_url("spaces/test", "spaces/test/threads/t", "next+&token", 200, false)).unwrap();
+        let q: HashMap<_, _> = url.query_pairs().into_owned().collect();
+        assert_eq!(q["pageSize"], "20");
+        assert_eq!(q["orderBy"], "createTime desc");
+        assert_eq!(q["pageToken"], "next+&token");
+        assert_eq!(q["filter"], "thread.name = \"spaces/test/threads/t\"");
+        let root = reqwest::Url::parse(&thread_url("spaces/test", "spaces/test/threads/t", "", 20, true)).unwrap();
+        let q: HashMap<_, _> = root.query_pairs().into_owned().collect();
+        assert_eq!(q["pageSize"], "1");
+        assert_eq!(q["orderBy"], "createTime asc");
+        assert!(!q.contains_key("pageToken"));
+    }
+
+    #[test]
+    fn thread_response_keeps_pagination_even_for_a_deleted_only_page() {
+        let page = parse_thread_page("a", "me", &json!({"messages":[
+            {"name":"spaces/s/messages/new", "createTime":"2026-10-26T04:00:02Z"},
+            {"name":"spaces/s/messages/old", "createTime":"2026-10-26T04:00:01Z"}
+        ], "nextPageToken":"more"}));
+        assert_eq!(page.messages.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["spaces/s/messages/old", "spaces/s/messages/new"]);
+        assert_eq!(page.next_page_token, "more");
+        let deleted = parse_thread_page("a", "me", &json!({"messages":[{"name":"gone", "deletionMetadata":{"deletionType":"CREATOR"}}],"nextPageToken":"keep-going"}));
+        assert!(deleted.messages.is_empty());
+        assert_eq!(deleted.next_page_token, "keep-going");
+    }
 
     #[test]
     fn rules_get_a_zero_width_space() {
@@ -1613,6 +1842,23 @@ mod tests {
         let names = HashMap::new();
         assert_eq!(super::chat_markup("cat \\> out.csv \\<\\<'EOF'\nuser\\_id", &names), "cat > out.csv <<'EOF'\nuser_id");
         assert_eq!(super::chat_markup("a < b and <https://x.y|site>", &names), "a < b and [site](https://x.y)");
+    }
+
+    /// A real announcement: formattedText makes every line a paragraph and wraps at 80 columns.
+    #[test]
+    fn markdown_formatted_text_keeps_the_typed_lines() {
+        let m = json!({
+            "name": "spaces/A/messages/D", "createTime": "2026-10-26T02:00:00Z", "sender": {"name": "users/2"},
+            "text": "🚩[GO-LIVE] VIBE!\n\nStarting 26 October, VIBE will manage your everyday HR needs and submit requests! 🎉\n\nPlease use VIBE for:\n⛱️Leave: ease.\n🌿Leafy — AI.\n\nNeed Support? \nIf you have issues, we’re happy to help!\n💚 Make it VIBE!",
+            "formattedText": "**🚩\\[GO-LIVE\\] VIBE\\!**\n\n**Starting 26 October, **VIBE will manage your everyday HR needs\nand submit requests\\! 🎉\n\nPlease use **VIBE** for:\n\n**⛱️Leave:** ease.\n\n🌿**Leafy** — AI.\n\n**Need Support? **\n\nIf you have issues, we’re happy to\nhelp\\!\n\n💚 **Make it VIBE\\!**\n",
+        });
+        assert_eq!(
+            to_msg("gc", "users/1", &m).text,
+            "**🚩[GO-LIVE] VIBE!**\n\n**Starting 26 October, **VIBE will manage your everyday HR needs and submit requests! 🎉\n\nPlease use **VIBE** for:\n**⛱️Leave:** ease.\n🌿**Leafy** — AI.\n\n**Need Support? **\nIf you have issues, we’re happy to help!\n💚 **Make it VIBE!**",
+        );
+        // the classic format's lines already match: nothing moves
+        assert_eq!(keep_line_breaks("*a*\n* *one*\nb", "a\n* one\nb"), "*a*\n* *one*\nb");
+        assert_eq!(keep_line_breaks("see [doc](https://x.y)\n\nok", "see https://x.y\nok"), "see [doc](https://x.y)\n\nok");
     }
 
     /// A real message once panicked here ("byte index … inside 'ạ'") and killed the poller.

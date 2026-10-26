@@ -1,18 +1,19 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { EASE } from "../lib/motion";
 import { fileSrc, isTauri, openPath, openUrl, revealPath, streamSrc } from "../lib/bridge";
-import { dayLabel, fileSize, fmt, hm, plain } from "../lib/format";
+import { dayLabel, fileSize, hm, plain } from "../lib/format";
+import { FormattedText } from "./FormattedText";
 import { CAP_OFF_NOTE, type Cap } from "../lib/platforms";
 import type { Chat, Media, Msg, MsgPeople } from "../lib/types";
-import { anchor, confirmDialog, fail, openThreadTab, pickReaction, retry, threadUnread, saveMedia, toast, toggleReaction, useApp, type MenuItem } from "../store";
+import { anchor, confirmDialog, fail, openThreadTab, pickReaction, retry, threadUnread, threadTabKey, saveMedia, toast, toggleReaction, useApp, type MenuItem } from "../store";
 import { api } from "../lib/bridge";
 import { PersonAvatar, useAvatar } from "../ui/Avatar";
 import { Icon, type IconName } from "../ui/Icon";
 import { useDownload } from "./Conversation";
 import lottie from "lottie-web/build/player/lottie_light";
 import { translateMsg, trKey } from "../ai";
-import { fileActionLabel } from "../lib/micro-ux";
+import { fileActionLabel, threadReplyCountLabel } from "../lib/micro-ux";
 import { isMobile } from "../lib/mobile";
 import { isReplySwipe } from "../lib/mobile-gestures";
 
@@ -45,6 +46,13 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
   const reduceMotion = useReducedMotion();
   const swipe = useRef<{ x: number; y: number; msg: Msg } | null>(null);
   const ignoreClickUntil = useRef(0);
+  const row = useRef<HTMLDivElement>(null);
+  // Activate once per mounted row. Keep the button connected while an overlay
+  // owns focus, so Escape can return to its invoking toolbar.
+  const [actions, setActions] = useState(false);
+  useLayoutEffect(() => {
+    if (actions && !m.outgoing && row.current) fitActions(row.current);
+  }, [actions, m.outgoing]);
   const resetSwipe = (el: HTMLElement) => {
     swipe.current = null;
     el.style.removeProperty("--reply-drag");
@@ -89,7 +97,11 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
   ) : null;
 
   return (
-    <Wrap className={cls} id={`m-${m.id}`} {...anim}
+    <Wrap ref={row} className={cls} id={`m-${m.id}`} {...anim}
+      tabIndex={0}
+      role="group"
+      aria-label={`Tin nhắn của ${me ? "bạn" : m.senderName}`}
+      onFocusCapture={() => setActions(true)}
       onPointerDown={(e: React.PointerEvent<HTMLElement>) => {
         if (!e.isPrimary) { resetSwipe(e.currentTarget); return; }
         if (!isMobile || e.pointerType !== "touch" || !e.isPrimary || !caps.reply || !chat.canSend || (e.target as Element).closest("button, a, input, textarea, audio, video")) return;
@@ -123,7 +135,7 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
         if (target.closest("button, a, input, textarea, audio, video, .img-msg, .file-card")) return;
         if (target.closest(".message-surface, .msg-meta")) showMessageMenu(e, k, tab, m, caps);
       } : undefined}
-      onMouseEnter={me ? undefined : (e: React.MouseEvent) => fitActions(e.currentTarget as HTMLElement)}
+      onMouseEnter={() => setActions(true)}
       onContextMenu={(e: React.MouseEvent) => {
         if (e.defaultPrevented) return;
         resetSwipe(e.currentTarget as HTMLElement);
@@ -149,7 +161,7 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
               {album.map((t) => <MediaView key={t.id} accountId={t.accountId} media={t.media!} sending={t.status === "sending"} tile anchorId={t.id === m.id ? undefined : t.id} chatKey={k} messageId={t.id} galleryIds={album.map(t => t.id)} onMessageMenu={(e, items) => showMessageMenu(e, k, tab, t, caps, items)} />)}
             </div>
           ) : m.media && <MediaView accountId={m.accountId} media={m.media} sending={m.status === "sending"} chatKey={k} messageId={m.id} onMessageMenu={(e, items) => showMessageMenu(e, k, tab, m, caps, items)} />}
-          {m.text && <div className="tx" dangerouslySetInnerHTML={{ __html: fmt(m.text) }} />}
+          {m.text && <FormattedText text={m.text} />}
           <AnimatePresence initial={false}>
           {tr && (tr.state !== "ok" || tr.text) && (
             <motion.div
@@ -166,7 +178,7 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
               ) : tr.state === "err" ? (
                 <span>{tr.text}</span>
               ) : (
-                <div className="tx" dangerouslySetInnerHTML={{ __html: fmt(tr.text) }} />
+                <FormattedText text={tr.text} />
               )}
             </motion.div>
           )}
@@ -221,7 +233,7 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
             </button>
           </div>
         )}
-      <div className="msg-actions" role="toolbar" aria-label="Thao tác tin nhắn">
+      {actions && <div className="msg-actions" role="toolbar" aria-label="Thao tác tin nhắn">
         <button aria-label="Trả lời" data-tip="Trả lời" onClick={() => setReply(tab, m)}>
           <Icon name="reply" />
         </button>
@@ -260,7 +272,7 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
         >
           <Icon name="ellipsis" />
         </button>
-      </div>
+      </div>}
       </div>
     </Wrap>
   );
@@ -494,12 +506,16 @@ function MediaView({ accountId, media, sending, tile, anchorId, chatKey, message
 function ThreadLink({ k, m, replies, open }: { k: string; m: Msg; replies?: Msg[]; open: boolean }) {
   const unread = useApp((s) => (replies ? threadUnread(s, k, m.threadId, replies) : 0));
   const n = replies?.length ?? 0;
+  const token = useApp(s => {
+    const page = s.threadPages[threadTabKey(k, m.threadId)];
+    return page?.truncated ? undefined : page?.token;
+  });
   if (!n) return null;
   const faces = [...new Map(replies!.map((r) => [r.senderName, r])).values()].slice(0, 3);
   return (
     <button className={`thread-link${open ? " open" : ""}${unread ? " has-new" : ""}`} onClick={() => openThread(k, m)}>
       <span className="faces">{faces.map((f) => <PersonAvatar key={f.senderName} name={f.senderName} accountId={f.accountId} photo={f.senderPhoto} />)}</span>
-      {n} trả lời{unread > 0 && <b className="thread-new">· {unread} mới</b>} <Icon name="external-link" />
+      {threadReplyCountLabel(n, token)} trả lời{unread > 0 && <b className="thread-new">· {unread} mới</b>} <Icon name="external-link" />
       <small>lần cuối {hm(replies![n - 1].ts)}</small>
     </button>
   );

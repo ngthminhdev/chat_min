@@ -20,9 +20,11 @@ function page(href = '/messages/e2ee/t/123/', unread = true, provider = 'messeng
     addEventListener: (type, fn) => { listeners[type] = fn; },
   };
   const schedule = (fn, delay = 0, interval = 0) => { timers.set(++next, { fn, at: now + delay, interval }); return next; };
+  const recoveryStorage = new Map();
   const context = {
-    document, location: { hostname: provider === 'zalo' ? 'chat.zalo.me' : 'www.facebook.com', href: `https://www.facebook.com${href}`, pathname: href, assign: (url) => navigation.push(url) },
-    window: { innerWidth: 1000, open: (url) => { const u = new URL(url); if (u.hostname === 'rows') sent.push(JSON.parse(decodeURIComponent(u.pathname.slice(1)))); if (u.hostname === 'state') states.push(JSON.parse(decodeURIComponent(u.pathname.slice(1)))); } },
+    document, location: { hostname: provider === 'zalo' ? 'chat.zalo.me' : 'www.facebook.com', href: `https://${provider === 'zalo' ? 'chat.zalo.me' : 'www.facebook.com'}${href}`, pathname: href, assign: (url) => navigation.push(url), replace: (url) => navigation.push(url) },
+    sessionStorage: { getItem: key => recoveryStorage.get(key) ?? null, setItem: (key,value) => recoveryStorage.set(key,value) },
+    window: { addEventListener: (type,fn) => { listeners[type] = fn; }, innerWidth: 1000, open: (url) => { const u = new URL(url); if (u.hostname === 'rows') sent.push(JSON.parse(decodeURIComponent(u.pathname.slice(1)))); if (u.hostname === 'state') states.push(JSON.parse(decodeURIComponent(u.pathname.slice(1)))); } },
     setTimeout: (fn, delay) => schedule(fn, delay), clearTimeout: (id) => timers.delete(id),
     setInterval: (fn, delay) => schedule(fn, delay, delay), clearInterval: (id) => timers.delete(id),
     MutationObserver: class { constructor(fn) { observer = fn; } observe() {} disconnect() {} },
@@ -136,4 +138,19 @@ test('Messenger waits for the selected conversation editor instead of focusing t
   editor = { getClientRects: () => [{}], getAttribute: () => 'Viết cho Lan', focus: () => { newFocused = true; } };
   p.advance(200);
   assert.equal(newFocused, true);
+});
+
+
+test('Zalo recovers a timed-out application chunk without an infinite reload loop', () => {
+  const p=page('/',true,'zalo');
+  assert.equal(typeof p.listeners.unhandledrejection,'function');
+  p.listeners.unhandledrejection({reason:Error('Loading chunk 2 failed. (timeout)')});
+  p.advance(1200);
+  assert.equal(p.navigation.length,1);
+  assert.equal(new URL(p.navigation[0]).hostname,'chat.zalo.me');
+  assert.ok(new URL(p.navigation[0]).searchParams.has('_cm_reload'));
+  p.listeners.unhandledrejection({reason:Error('ChunkLoadError')});p.advance(1200);
+  p.listeners.unhandledrejection({reason:Error('ChunkLoadError')});p.advance(1200);
+  assert.equal(p.navigation.length,2);
+  assert.ok(p.states.includes('load-error'));
 });

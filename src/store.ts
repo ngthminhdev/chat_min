@@ -61,7 +61,7 @@ export type Dialog =
   | { kind: "confirm"; title: string; message: string; ok: string; onOk: () => void }
   | { kind: "prompt"; title: string; value: string; onOk: (v: string) => void };
 /** A thread (Google Chat) or forum topic (Telegram) opened in its own tab. */
-export interface ThreadTab { chatKey: string; threadId: string; rootId: string; title: string; error?: string; topic?: boolean }
+export interface ThreadTab { chatKey: string; threadId: string; rootId: string; title: string; error?: string; errorOlder?: boolean; topic?: boolean }
 export interface Toast { id: number; text: string; icon: IconName }
 export interface AuthState { step: string; info: string; error: string }
 export interface SyncState { checks: ("idle" | "run" | "ok" | "err")[]; log: string[] }
@@ -108,6 +108,8 @@ interface State {
   convTab: Record<string, "msgs" | "threads">;
   /** thread/topic tabs ("thread:<chatKey>:<threadId>") → the chat they belong to */
   threadTabs: Record<string, ThreadTab>;
+  /** Transient Google thread pagination; never persisted with workspace tabs. */
+  threadPages: Record<string, { token: string; limit: number; truncated?: boolean }>;
   /** forum chat → topic the user opened last; opening the chat lands there (like Telegram) */
   lastTopic: Record<string, string>;
   /** user folders: sidebar groups holding chats from any account */
@@ -208,6 +210,7 @@ export const useApp = create<State>(() => ({
   inspTab: "info",
   convTab: {},
   threadTabs: saved.threadTabs ?? {},
+  threadPages: {},
   lastTopic: saved.lastTopic ?? {},
   folders: saved.folders ?? [],
   favorites: saved.favorites ?? [],
@@ -544,6 +547,11 @@ export async function openChat(k: string) {
   // The website owns read receipts; the native view controls web notification focus.
   if (get().chats[chatKey]?.kind === "web") return;
   void api.setOpen(accountId, chatId, true).catch(() => {});
+  // An explicitly opened thread is its own bounded read, not another whole-space refresh.
+  if (isThreadTab(k) && !get().threadTabs[k]?.topic) {
+    if (!get().msgs[chatKey]) set(st => ({ msgs: { ...st.msgs, [chatKey]: [] } }));
+    return void loadThread(k);
+  }
   if (!get().msgs[chatKey]) await showCached(chatKey);
   if (!get().msgs[chatKey]) await loadLatest(chatKey);
   else void loadLatest(chatKey);
@@ -624,21 +632,86 @@ async function forumLanding(k: string): Promise<string | null> {
   return t;
 }
 
-async function loadThread(t: string) {
+export async function loadOlderThread(t: string) {
+  if (!get().threadPages[t]?.token || get().older[t] === "loading" || get().older[t] === "done") return;
+  return loadThread(t, true);
+}
+
+async function loadThread(t: string, older = false) {
   const meta = get().threadTabs[t];
-  if (!meta) return;
+  if (!meta || get().older[t] === "loading") return;
   const [accountId, chatId] = splitKey(meta.chatKey);
+  const previous = get().threadPages[t];
+  const token = older ? previous?.token ?? "" : "";
+  if (older && !token) return;
+  set(st => ({ older: { ...st.older, [t]: "loading" } }));
+  // The root can be weeks old. Fetch only that one message, independently of the tail.
+  if (!meta.topic && !(get().msgs[meta.chatKey] ?? []).some(m => m.threadId === meta.threadId && !m.threadReply)) {
+    void api.threadRoot(accountId, chatId, meta.threadId).then(roots => {
+      set(st => {
+        let list = st.msgs[meta.chatKey] ?? [];
+        for (const m of roots) list = upsert(list, m);
+        const root = roots.find(m => !m.threadReply);
+        return { msgs: { ...st.msgs, [meta.chatKey]: list }, threadTabs: root && st.threadTabs[t] ? { ...st.threadTabs, [t]: { ...st.threadTabs[t], rootId: root.id } } : st.threadTabs };
+      });
+    }).catch(() => {});
+  }
   try {
-    const msgs = meta.topic ? await api.topicHistory(accountId, chatId, meta.threadId, 0, 50) : await api.thread(accountId, chatId, meta.threadId);
-    set((s) => {
-      let list = s.msgs[meta.chatKey] ?? [];
-      for (const m of msgs) list = upsert(list, m);
-      const root = list.find((m) => m.threadId === meta.threadId && !m.threadReply);
-      return { msgs: { ...s.msgs, [meta.chatKey]: list }, threadTabs: s.threadTabs[t] ? { ...s.threadTabs, [t]: { ...s.threadTabs[t], rootId: root?.id ?? meta.rootId, error: "" } } : s.threadTabs };
+    const page = meta.topic
+      ? { messages: await api.topicHistory(accountId, chatId, meta.threadId, 0, 50), nextPageToken: "" }
+      : await api.thread(accountId, chatId, meta.threadId, token, 20);
+    set(st => {
+      if (!st.threadTabs[t] || (older && st.threadPages[t] !== previous)) return {};
+      let list = st.msgs[meta.chatKey] ?? [];
+      for (const m of page.messages) list = upsert(list, m);
+      const root = list.find(m => m.threadId === meta.threadId && !m.threadReply);
+      const current = st.threadPages[t];
+      const known = (st.msgs[meta.chatKey] ?? []).filter(m => m.threadId === meta.threadId && m.threadReply);
+      const gap = !older && known.length > 0 && page.messages.length > 0
+        && page.messages[0].sort > known[known.length - 1].sort;
+      // Refreshing a tab preserves its older-page cursor and already revealed history.
+      const paging = older || !current || !current.token || gap
+        ? { token: page.nextPageToken, limit: older ? (current?.limit ?? 20) + page.messages.length : 20 }
+        : current;
+      return {
+        msgs: { ...st.msgs, [meta.chatKey]: list },
+        threadPages: { ...st.threadPages, [t]: paging },
+        older: { ...st.older, [t]: paging.token ? "idle" : "done" },
+        threadTabs: st.threadTabs[t] ? { ...st.threadTabs, [t]: { ...st.threadTabs[t], rootId: root?.id ?? meta.rootId, error: "", errorOlder: false } } : st.threadTabs,
+      };
     });
   } catch (e) {
-    set((s) => ({ threadTabs: s.threadTabs[t] ? { ...s.threadTabs, [t]: { ...s.threadTabs[t], error: String(e) } } : s.threadTabs }));
+    set(st => !st.threadTabs[t] || (older && st.threadPages[t] !== previous) ? {} : ({
+      older: { ...st.older, [t]: "idle" },
+      threadTabs: st.threadTabs[t] ? { ...st.threadTabs, [t]: { ...st.threadTabs[t], error: String(e), errorOlder: older } } : st.threadTabs,
+    }));
   }
+}
+
+/** Keep closed thread previews small, while preserving pages the user explicitly opened. */
+function threadPreviews(k: string, list: Msg[], pages = get().threadPages) {
+  if (!get().chats[k]?.threaded) return { messages: list, pages };
+  const counts = new Map<string, number>();
+  const keep: Msg[] = [];
+  let nextPages = pages;
+  for (let i = list.length - 1; i >= 0; i--) {
+    const m = list[i];
+    if (m.threadReply && m.threadId) {
+      const count = (counts.get(m.threadId) ?? 0) + 1;
+      counts.set(m.threadId, count);
+      const t = threadTabKey(k, m.threadId), page = pages[t];
+      if (count > (page?.limit ?? 20)) {
+        // New live replies can push previously complete history outside the kept window.
+        // Its empty token no longer proves that the visible count is the total.
+        if (page && !page.token && !nextPages[t].truncated) {
+          nextPages = { ...nextPages, [t]: { ...page, truncated: true } };
+        }
+        continue;
+      }
+    }
+    keep.push(m);
+  }
+  return { messages: keep.reverse(), pages: nextPages };
 }
 
 export function toggleFavorite(k: string) {
@@ -666,19 +739,24 @@ async function prefetchUnread(accountId: string) {
 
 /** First open since launch: paint the SQLite copy at once, the live page merges in after. */
 async function showCached(k: string) {
-  // threaded: a page is mostly folded replies, 50 messages can be just 2 rows
-  const limit = get().chats[k]?.threaded ? 400 : PAGE;
-  const [page, roots] = await api.cachedMessages(...splitKey(k), limit).catch(() => [[], []] as Msg[][]);
-  if (!page.length || get().msgs[k]) return;
+  const started = Date.now();
+  const primary = !!get().chats[k]?.threaded;
+  const [page, roots] = await api.cachedMessages(...splitKey(k), PAGE, primary).catch(() => [[], []] as Msg[][]);
+  if ((!page.length && !roots.length) || get().msgs[k]) return;
   let list = page;
   for (const m of roots) list = upsert(list, m);
-  set((s) => ({ msgs: { ...s.msgs, [k]: list } }));
+  const preview = threadPreviews(k, list);
+  list = preview.messages;
+  set((s) => ({ msgs: { ...s.msgs, [k]: list }, threadPages: preview.pages }));
+  void api.logJs(JSON.stringify({ event: "history", phase: "cached", chat: k, messages: list.length, primary: list.filter(m => !m.threadReply).length, elapsedMs: Date.now() - started }));
 }
 
 /** Where the next older page starts: the oldest message of the pages walked so far — not
  *  list[0], which can be a thread starter fillRoots pulled from weeks back (paging from
  *  there would skip everything in between). */
 const cursor = new Map<string, number>();
+// Primary history never advances from a thread reply or thread page token.
+const primaryCursor = new Map<string, number>();
 
 /** Leaving a chat drops the older pages it scrolled through: every loaded message is a
  *  mounted row (no virtualization), and nothing else ever shrank the list. */
@@ -686,28 +764,53 @@ function trimLoaded(k: string) {
   const list = get().msgs[k];
   const keep = pageSize(k) * 2;
   if (!list || list.length <= keep) return;
-  const next = list.slice(-keep);
+  const tail = list.slice(-keep);
+  let next = tail;
+  if (get().chats[k]?.threaded) {
+    for (const root of list.filter(m => !m.threadReply).slice(-PAGE * 2)) next = upsert(next, root);
+    const first = next.find(m => !m.threadReply);
+    if (first) primaryCursor.set(k, first.sort);
+  }
   cursor.set(k, next[0].sort);
-  set((s) => ({ msgs: { ...s.msgs, [k]: next }, older: { ...s.older, [k]: "idle" } }));
+  // A token beyond discarded replies would leave an unfillable gap on the next visit.
+  set(s => {
+    const threadPages = { ...s.threadPages };
+    const older = { ...s.older, [k]: "idle" as const };
+    for (const t of Object.keys(threadPages)) {
+      if (s.threadTabs[t]?.chatKey === k) { delete threadPages[t]; older[t] = "idle"; }
+    }
+    const preview = threadPreviews(k, next, threadPages);
+    return { msgs: { ...s.msgs, [k]: preview.messages }, threadPages: preview.pages, older };
+  });
+  for (const tried of rootTried) if (tried.startsWith(`${k}#`)) rootTried.delete(tried);
 }
 /** Threaded spaces: a page is mostly replies folded into a few rows, so take bigger pages. */
 const pageSize = (k: string) => (get().chats[k]?.threaded ? 100 : PAGE);
 
-export async function loadLatest(k: string) {
+const latestPending = new Map<string, Promise<void>>();
+export function loadLatest(k: string): Promise<void> {
+  const pending = latestPending.get(k);
+  if (pending) return pending;
+  const request = refreshLatest(k).finally(() => { latestPending.delete(k); });
+  latestPending.set(k, request);
+  return request;
+}
+
+async function refreshLatest(k: string) {
+  const started = Date.now();
   const [accountId, chatId] = splitKey(k);
   const unread = get().chats[k]?.unread ?? 0;
   const size = pageSize(k);
   try {
     const fetched = await api.messages(accountId, chatId, 0, size);
-    // threaded spaces: bring the missing thread starters in the same update — added after
-    // the page, each one moved its thread's row up in plain view
-    const page = [...fetched, ...(await fetchRoots(k, [...(get().msgs[k] ?? []), ...fetched]))];
+    // Publish the primary page first. Missing thread starters are small background reads.
+    const page = fetched;
     set((s) => {
       // merge: keep older pages already loaded and anything that arrived meanwhile —
       // unless a full page doesn't reach them (more than a page arrived while closed):
       // that gap would never fill, so start over from the live page
       let list = s.msgs[k] ?? [];
-      const gap = fetched.length >= size && list.length > 0 && list[list.length - 1].sort < fetched[0].sort;
+      const gap = !s.chats[k]?.threaded && fetched.length >= size && list.length > 0 && list[list.length - 1].sort < fetched[0].sort;
       if (gap) list = [];
       if (fetched.length && (gap || !cursor.has(k))) cursor.set(k, fetched[0].sort);
       for (const m of page) list = upsert(list, m);
@@ -716,25 +819,25 @@ export async function loadLatest(k: string) {
         unread > 0 && !s.unreadMark[k] && incoming.length
           ? { ...s.unreadMark, [k]: { sort: incoming[Math.max(0, incoming.length - unread)].sort, count: unread } }
           : s.unreadMark;
+      const preview = threadPreviews(k, list);
       return {
-        msgs: { ...s.msgs, [k]: list },
+        msgs: { ...s.msgs, [k]: preview.messages },
+        threadPages: preview.pages,
         older: { ...s.older, [k]: fetched.length ? s.older[k] ?? "idle" : "done" },
         loadErr: { ...s.loadErr, [k]: "" },
         unreadMark: mark,
       };
     });
+    void api.logJs(JSON.stringify({ event: "history", phase: "live", chat: k, fetched: fetched.length, elapsedMs: Date.now() - started }));
     void fillRoots(k);
-    void fillScreen(k);
   } catch (e) {
     set((s) => ({ loadErr: { ...s.loadErr, [k]: String(e) }, msgs: { ...s.msgs, [k]: s.msgs[k] ?? [] } }));
   }
 }
 
-/** Threaded spaces: a page of recent replies can lack the messages that started their
- *  threads, which leaves the timeline empty. Fetch those threads (oldest first, so the
- *  starter comes along). Each thread is tried once per session. */
+/** Recover only missing starters after the main page is visible; never fetch thread bodies. */
 const rootTried = new Set<string>();
-/** The threads in `list` whose starter is missing, fetched whole (≤8, each tried once). */
+/** At most eight starter reads, with only two requests in flight. */
 async function fetchRoots(k: string, list: Msg[]): Promise<Msg[]> {
   if (!get().chats[k]?.threaded) return [];
   const roots = new Set(list.filter((m) => !m.threadReply).map((m) => m.threadId));
@@ -742,10 +845,19 @@ async function fetchRoots(k: string, list: Msg[]): Promise<Msg[]> {
     .filter((t) => !rootTried.has(`${k}#${t}`))
     .slice(-8);
   if (!missing.length) return [];
-  missing.forEach((t) => rootTried.add(`${k}#${t}`));
   const [accountId, chatId] = splitKey(k);
-  const pages = await Promise.all(missing.map((t) => api.thread(accountId, chatId, t).catch(() => [] as Msg[])));
-  return pages.flat();
+  const found: Msg[] = [];
+  for (let i = 0; i < missing.length; i += 2) {
+    const batch = missing.slice(i, i + 2);
+    batch.forEach(t => rootTried.add(`${k}#${t}`));
+    const pages = await Promise.all(batch.map(t => api.threadRoot(accountId, chatId, t).catch(() => {
+      rootTried.delete(`${k}#${t}`);
+      return [] as Msg[];
+    })));
+    found.push(...pages.flat());
+    if (chatKeyOf(get().active) !== k) break;
+  }
+  return found;
 }
 
 async function fillRoots(k: string) {
@@ -765,33 +877,27 @@ export async function loadOlder(k: string) {
   set({ older: { ...s.older, [k]: "loading" } });
   const [accountId, chatId] = splitKey(k);
   try {
-    const page = await api.messages(accountId, chatId, cursor.get(k) ?? list[0].sort, pageSize(k));
+    const primary = !!s.chats[k]?.threaded;
+    const response = primary
+      ? await api.primaryMessages(accountId, chatId, primaryCursor.get(k) ?? list.find(m => !m.threadReply)?.sort ?? cursor.get(k) ?? list[0].sort, PAGE)
+      : null;
+    const page = response?.messages ?? await api.messages(accountId, chatId, cursor.get(k) ?? list[0].sort, pageSize(k));
+    if (response) primaryCursor.set(k, response.before);
     if (page.length) cursor.set(k, page[0].sort);
     let grew = false;
     set((st) => {
       let next = st.msgs[k] ?? [];
       for (const m of page) next = upsert(next, m);
       grew = next.length > (st.msgs[k]?.length ?? 0);
-      return { msgs: { ...st.msgs, [k]: next }, older: { ...st.older, [k]: page.length ? "idle" : "done" } };
+      const preview = threadPreviews(k, next);
+      return { msgs: { ...st.msgs, [k]: preview.messages }, threadPages: preview.pages, older: { ...st.older, [k]: (response ? response.hasMore : page.length > 0) ? "idle" : "done" } };
     });
     // a page the cache already showed changes nothing on screen, and the list doesn't
     // scroll again to ask for the next one: keep walking back until something new comes
-    if (page.length && !grew) return loadOlder(k);
+    if (!response && page.length && !grew) return loadOlder(k);
     void fillRoots(k);
   } catch {
     set((st) => ({ older: { ...st.older, [k]: "idle" } }));
-  }
-}
-
-/** Threaded spaces fold replies under their thread, so a page can come down to a handful
- *  of rows — too short to scroll, and scrolling up is what loads more. Keep paging back
- *  (a few pages at most) until the timeline has enough rows to scroll. */
-async function fillScreen(k: string) {
-  for (let i = 0; i < 5 && get().chats[k]?.threaded; i++) {
-    const list = get().msgs[k] ?? [];
-    const rows = new Set(list.map((m) => m.threadId || m.id)).size;
-    if (rows >= 25 || get().older[k] === "done") return;
-    await loadOlder(k);
   }
 }
 
@@ -819,7 +925,11 @@ export function closeTab(k: string) {
     delete unreadMark[k];
     const threadTabs = { ...s.threadTabs };
     delete threadTabs[k];
-    return { tabs, active, unreadMark, threadTabs };
+    const threadPages = { ...s.threadPages };
+    delete threadPages[k];
+    const older = { ...s.older };
+    if (isThreadTab(k)) delete older[k];
+    return { tabs, active, unreadMark, threadTabs, threadPages, older };
   });
   const closed = isThreadTab(k) ? null : k;
   if (closed && chatKeyOf(get().active) !== closed) void api.setOpen(...splitKey(closed), false).catch(() => {});

@@ -180,6 +180,7 @@ impl Core {
             None
         };
         let mut msg = msg;
+        gchat::hydrate_cached_media(&self.cache_dir, std::slice::from_mut(&mut msg));
         if let (Some(old), true) = (&before, msg.account_id.starts_with("gc-")) {
             // gchat never says which reactions are mine: keep what we knew unless that count fell
             for r in msg.reactions.iter_mut() {
@@ -608,6 +609,18 @@ async fn messages(core: C<'_>, account_id: String, chat_id: String, before: i64,
         if cached.is_empty() { Err(e) } else { Ok(cached) }
     })
 }
+/// Main timeline pagination has no relationship to any opened thread's cursor.
+#[tauri::command]
+async fn primary_messages(core: C<'_>, account_id: String, chat_id: String, before: i64, limit: i32) -> Res<gchat::PrimaryPage> {
+    let core = core.inner().clone();
+    let mut cached = core.store().primary_msgs(&account_id, &chat_id, before, limit as i64)?;
+    if !cached.is_empty() {
+        gchat::hydrate_cached_media(&core.cache_dir, &mut cached);
+        return Ok(gchat::PrimaryPage { before: cached[0].sort, messages: cached, has_more: true });
+    }
+    core.gchat.primary_history(&core, &account_id, &chat_id, before).await
+}
+
 /// macOS's own emoji picker (full set, search, recents); it types into the focused field.
 #[tauri::command]
 fn emoji_palette(app: tauri::AppHandle) {
@@ -690,7 +703,7 @@ fn clipboard_files() -> Vec<String> {
 fn show_on_activate(app: tauri::AppHandle) {
     use objc2_foundation::{NSNotification, NSNotificationCenter};
     let block = block2::RcBlock::new(move |_: std::ptr::NonNull<NSNotification>| {
-        if let Some(w) = app.get_webview_window("main") {
+        if let Some(w) = app.get_window("main") {
             if !w.is_visible().unwrap_or(true) {
                 let _ = w.show();
                 let _ = w.set_focus();
@@ -725,17 +738,16 @@ fn inbox(core: C<'_>, limit: i64) -> Res<Vec<Msg>> {
     Ok(v)
 }
 #[tauri::command]
-fn cached_messages(core: C<'_>, account_id: String, chat_id: String, limit: i64) -> Res<(Vec<Msg>, Vec<Msg>)> {
-    let store = core.store();
-    let page = store.msgs(&account_id, &chat_id, 0, limit)?;
-    let led: std::collections::HashSet<&str> = page.iter().filter(|m| !m.thread_reply).map(|m| m.thread_id.as_str()).collect();
-    let missing: std::collections::HashSet<&str> =
-        page.iter().filter(|m| m.thread_reply && !led.contains(m.thread_id.as_str())).map(|m| m.thread_id.as_str()).collect();
-    let roots = match (missing.is_empty(), page.first()) {
-        (false, Some(first)) => store.roots(&account_id, &chat_id, first.sort)?.into_iter().filter(|m| missing.contains(m.thread_id.as_str())).collect(),
-        _ => vec![],
-    };
-    Ok((stale_refs(page), stale_refs(roots)))
+async fn cached_messages(core: C<'_>, account_id: String, chat_id: String, limit: i64, primary: Option<bool>) -> Res<(Vec<Msg>, Vec<Msg>)> {
+    let core = core.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || -> Res<(Vec<Msg>, Vec<Msg>)> {
+        let started = std::time::Instant::now();
+        let (mut page, mut roots) = core.store().cached_msgs(&account_id, &chat_id, limit, primary.unwrap_or(false))?;
+        gchat::hydrate_cached_media(&core.cache_dir, &mut page);
+        gchat::hydrate_cached_media(&core.cache_dir, &mut roots);
+        eprintln!("[history] cached chat={chat_id} messages={} roots={} elapsedMs={}", page.len(), roots.len(), started.elapsed().as_millis());
+        Ok((stale_refs(page), stale_refs(roots)))
+    }).await.map_err(|e| e.to_string())?
 }
 
 /// TDLib file ids only live for one session: a cached message rendered with last run's ids
@@ -753,10 +765,22 @@ fn stale_refs(mut msgs: Vec<Msg>) -> Vec<Msg> {
     msgs
 }
 #[tauri::command]
-async fn thread(core: C<'_>, account_id: String, chat_id: String, thread_id: String) -> Res<Vec<Msg>> {
+async fn thread(core: C<'_>, account_id: String, chat_id: String, thread_id: String, page_token: Option<String>, limit: Option<i32>) -> Res<gchat::ThreadPage> {
     let core = core.inner().clone();
-    core.gchat.thread(&core, &account_id, &chat_id, &thread_id).await.or_else(|e| {
-        let cached = core.store().thread_msgs(&account_id, &chat_id, &thread_id)?;
+    let token = page_token.unwrap_or_default();
+    let limit = limit.unwrap_or(20).clamp(1, 20);
+    core.gchat.thread(&core, &account_id, &chat_id, &thread_id, &token, limit).await.or_else(|e| {
+        // A continuation token belongs to the live query; never replay the cached tail as an older page.
+        if !token.is_empty() { return Err(e); }
+        let cached = core.store().thread_page(&account_id, &chat_id, &thread_id, limit as i64, false)?;
+        if cached.is_empty() { Err(e) } else { Ok(gchat::ThreadPage { messages: cached, next_page_token: String::new() }) }
+    })
+}
+#[tauri::command]
+async fn thread_root(core: C<'_>, account_id: String, chat_id: String, thread_id: String) -> Res<Vec<Msg>> {
+    let core = core.inner().clone();
+    core.gchat.thread_root(&core, &account_id, &chat_id, &thread_id).await.or_else(|e| {
+        let cached = core.store().thread_page(&account_id, &chat_id, &thread_id, 1, true)?;
         if cached.is_empty() { Err(e) } else { Ok(cached) }
     })
 }
@@ -878,6 +902,9 @@ async fn mark_read(core: C<'_>, account_id: String, chat_id: String, msg_ids: Ve
 #[tauri::command]
 async fn set_open(core: C<'_>, account_id: String, chat_id: String, open: bool) -> Res<()> {
     core.notifier.set_open(&account_id, &chat_id, open);
+    if open && matches!(core.platform(&account_id), "telegram" | "gchat") {
+        web::hide_all(&core);
+    }
     if core.platform(&account_id) == "telegram" {
         core.tg.set_open(&account_id, &chat_id, open).await
     } else {
@@ -1316,8 +1343,10 @@ pub fn run() {
             account_remove,
             messages,
             cached_messages,
+            primary_messages,
             emoji_palette,
             thread,
+            thread_root,
             pinned,
             members,
             send,
@@ -1354,7 +1383,7 @@ pub fn run() {
         .run(|app, event| match event {
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen { .. } => {
-                if let Some(w) = app.get_webview_window("main") {
+                if let Some(w) = app.get_window("main") {
                     let _ = w.show();
                     let _ = w.set_focus();
                 }

@@ -18,7 +18,7 @@ function diag(msg: string) {
   const now = Date.now();
   if (now - diagT > 1000) { diagN = 0; diagT = now; }
   if (++diagN > 40) return;
-  void api.logJs(`[scroll] ${msg}`);
+  void api.logJs(`[scroll] chat=${useApp.getState().active ?? ""} ${msg}`);
 }
 
 export function useStickyScroll(box: React.RefObject<HTMLDivElement | null>, lastId: string | undefined, onTop?: () => void) {
@@ -137,7 +137,7 @@ export function useStickyScroll(box: React.RefObject<HTMLDivElement | null>, las
     el.addEventListener("scrollend", endTravel);
     const t = setTimeout(() => {
       const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
-      void api.logJs(`[scroll] settled dist=${Math.round(dist)} h=${el.scrollHeight} view=${el.clientHeight} stick=${stick.current} rows=${el.querySelectorAll("[id^='m-']").length}`);
+      void api.logJs(`[scroll] chat=${useApp.getState().active ?? ""} settled dist=${Math.round(dist)} h=${el.scrollHeight} view=${el.clientHeight} stick=${stick.current} rows=${el.querySelectorAll("[id^='m-']").length}`);
     }, 2500);
     return () => {
       clearTimeout(t); clearTimeout(settle.current);
@@ -164,7 +164,7 @@ export function useStickyScroll(box: React.RefObject<HTMLDivElement | null>, las
     setAway(dist > 400);
     if (stick.current) setFresh(0);
     capture();
-    if (el.scrollTop < 200) onTop?.();
+    if (byUser && !stick.current && el.scrollTop < 200) onTop?.();
   };
 
   const toBottom = () => {

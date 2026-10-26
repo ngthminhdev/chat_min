@@ -13,6 +13,13 @@ test("fmt escapes, then renders code, links and mentions", () => {
   assert.equal(fmt("`https://x.io`"), "<p><code>https://x.io</code></p>");
 });
 
+test("**bold** with a space before the closing marker, as Google's rich composer writes it", () => {
+  assert.equal(fmt("**Starting 26 October, **VIBE will"), "<p><strong>Starting 26 October, </strong>VIBE will</p>");
+  assert.equal(fmt("**Need Support? **\nIf"), "<p><strong>Need Support? </strong><br>If</p>");
+  assert.equal(fmt("2 ** 3 ** 4 and a**b**"), "<p>2 ** 3 ** 4 and a**b**</p>");
+  assert.equal(plain("**Need Support? **If"), "Need Support? If");
+});
+
 test("plain / norm / initials", () => {
   assert.equal(plain("Hi @{Lan}  [doc](https://d.io) `go`\nok"), "Hi @Lan doc go ok");
   assert.equal(norm("Đồng Văn"), "dong van");

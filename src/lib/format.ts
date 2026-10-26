@@ -11,10 +11,11 @@ const INLINE = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<]+[^\s<.,:
 // *x* / _x_ / ~x~ only when they hug a word and aren't inside one: snake_case_names,
 // 2 * 3 * 4 and ~/paths stay as typed
 const EMPH: [RegExp, string][] = [
-  // **x**: Markdown habit, Google Chat renders it bold too
+  // **x**: Markdown habit, Google Chat renders it bold too — also "**Need help? **" and
+  // "**Starting, **VIBE", which Google's rich composer writes for a bold run ending in a space
   // a zero-width space right after a marker (U+200B) keeps it literal: tg.rs/gchat emit it
   // for markup characters that are plain text, the composer's "plain text" toggle too
-  [/(^|[^\w*])\*\*(?=[^\s\u200B])([^*\n]*?\S)\*\*(?![\w*])/g, "strong"],
+  [/(^|[^\w*])\*\*(?=[^\s\u200B])([^*\n]*?\S\s*)\*\*(?!\*)/g, "strong"],
   [/(^|[^\w*])\*(?=[^\s\u200B])([^*\n]*?\S)\*(?![\w*])/g, "strong"],
   [/(^|[^\w_])_(?=[^\s\u200B])([^_\n]*?\S)_(?![\w_])/g, "em"],
   [/(^|[^\w~])~(?=[^\s\u200B])([^~\n]*?\S)~(?![\w~])/g, "s"],
@@ -67,8 +68,35 @@ function codeBlock(code: string, lang: string): string {
   return `<div class="code-block"><div class="code-head"><span class="code-lang">${h.lang || "code"}</span><button type="button" class="code-copy" aria-label="Sao chép mã" data-tip="Sao chép">${COPY_SVG}</button></div><pre><code class="hljs">${h.html}</code></pre></div>`;
 }
 
+// Shared across timeline mounts: switching tabs should not repeat syntax detection.
+// Bound both entry count and retained text/HTML (UTF-16 characters, about 2 MB).
+const formatted = new Map<string, string>();
+let formattedChars = 0;
+const FORMAT_CHARS = 1_000_000;
+
 /** Escaped HTML for a message body. `me` = names that count as "mentions me". */
 export function fmt(text: string, me: string[] = []): string {
+  const key = text.length <= 64_000 ? JSON.stringify([text, me]) : "";
+  const cached = key ? formatted.get(key) : undefined;
+  if (cached !== undefined) {
+    formatted.delete(key);
+    formatted.set(key, cached);
+    return cached;
+  }
+  const html = formatBody(text, me);
+  if (key && key.length + html.length <= FORMAT_CHARS) {
+    formatted.set(key, html);
+    formattedChars += key.length + html.length;
+    while (formatted.size > 256 || formattedChars > FORMAT_CHARS) {
+      const oldest = formatted.keys().next().value!;
+      formattedChars -= oldest.length + formatted.get(oldest)!.length;
+      formatted.delete(oldest);
+    }
+  }
+  return html;
+}
+
+function formatBody(text: string, me: string[]): string {
   return text
     .split(/```([\w+#-]*)\n?([\s\S]*?)\n?```/g)
     .map((part, i, parts) =>
@@ -92,7 +120,7 @@ export function plain(text: string): string {
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
     .replace(/@\{([^}]+)\}/g, "@$1")
     .replace(/`/g, "")
-    .replace(/\*\*(?=[^\s\u200B])([^*\n]*?\S)\*\*/g, "$1")
+    .replace(/\*\*(?=[^\s\u200B])([^*\n]*?\S\s*)\*\*/g, "$1")
     .replace(/(^|[^\w*_~])[*_~](?=[^\s\u200B])([^*_~\n]*?\S)[*_~](?![\w*_~])/g, "$1$2")
     .replace(/^\s*[*-]\s+/gm, "• ")
     .replace(/\u200B/g, "")

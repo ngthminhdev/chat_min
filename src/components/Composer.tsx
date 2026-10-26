@@ -68,6 +68,9 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
     setFiles((f) => [...f, ...add.filter((a) => !f.some((x) => x.path === a.path))]);
     if (!isMobile) ta.current?.focus();
   };
+  // the drop listener lives across renders: it must see today's blocked/canSend, not launch's
+  const stageRef = useRef(stage);
+  stageRef.current = stage;
   useEffect(() => () => { attachmentRun.current++; }, [k]);
   // Tauri owns file drops (dragDropEnabled): the composer of the visible tab takes them
   useEffect(() => {
@@ -80,12 +83,12 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
         if (payload.type === "enter" || payload.type === "over") setDropping(true);
         else {
           setDropping(false);
-          if (payload.type === "drop") void stage(payload.paths).catch(fail);
+          if (payload.type === "drop") void stageRef.current(payload.paths).catch(fail);
         }
       }).then((u) => (gone ? u() : (off = u))),
-    );
+    ).catch(fail);
     return () => { gone = true; off(); };
-  }, [k, editId]);
+  }, [k]);
   const onPaste = (e: React.ClipboardEvent) => {
     const cd = e.clipboardData;
     const blobs = [...cd.files];

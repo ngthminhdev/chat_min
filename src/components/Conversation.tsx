@@ -4,23 +4,24 @@ import { dayLabel, fmtCount } from "../lib/format";
 import type { Msg } from "../lib/types";
 import { capsOf, healthOf, loadLatest, loadOlder, markRead, splitKey, threadTabKey, threadUnread, toast, useApp, openSearch } from "../store";
 import { api, openUrl } from "../lib/bridge";
+import { createWebviewLifecycle } from "../lib/webview-lifecycle";
 import { startWizard } from "../views/Wizard";
 import { ChatAvatar, PersonAvatar } from "../ui/Avatar";
 import { Icon } from "../ui/Icon";
 import { Composer } from "./Composer";
 import { MessageItem } from "./Message";
 import { SummaryButton, SummaryCard } from "./Summary";
-import { useStickyScroll } from "./useStickyScroll";
+import { Timeline, TimelineSkeleton, type TimelineHandle } from "./Timeline";
 import { useMessageArrivals } from "./useMessageArrivals";
-import { messageRenderKey } from "../lib/message-identity";
 import { TypingIndicator } from "./TypingIndicator";
-import { DelayedLoading } from "./DelayedLoading";
 import { langLabel, toggleAutoTranslate, translateMissing } from "../ai";
 import { isMobile } from "../lib/mobile";
 import { showMobileList } from "../mobile";
 
 import { layoutMessages } from "../lib/message-layout";
 import { MobileActions } from "../ui/MobileActions";
+
+const mountWebview = createWebviewLifecycle(api, (e) => toast(String(e), "circle-alert"));
 
 const HEALTH_MSG: Record<string, string> = {
   offline: "Tài khoản đang mất kết nối. Nháp vẫn được giữ trên máy.",
@@ -173,7 +174,8 @@ function MessageList({ k }: { k: string }) {
   const threadTabs = useApp((s) => s.tabs);
   const jumpTo = useApp((s) => s.jumpTo);
   const caps = capsOf(k);
-  const box = useRef<HTMLDivElement>(null);
+  const box = useRef<HTMLDivElement | null>(null);
+  const timeline = useRef<TimelineHandle>(null);
   const arrival = useMessageArrivals(list, fresh);
 
   // threaded spaces show thread starters with their replies folded underneath; a thread
@@ -196,12 +198,8 @@ function MessageList({ k }: { k: string }) {
 
   useViewportTranslate(box, k, k, visible);
 
-  const lastVisible = visible[visible.length - 1];
-  const scroll = useStickyScroll(box, lastVisible ? messageRenderKey(lastVisible) : undefined, () => void loadOlder(k));
-  // back at the newest message: what arrived meanwhile is now seen
-  const onScroll = () => {
-    scroll.onScroll();
-    const bottom = scroll.stick.current;
+  const rows = useMemo(() => layoutMessages(visible, mark?.sort), [visible, mark?.sort]);
+  const onBottom = (bottom: boolean) => {
     if (bottom !== useApp.getState().atBottom) {
       useApp.setState({ atBottom: bottom });
       const c = useApp.getState().chats[k];
@@ -212,12 +210,7 @@ function MessageList({ k }: { k: string }) {
 
   useEffect(() => {
     if (!jumpTo) return;
-    const el = document.getElementById(`m-${jumpTo}`);
-    if (el) {
-      scroll.toMessage(el);
-      el.classList.remove("flash");
-      void el.offsetWidth;
-      el.classList.add("flash");
+    if (timeline.current?.toMessage(jumpTo)) {
       useApp.setState({ jumpTo: null });
     } else if (list && older !== "done" && older !== "loading") {
       void loadOlder(k);
@@ -230,7 +223,7 @@ function MessageList({ k }: { k: string }) {
   let body: React.ReactNode;
   if (!list) {
     body = (
-      <DelayedLoading label="Đang tải tin nhắn…" />
+      <TimelineSkeleton />
     );
   } else if (!visible.length) {
     body = err ? (
@@ -254,63 +247,24 @@ function MessageList({ k }: { k: string }) {
     // my newest read message carries the "seen by" avatars
     let lastSeenId: string | undefined;
     for (let i = visible.length - 1; i >= 0 && !lastSeenId; i--) if (visible[i].outgoing && visible[i].status === "seen") lastSeenId = visible[i].id;
-    body = (
-      <>
+    return <Timeline ref={timeline} rows={rows} box={box} onTop={() => void loadOlder(k)} onBottom={onBottom}
+      header={<>
+        {older === "idle" && <div className="history-start"><button className="tool-btn" onClick={() => void loadOlder(k)}>Tải tin nhắn cũ hơn</button></div>}
         {older === "loading" && <div className="older-loading"><span className="veil-spinner" /></div>}
         {older === "done" && <div className="history-start">Đầu cuộc trò chuyện</div>}
-        {layoutMessages(visible, mark?.sort).map(({ m, album, first, last, newDay }) => {
-          const showUnread = mark && m.sort === mark.sort;
-          return (
-            <Fragment key={messageRenderKey(m)}>
-              {newDay && (
-                <div className="day-sep" role="separator">
-                  <span>{dayLabel(m.ts)}</span>
-                </div>
-              )}
-              {showUnread && (
-                <div className="unread-sep" role="separator">
-                  <span>{mark.count} tin chưa đọc</span>
-                </div>
-              )}
-              <MessageItem
-                k={k}
-                m={m}
-                chat={chat!}
-                caps={caps}
-                first={first}
-                last={last}
-                album={album}
-                seenBy={m.id === lastSeenId}
-                fresh={arrival(m)}
-                replies={m.threadId ? replies[m.threadId] : undefined}
-                threadOpen={!!m.threadId && threadTabs.includes(threadTabKey(k, m.threadId))}
-              />
-            </Fragment>
-          );
-        })}
-        {/* a fixed slot: "đang gõ" fading in and out must not move the list (busy groups toggle it every few seconds) */}
-        {caps.typing && (
-          <div className="typing-slot" aria-live="polite">
-            <AnimatePresence>
-              {typing?.until ? (
-                <motion.div className="typing" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-                  <PersonAvatar name={typing.who || chat?.title || "?"} size="sm" accountId={chat?.accountId} photo={chat?.kind === "dm" ? chat.photo || chat.photoRef : ""} />
-                  <TypingIndicator label={`${typing.who || chat?.title} đang gõ`} />
-                </motion.div>
-              ) : null}
-            </AnimatePresence>
-          </div>
-        )}
-      </>
-    );
+      </>}
+      footer={caps.typing && <div className="typing-slot" aria-live="polite">
+        {typing?.until ? <><PersonAvatar name={typing.who || chat?.title || "?"} size="sm" accountId={chat?.accountId} photo={chat?.kind === "dm" ? chat.photo || chat.photoRef : ""} /><TypingIndicator label={`${typing.who || chat?.title} đang gõ`} /></> : null}
+      </div>}
+      renderRow={({ m, album, first, last, newDay }) => <Fragment>
+        {newDay && <div className="day-sep" role="separator"><span>{dayLabel(m.ts)}</span></div>}
+        {mark && m.sort === mark.sort && <div className="unread-sep" role="separator"><span>{mark.count} tin chưa đọc</span></div>}
+        <MessageItem k={k} m={m} chat={chat!} caps={caps} first={first} last={last} album={album}
+          seenBy={m.id === lastSeenId} fresh={arrival(m)} replies={m.threadId ? replies[m.threadId] : undefined}
+          threadOpen={!!m.threadId && threadTabs.includes(threadTabKey(k, m.threadId))} />
+      </Fragment>} />;
   }
-
-  return (
-    <div className="msgs" ref={box} onScroll={onScroll} aria-live="polite">
-      <div className="msgs-inner">{body}</div>
-      <JumpBottom away={scroll.away} fresh={scroll.fresh} onClick={scroll.toBottom} />
-    </div>
-  );
+  return <div className="msgs"><div className="msgs-inner">{body}</div></div>;
 }
 
 /** Google Chat space as a list of threads, most recently active first. */
@@ -329,18 +283,14 @@ function WebConversation({ chatKey }: { chatKey: string }) {
   useEffect(() => {
     const el = host.current;
     if (!el || !id || isMobile) return;
+    const placement = mountWebview(id, chatId);
     if (covered) {
-      void api.webHide(id);
+      placement.dispose();
       return;
     }
-    let lastRect = "";
     const place = () => {
       const r = el.getBoundingClientRect();
-      const rect = `${r.left},${r.top},${r.width},${r.height}`;
-      if (rect === lastRect) return;
-      const navigate = !lastRect;
-      lastRect = rect;
-      void api.webShow(id, chatId, { x: r.left, y: r.top, w: r.width, h: r.height }, navigate).catch((e) => toast(String(e), "circle-alert"));
+      placement.place({ x: r.left, y: r.top, w: r.width, h: r.height });
     };
     place();
     const ro = new ResizeObserver(place);
@@ -349,7 +299,7 @@ function WebConversation({ chatKey }: { chatKey: string }) {
     return () => {
       ro.disconnect();
       window.removeEventListener("resize", place);
-      void api.webHide(id);
+      placement.dispose();
     };
   }, [id, chatId, covered, reopen]);
   if (!chat) return null;
@@ -467,29 +417,37 @@ export function TranslateAllButton({ autoKey, chatKey = autoKey, msgs }: { autoK
 export function useViewportTranslate(box: React.RefObject<HTMLDivElement | null>, autoKey: string, chatKey: string, list: Msg[]) {
   const on = useApp((s) => !!s.trAuto[autoKey]);
   useEffect(() => {
-    const el = box.current;
-    if (!on || !el) return;
-    let t = 0;
+    if (!on) return;
+    let t = 0, frame = 0;
+    let el: HTMLDivElement | null = null;
+    const indexes = new Map(list.map((m, i) => [m.id, i]));
     const run = () => {
       clearTimeout(t);
       t = window.setTimeout(() => {
+        if (!el) return;
         const { top, bottom } = el.getBoundingClientRect();
         let lo = -1, hi = -1;
-        list.forEach((m, i) => {
-          const r = document.getElementById(`m-${m.id}`)?.getBoundingClientRect();
-          if (r && r.bottom > top && r.top < bottom) {
-            if (lo < 0) lo = i;
-            hi = i;
+        for (const node of el.querySelectorAll<HTMLElement>("[id^='m-']")) {
+          const i = indexes.get(node.id.slice(2));
+          const r = node.getBoundingClientRect();
+          if (i !== undefined && r.bottom > top && r.top < bottom) {
+            if (lo < 0 || i < lo) lo = i;
+            if (hi < i) hi = i;
           }
-        });
+        }
         if (lo >= 0) void translateMissing(chatKey, list.slice(Math.max(0, lo - 5), hi + 6), autoKey);
       }, 250);
     };
-    run();
-    el.addEventListener("scroll", run, { passive: true });
+    const attach = () => {
+      el = box.current;
+      if (!el) { frame = requestAnimationFrame(attach); return; }
+      run(); el.addEventListener("scroll", run, { passive: true });
+    };
+    attach();
     return () => {
       clearTimeout(t);
-      el.removeEventListener("scroll", run);
+      cancelAnimationFrame(frame);
+      el?.removeEventListener("scroll", run);
     };
   }, [on, box, autoKey, chatKey, list]);
 }

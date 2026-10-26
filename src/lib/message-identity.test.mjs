@@ -62,3 +62,25 @@ test("id change before the send promise resolves leaves no stale pending bubble"
   assert.deepEqual(list.map(m => `${m.id}:${m.status}`), ["F:sent"]);
   assert.equal(messageRenderKey(list[0]), "local-4");
 });
+
+test("an unchanged provider snapshot retains both the row and list references", async () => {
+  const { reconcileMessage } = await import("./message-identity.ts");
+  const snapshot = msg("stable", { reactions: [{ emoji: "👍", count: 2, mine: false }],
+    media: { name: "photo", width: 640 }, link: { url: "https://example.com" }, status: "seen" });
+  const first = reconcileMessage([], snapshot);
+  const next = reconcileMessage(first, structuredClone({ ...snapshot, status: "sent" }));
+  assert.equal(next, first, "identical history must not invalidate memoized message rows");
+  assert.equal(next[0], first[0]);
+});
+
+test("nested provider changes still replace a row while preserving unaffected rows", async () => {
+  const { reconcileMessage } = await import("./message-identity.ts");
+  const original = msg("stable", { reactions: [{ emoji: "👍", count: 1, mine: false }], media: { name: "old" } });
+  const first = reconcileMessage([msg("other")], original);
+  const next = reconcileMessage(first, { ...original, media: { name: "new" } });
+  assert.notEqual(next, first);
+  assert.equal(next[0], first[0]);
+  assert.equal(next[1].media.name, "new");
+  const reacted = reconcileMessage(next, { ...original, media: { name: "new" }, reactions: [{ emoji: "👍", count: 2, mine: true }] });
+  assert.equal(reacted[1].reactions[0].count, 2);
+});

@@ -3,6 +3,17 @@ import type { Msg } from "./types";
 /** UI-only identity; provider IDs remain authoritative for every API operation. */
 export const messageRenderKey = (m: Msg) => m.uiKey ?? m.id;
 
+// Provider snapshots are JSON values. Keep React's row identity when a refresh
+// only deserializes the same data, including nested media/reactions/link cards.
+function sameValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (!a || !b || typeof a !== "object" || typeof b !== "object") return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  const left = a as Record<string, unknown>, right = b as Record<string, unknown>;
+  const keys = Object.keys(left);
+  return keys.length === Object.keys(right).length && keys.every(k => Object.prototype.hasOwnProperty.call(right, k) && sameValue(left[k], right[k]));
+}
+
 export function reconcileMessage(list: Msg[], m: Msg, oldId?: string): Msg[] {
   const old = oldId ? list.find(x => x.id === oldId || x.uiKey === oldId || x.uiPreviousIds?.includes(oldId)) : undefined;
   const current = list.find(x => x.id === m.id || x.uiPreviousIds?.includes(m.id));
@@ -29,6 +40,7 @@ export function reconcileMessage(list: Msg[], m: Msg, oldId?: string): Msg[] {
   };
   const i = list.findIndex(x => x.id === m.id);
   if (!old && i >= 0) {
+    if (sameValue(current, merged)) return list;
     const next = list.slice();
     next[i] = merged;
     return next;

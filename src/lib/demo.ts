@@ -275,8 +275,19 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
     case "topic_history":
       await wait(250);
       return (msgs[k(a.accountId, a.chatId)] ?? []).filter((x) => x.threadId === a.topic);
-    case "thread":
-      return (msgs[k(a.accountId, a.chatId)] ?? []).filter((x) => x.threadId === a.threadId);
+    case "primary_messages": {
+      const list = (msgs[k(a.accountId, a.chatId)] ?? []).filter(x => !x.threadReply && (!a.before || x.sort < a.before));
+      const page = list.slice(-(a.limit ?? 50));
+      return { messages: page, before: page[0]?.sort ?? a.before, hasMore: list.length > page.length };
+    }
+    case "thread_root":
+      return (msgs[k(a.accountId, a.chatId)] ?? []).filter(x => x.threadId === a.threadId && !x.threadReply).slice(0, 1);
+    case "thread": {
+      const list = (msgs[k(a.accountId, a.chatId)] ?? []).filter(x => x.threadId === a.threadId);
+      const end = a.pageToken ? Number(a.pageToken) : list.length;
+      const start = Math.max(0, end - Math.min(20, a.limit ?? 20));
+      return { messages: list.slice(start, end), nextPageToken: start ? String(start) : "" };
+    }
     case "pinned":
       return (msgs[k(a.accountId, a.chatId)] ?? []).filter((x) => x.pinned);
     case "members":

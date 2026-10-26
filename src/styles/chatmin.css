@@ -1613,3 +1613,20 @@ body:is([data-background="glass"], [data-background="clear"]) .inbox-shell { bor
 .icon-grid button:hover { color: var(--text); background: color-mix(in oklab, var(--text), transparent 90%); }
 .icon-grid button.selected { color: var(--accent); border-color: var(--accent); }
 .icon-grid .ic { --od-icon-size: 17px; }
+
+/* Bounded, dynamic-height timelines. Loading occupies the same grid track as history. */
+.timeline { min-height: 0; position: relative; overflow: hidden; }
+.timeline .virtual-scroller { padding: 0; overflow-anchor: none; }
+.timeline-row { max-width: 928px; padding: 0 24px; margin: 0 auto; display: flow-root; }
+.timeline-edge { padding-top: 8px; padding-bottom: 8px; }
+.timeline > .jump-bottom { position: absolute; right: 16px; bottom: 16px; margin: 0; }
+.timeline-row.flash .bubble { animation: flash 1.2s var(--ease-ui); }
+.timeline-skeleton { max-width: 880px; margin: 0 auto; padding: 24px; display: grid; gap: 24px; }
+.skeleton-row { display: flex; gap: 12px; align-items: flex-start; }
+.skeleton-row > i { flex: 0 0 28px; height: 28px; border-radius: 50%; background: var(--line); }
+.skeleton-row > span { width: 64%; max-width: 420px; padding: 12px; border-radius: var(--radius-md); background: color-mix(in oklab, var(--text), transparent 96%); }
+.skeleton-row b, .text-skeleton > span { display: block; height: 7px; margin: 5px 0; border-radius: 3px; background: var(--line); }
+.skeleton-row b:last-child, .text-skeleton > span:last-child { width: 66%; }
+.skeleton-row.outgoing { flex-direction: row-reverse; }
+.text-skeleton { width: min(360px, 48vw); padding: 6px 0; min-height: 40px; }
+@media (max-width: 760px) { .timeline-row { padding-left: 12px; padding-right: 12px; } }

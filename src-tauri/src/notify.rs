@@ -111,7 +111,7 @@ impl Notifier {
     fn watching(&self, app: &AppHandle, account_id: &str, chat_id: &str) -> bool {
         let on_screen = self.active.lock().unwrap().as_ref().is_some_and(|(a, c)| a == account_id && c == chat_id);
         #[cfg(desktop)]
-        let in_front = app.get_webview_window("main").is_some_and(|w| w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false));
+        let in_front = app.get_window("main").is_some_and(|w| w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false));
         // the Android window has no focus/visibility answer: trust the webview's own report
         #[cfg(mobile)]
         let in_front = { let _ = app; !self.background.load(std::sync::atomic::Ordering::Relaxed) };
@@ -234,7 +234,7 @@ impl Notifier {
         if *badge != total {
             *badge = total;
             #[cfg(desktop)]
-            if let Some(w) = app.get_webview_window("main") {
+            if let Some(w) = app.get_window("main") {
                 let _ = w.set_badge_count(if total > 0 { Some(total) } else { None });
             }
         }
@@ -312,7 +312,7 @@ pub fn permission(app: &AppHandle, ask: bool) -> String {
 fn open(app: &AppHandle, target: &str) {
     eprintln!("[notify] open {:?}", target.split('\n').next().unwrap_or(""));
     #[cfg(desktop)]
-    if let Some(w) = app.get_webview_window("main") {
+    if let Some(w) = app.get_window("main") {
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();

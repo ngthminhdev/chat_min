@@ -59,3 +59,12 @@ test("visible theme variants have distinct names without removing saved IDs", ()
     assert.ok(THEMES.some((t) => t.id === id));
   }
 });
+
+test('thread reply badges distinguish preview lower bounds from completed counts', async () => {
+  const { threadReplyCountLabel } = await import('./micro-ux.ts');
+  assert.equal(threadReplyCountLabel(20), '20+');
+  assert.equal(threadReplyCountLabel(20,'older-page'), '20+');
+  assert.equal(threadReplyCountLabel(40,'older-page'), '40+');
+  assert.equal(threadReplyCountLabel(20,''), '20');
+  assert.equal(threadReplyCountLabel(7,''), '7');
+});

@@ -1,16 +1,14 @@
 import { Fragment, useEffect, useMemo, useRef } from "react";
-import { dayKey, dayLabel, fmtCount, plain } from "../lib/format";
-import { capsOf, muteThread, openChat, seenThread, toast, useApp } from "../store";
+import { dayLabel, fmtCount, plain } from "../lib/format";
+import { capsOf, loadOlderThread, muteThread, openChat, seenThread, toast, useApp } from "../store";
 import { ChatAvatar } from "../ui/Avatar";
 import { Icon } from "../ui/Icon";
 import { Composer } from "./Composer";
 import { MessageItem } from "./Message";
-import { JumpBottom, TranslateAllButton, useViewportTranslate } from "./Conversation";
-import { useStickyScroll } from "./useStickyScroll";
+import { TranslateAllButton, useViewportTranslate } from "./Conversation";
+import { Timeline, TimelineSkeleton, type TimelineHandle } from "./Timeline";
 import { SummaryButton, SummaryCard } from "./Summary";
 import { useMessageArrivals } from "./useMessageArrivals";
-import { messageRenderKey } from "../lib/message-identity";
-import { DelayedLoading } from "./DelayedLoading";
 import { layoutMessages } from "../lib/message-layout";
 import { MobileActions } from "../ui/MobileActions";
 
@@ -21,16 +19,23 @@ export function ThreadView({ tab }: { tab: string }) {
   const platform = useApp((s) => s.accounts.find((a) => a.id === chat?.accountId)?.platform);
   const list = useApp((s) => (meta ? s.msgs[meta.chatKey] : undefined));
   const fresh = useApp((s) => s.fresh);
+  const older = useApp(s => s.older[tab]);
+  const limit = useApp(s => s.threadPages[tab]?.limit ?? 20);
+  const pageLoaded = useApp(s => !!s.threadPages[tab]);
   const muted = useApp((s) => (meta ? !!s.mutedThreads[`${meta.chatKey}|${meta.threadId}`] : false));
   const jumpTo = useApp((s) => s.jumpTo);
-  const box = useRef<HTMLDivElement>(null);
+  const box = useRef<HTMLDivElement | null>(null);
+  const timeline = useRef<TimelineHandle>(null);
   const arrival = useMessageArrivals(list, fresh);
 
   const root = list?.find((m) => m.id === meta?.rootId);
   // a Telegram topic is a plain timeline of its messages; a Google Chat thread is root + replies
   const replies = useMemo(
-    () => (list ?? []).filter((m) => m.threadId === meta?.threadId && (meta?.topic || m.threadReply)),
-    [list, meta?.threadId, meta?.topic],
+    () => {
+      const found = (list ?? []).filter(m => m.threadId === meta?.threadId && (meta?.topic || m.threadReply));
+      return meta?.topic ? found : found.slice(-limit);
+    },
+    [list, meta?.threadId, meta?.topic, limit],
   );
 
   const shown = useMemo(() => (root && !meta?.topic ? [root, ...replies] : replies), [root, replies, meta?.topic]);
@@ -39,22 +44,12 @@ export function ThreadView({ tab }: { tab: string }) {
   useEffect(() => {
     if (meta && last !== undefined) seenThread(meta.chatKey, meta.threadId, last);
   }, [meta?.chatKey, meta?.threadId, last]);
-  const lastShown = replies[replies.length - 1] ?? root;
-  const scroll = useStickyScroll(box, lastShown ? messageRenderKey(lastShown) : undefined);
-  useEffect(() => {
-    scroll.stick.current = true;
-  }, [tab]);
+  const rows = useMemo(() => layoutMessages(replies), [replies]);
   useEffect(() => {
     if (!jumpTo) return;
-    const el = document.getElementById(`m-${jumpTo}`);
-    if (el && box.current?.contains(el)) {
-      scroll.toMessage(el);
-      el.classList.remove("flash");
-      void el.offsetWidth;
-      el.classList.add("flash");
-    } else toast("Tin gốc không có trong luồng trả lời đã tải", "info");
+    if (!timeline.current?.toMessage(jumpTo)) toast("Tin gốc không có trong luồng trả lời đã tải", "info");
     useApp.setState({ jumpTo: null });
-  }, [jumpTo]);
+  }, [jumpTo, rows]);
 
   if (!meta || !chat) {
     return (
@@ -77,7 +72,7 @@ export function ThreadView({ tab }: { tab: string }) {
         <div className="title">
           <strong>{meta.topic ? `# ${meta.title}` : root ? plain(root.text).slice(0, 90) || "Luồng trả lời" : meta.title}</strong>
           <span>
-            {meta.topic ? `Topic · ${chat.title} · ${fmtCount(replies.length)} tin đã tải` : `Thread trong tab riêng · ${chat.title} · ${fmtCount(replies.length)} trả lời`}
+            {meta.topic ? `Topic · ${chat.title} · ${fmtCount(replies.length)} tin đã tải` : `Thread trong tab riêng · ${chat.title} · ${fmtCount(replies.length)} trả lời đã tải`}
           </span>
         </div>
         <div className="conv-actions"><MobileActions label="Thao tác luồng trả lời">
@@ -95,45 +90,24 @@ export function ThreadView({ tab }: { tab: string }) {
         </MobileActions></div>
       </div>
       <SummaryCard tab={tab} />
-      <div
-        className="msgs"
-        ref={box}
-        onScroll={scroll.onScroll}
-      >
-        <div className="msgs-inner">
-          {meta.error && <div className="empty-note" role="alert">Chưa tải được luồng trả lời: {meta.error} <button className="tool-btn" onClick={() => void openChat(tab)}>Thử lại</button></div>}
-          {meta.topic ? null : root ? (
-            <>
-            <div className="day-sep" role="separator"><span>{dayLabel(root.ts)}</span></div>
-            <div className="thread-root">
-              <MessageItem k={meta.chatKey} tab={tab} m={root} chat={chat} caps={caps} first last fresh={false} threadOpen={false} />
-            </div>
-            </>
-          ) : !meta.error ? (
-            <DelayedLoading label="Đang tải luồng trả lời…" />
-          ) : null}
+      <Timeline ref={timeline} rows={rows} box={box} headerMessage={meta.topic ? undefined : root} onTop={meta.topic ? undefined : () => void loadOlderThread(tab)}
+        header={<>
+          {meta.error && <div className="empty-note" role="alert">Chưa tải được luồng trả lời: {meta.error} <button className="tool-btn" onClick={() => void (meta.errorOlder ? loadOlderThread(tab) : openChat(tab))}>Thử lại</button></div>}
+          {!meta.topic && root && <><div className="day-sep" role="separator"><span>{dayLabel(root.ts)}</span></div><div className="thread-root"><MessageItem k={meta.chatKey} tab={tab} m={root} chat={chat} caps={caps} first last fresh={false} threadOpen={false} /></div></>}
+          {!meta.topic && !root && !meta.error && !pageLoaded && <TimelineSkeleton />}
           {!meta.topic && <div className="day-sep" role="separator"><span>{replies.length ? `${replies.length} trả lời` : "Chưa có trả lời"}</span></div>}
-          {meta.topic && !replies.length && !meta.error && <DelayedLoading label="Đang tải chủ đề…" />}
-          {layoutMessages(replies).map(({ m, album, first, last, newDay }, i) => (
-            <Fragment key={messageRenderKey(m)}>
-              {newDay && (meta.topic || !root || i > 0 || dayKey(root.ts) !== dayKey(m.ts)) && <div className="day-sep" role="separator"><span>{dayLabel(m.ts)}</span></div>}
-              <MessageItem
-                k={meta.chatKey}
-                tab={tab}
-                m={m}
-                chat={chat}
-                caps={caps}
-                first={first}
-                last={last}
-                album={album}
-                fresh={arrival(m)}
-                threadOpen={false}
-              />
-            </Fragment>
-          ))}
-        </div>
-        <JumpBottom away={scroll.away} fresh={scroll.fresh} onClick={scroll.toBottom} />
-      </div>
+          {!meta.topic && older === "loading" && <div className="older-loading"><span className="veil-spinner" /></div>}
+          {!meta.topic && older === "idle" && pageLoaded && !meta.error && <button className="tool-btn" onClick={() => void loadOlderThread(tab)}>Tải trả lời cũ hơn</button>}
+          {!meta.topic && older === "done" && <div className="history-start">Đã tải hết trả lời trong luồng</div>}
+        </>}
+        empty={!meta.error && !pageLoaded ? <TimelineSkeleton /> : <div className="empty-note">Chưa có trả lời</div>}
+        renderRow={({m,album,first,last,newDay}) => <Fragment>
+          {newDay && <div className="day-sep" role="separator"><span>{dayLabel(m.ts)}</span></div>}
+          <div className={!meta.topic && root?.id === m.id ? "thread-root" : undefined}>
+            <MessageItem k={meta.chatKey} tab={tab} m={m} chat={chat} caps={caps} first={first} last={last}
+              album={album} fresh={root?.id === m.id ? false : arrival(m)} threadOpen={false} />
+          </div>
+        </Fragment>} />
       <Composer k={tab} chatKey={meta.chatKey} threadId={meta.threadId} placeholder={meta.topic ? `Nhắn vào # ${meta.title}…` : "Trả lời trong luồng…"} key={`c-${tab}`} />
     </div>
   );

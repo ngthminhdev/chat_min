@@ -184,6 +184,32 @@ impl Store {
         Ok(out)
     }
 
+    /// Threaded chat timeline, independent of how many replies dominate the recent tail.
+    pub fn primary_msgs(&self, account_id: &str, chat_id: &str, before: i64, limit: i64) -> R<Vec<Msg>> {
+        let mut st = self.db.prepare(
+            "SELECT data FROM messages WHERE account_id = ?1 AND chat_id = ?2 AND sort < ?3
+             AND json_extract(data, '$.threadReply') = 0 ORDER BY sort DESC LIMIT ?4"
+        ).map_err(e)?;
+        let rows = st.query_map(params![account_id, chat_id, if before > 0 { before } else { i64::MAX }, limit.clamp(1, 100)], |r| r.get::<_, String>(0)).map_err(e)?;
+        let mut out: Vec<Msg> = rows.filter_map(|r| r.ok()).filter_map(|s| serde_json::from_str(&s).ok()).collect();
+        out.reverse();
+        Ok(out)
+    }
+
+    pub fn cached_msgs(&self, account_id: &str, chat_id: &str, limit: i64, primary: bool) -> R<(Vec<Msg>, Vec<Msg>)> {
+        let page = self.msgs(account_id, chat_id, 0, limit)?;
+        let mut roots = if primary { self.primary_msgs(account_id, chat_id, 0, limit.min(50))? } else { vec![] };
+        let led: std::collections::HashSet<&str> = page.iter().chain(&roots).filter(|m| !m.thread_reply).map(|m| m.thread_id.as_str()).collect();
+        let missing: std::collections::HashSet<String> = page.iter().filter(|m| m.thread_reply && !led.contains(m.thread_id.as_str())).map(|m| m.thread_id.clone()).collect();
+        if !missing.is_empty() {
+            if let Some(first) = page.first() {
+                let found = self.roots(account_id, chat_id, first.sort)?.into_iter().filter(|m| missing.contains(&m.thread_id));
+                roots.extend(found);
+            }
+        }
+        Ok((page, roots))
+    }
+
     /// Thread starters older than `before`, to lead the threads of a cached page whose
     /// starter fell outside it (one scan instead of a query per thread).
     pub fn roots(&self, account_id: &str, chat_id: &str, before: i64) -> R<Vec<Msg>> {
@@ -230,6 +256,23 @@ impl Store {
             .map_err(e)?;
         let rows = st.query_map([account_id, chat_id, thread_id], |r| r.get::<_, String>(0)).map_err(e)?;
         Ok(rows.filter_map(|r| r.ok()).filter_map(|s| serde_json::from_str(&s).ok()).collect())
+    }
+
+    /// Bounded cached thread reads: never deserialize a whole thread to show its preview.
+    pub fn thread_page(&self, account_id: &str, chat_id: &str, thread_id: &str, limit: i64, root: bool) -> R<Vec<Msg>> {
+        let sql = if root {
+            "SELECT data FROM messages WHERE account_id = ?1 AND chat_id = ?2
+             AND json_extract(data, '$.threadId') = ?3 AND json_extract(data, '$.threadReply') = 0
+             ORDER BY sort ASC LIMIT ?4"
+        } else {
+            "SELECT data FROM messages WHERE account_id = ?1 AND chat_id = ?2
+             AND json_extract(data, '$.threadId') = ?3 ORDER BY sort DESC LIMIT ?4"
+        };
+        let mut st = self.db.prepare(sql).map_err(e)?;
+        let rows = st.query_map(params![account_id, chat_id, thread_id, if root { 1 } else { limit.clamp(1, 20) }], |r| r.get::<_, String>(0)).map_err(e)?;
+        let mut msgs: Vec<Msg> = rows.filter_map(|r| r.ok()).filter_map(|s| serde_json::from_str(&s).ok()).collect();
+        msgs.reverse();
+        Ok(msgs)
     }
 
     pub fn remove_msg(&self, account_id: &str, chat_id: &str, id: &str) -> R<()> {
@@ -322,6 +365,57 @@ mod tests {
 
     fn msg(id: &str, sort: i64, text: &str) -> Msg {
         Msg { account_id: "a".into(), chat_id: "c".into(), id: id.into(), sort, ts: sort, kind: "text".into(), text: text.into(), ..Default::default() }
+    }
+
+    #[test]
+    fn reply_heavy_cache_returns_primary_rows_in_one_snapshot() {
+        let mut s = Store::memory();
+        let mut rows: Vec<Msg> = (1..=80).map(|i| {
+            let mut m = msg(&format!("root-{i}"), i, "root");
+            m.thread_id = format!("t-{i}");
+            m
+        }).collect();
+        rows.extend((100..500).map(|i| {
+            let mut m = msg(&format!("reply-{i}"), i, "reply");
+            m.thread_id = "t-1".into();
+            m.thread_reply = true;
+            m
+        }));
+        s.put_msgs(&rows).unwrap();
+        let (tail, roots) = s.cached_msgs("a", "c", 50, true).unwrap();
+        assert_eq!(tail.len(), 50);
+        assert!(tail.iter().all(|m| m.thread_reply));
+        assert_eq!(roots.len(), 51, "50 newest primary rows plus the old starter of the active thread");
+        assert!(roots.iter().all(|m| !m.thread_reply));
+        assert!(roots.iter().any(|m| m.id == "root-1"));
+        assert!(roots.iter().any(|m| m.id == "root-80"));
+        let older = s.primary_msgs("a", "c", 40, 3).unwrap();
+        assert_eq!(older.iter().map(|m| m.sort).collect::<Vec<_>>(), vec![37, 38, 39]);
+        let (plain, _) = s.cached_msgs("a", "c", 50, false).unwrap();
+        assert_eq!(plain.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), tail.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), "ordinary chat cache paging stays unchanged");
+    }
+
+    #[test]
+    fn cached_thread_preview_is_bounded_and_root_lookup_is_separate() {
+        let mut s = Store::memory();
+        let mut rows: Vec<Msg> = (1..=45).map(|i| {
+            let mut m = msg(&i.to_string(), i, "reply");
+            m.thread_id = "t".into();
+            m.thread_reply = i != 1;
+            m
+        }).collect();
+        let mut other = msg("other", 100, "other thread");
+        other.thread_id = "another".into();
+        rows.push(other);
+        s.put_msgs(&rows).unwrap();
+        let page = s.thread_page("a", "c", "t", 200, false).unwrap();
+        assert_eq!(page.len(), 20);
+        assert_eq!(page.first().unwrap().sort, 26);
+        assert_eq!(page.last().unwrap().sort, 45);
+        let root = s.thread_page("a", "c", "t", 20, true).unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].id, "1");
+        assert_eq!(s.thread_msgs("a", "c", "t").unwrap().len(),45, "notification participation checks retain the full cached history");
     }
 
     #[test]

@@ -123,6 +123,9 @@ pub struct Row {
     /// seconds since the last message as the site labels it; -1 = unknown
     #[serde(default = "unknown_age")]
     ago: i64,
+    /// the label's raw text, for the log when it could not be read
+    #[serde(default)]
+    age_text: String,
 }
 fn unknown_age() -> i64 {
     -1
@@ -154,23 +157,40 @@ pub fn rows(core: &Core, account_id: &str, rows: Vec<Row>, initialized: bool) {
     let n = rows.len() as i64;
     let mut seen = HashSet::new();
     let now = now_ms();
+    // the site lists newest first: a row without a readable age slots just under the one above
+    let mut cursor = now;
     for (i, r) in rows.into_iter().enumerate() {
         seen.insert(r.id.clone());
         let prev = old.get(&r.id);
+        // Messenger shows the E2EE placeholder for a thread it has not decrypted yet; that is
+        // not a new message, keep what we had
+        let r = match prev {
+            Some(p) if r.preview.starts_with("Tin nhắn và cuộc gọi được bảo mật") && !p.preview.is_empty() => Row { preview: p.preview.clone(), ..r },
+            _ => r,
+        };
         let changed = prev.map_or(true, |p| p.preview != r.preview || r.unread > p.unread);
+        if let Some(p) = prev.filter(|p| p.preview != r.preview) {
+            core.log_line("web.log", &format!("[{account_id}] {} preview {:?} → {:?} ago={}", r.id, p.preview.chars().take(40).collect::<String>(), r.preview.chars().take(40).collect::<String>(), r.ago));
+        }
         let chat = Chat {
             account_id: account_id.into(),
             id: r.id,
             kind: "web".into(),
             title: r.title,
             description: url.into(),
-            // the site's own "5 phút" label places the row among Telegram/Google chats in "Mới nhất";
-            // without one: first sight keeps the page's order, a later change bumps the row up
+            // the site's own "5 phút" / "T2" / "25/10" label places the row among Telegram/Google
+            // chats in "Mới nhất"; unreadable → never "now": under the previous row (first sight)
+            // or unchanged. A known row whose preview changed with no label is a fresh message.
             last_ts: match (prev, r.ago) {
-                (_, ago) if ago >= 0 && changed => now.saturating_sub(ago.saturating_mul(1000)),
+                // the label wins whenever the stored time disagrees with it beyond the label's own
+                // granularity ("3 giờ" = 3–4 h ago): that also repairs times older builds got wrong
+                // (minus the row's position in ms: rows sharing a coarse label keep the site's order)
+                (_, ago) if ago >= 0 && (changed || prev.is_some_and(|p| (p.last_ts - (now - ago * 1000)).abs() > (ago * 500).max(120_000))) => now.saturating_sub(ago.saturating_mul(1000)) - i as i64,
+                (_, ago) if ago >= 0 => prev.map(|p| p.last_ts).unwrap_or(now - ago * 1000 - i as i64),
                 (Some(p), _) if changed => now.max(p.last_ts.saturating_add(1)),
-                (Some(p), _) => p.last_ts,
-                (None, _) => now - i as i64,
+                // no readable label: never newer than the unpinned row above (the site sorts by time)
+                (Some(p), _) => p.last_ts.min(cursor),
+                (None, _) => cursor - 60_000,
             },
             preview: r.preview,
             unread: r.unread,
@@ -181,6 +201,13 @@ pub fn rows(core: &Core, account_id: &str, rows: Vec<Row>, initialized: bool) {
             photo: r.photo,
             ..Default::default()
         };
+        if r.ago < 0 {
+            core.log_line("web.log", &format!("[{account_id}] no age for {:?}: {:?}", chat.title, r.age_text));
+        }
+        // pinned rows sit on top regardless of age: they must not drag the cursor down
+        if !chat.pinned {
+            cursor = cursor.min(chat.last_ts);
+        }
         if prev.is_some_and(|p| *p == chat) {
             continue;
         }
@@ -195,6 +222,13 @@ pub fn rows(core: &Core, account_id: &str, rows: Vec<Row>, initialized: bool) {
     // Only the pre-rows placeholder goes. Re-adding the account clears everything.
     if old.contains_key("web") && !seen.contains("web") {
         core.remove_chat(account_id, "web");
+    }
+    // a row the site no longer renders cannot be newer than the oldest one it does render
+    // (older builds stamped first sight with "now")
+    for (id, c) in &old {
+        if !seen.contains(id) && c.last_ts > cursor && c.kind == "web" {
+            core.put_chat(Chat { last_ts: cursor - 1000, ..c.clone() });
+        }
     }
 }
 
@@ -225,6 +259,15 @@ pub fn start_background(_core: &Arc<Core>, _account: &Account) {}
 #[cfg(desktop)]
 pub fn show(core: &Arc<Core>, a: &Account, chat_id: &str, x: f64, y: f64, w: f64, h: f64, navigate: bool) -> Result<(), String> {
     let (pos, size) = (LogicalPosition::new(x, y), LogicalSize::new(w.max(1.0), h.max(1.0)));
+    // Only the selected provider may occupy the conversation rectangle.
+    if x >= 0.0 && y >= 0.0 {
+        for other in core.app.webviews().keys().filter(|name| name.starts_with("web-") && **name != label(&a.id)) {
+            if let Some(wv) = core.app.get_webview(other) {
+                let _ = wv.set_position(LogicalPosition::new(-10000.0, -10000.0));
+                let _ = wv.hide();
+            }
+        }
+    }
     let want = (chat_id != "web").then(|| chat_id.to_string());
     let prev = core.web_open.lock().unwrap().insert(a.id.clone(), want.clone());
     if let Some(wv) = core.app.get_webview(&label(&a.id)) {
@@ -262,6 +305,9 @@ pub fn show(core: &Arc<Core>, a: &Account, chat_id: &str, x: f64, y: f64, w: f64
     });
     let (id, id2, id3, id4) = (a.id.clone(), a.id.clone(), a.id.clone(), a.id.clone());
     let builder = WebviewBuilder::new(label(&a.id), WebviewUrl::External(url.parse().map_err(|e| format!("{e}"))?))
+        // Provider sites own file drops (their upload composer consumes DOM drag events).
+        // The default native handler consumes the drop before WebKit can deliver it.
+        .disable_drag_drop_handler()
         .user_agent(UA)
         // Hidden providers must keep their sockets and DOM observers running (macOS 14+).
         .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled)
@@ -316,6 +362,10 @@ pub fn show(core: &Arc<Core>, a: &Account, chat_id: &str, x: f64, y: f64, w: f64
                     }
                     Some("state") => match serde_json::from_str::<String>(&body).as_deref() {
                         Ok("ready") => c2.set_health(&id4, "ok", "Web đã kết nối", 0),
+                        Ok("load-error") => {
+                            generation.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            c2.set_health(&id4, "offline", "Zalo tải tài nguyên bị lỗi. Đang thử lại; nếu vẫn trắng, bấm Tải lại", 0);
+                        }
                         Ok("inactive") => {
                             generation.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             c2.set_health(&id4, "expired", "Mở Zalo và bấm Kích hoạt để tiếp tục nhận tin", 0);
@@ -344,11 +394,24 @@ pub fn hide(core: &Core, account_id: &str) {
     let open = core.web_open.lock().unwrap().get(account_id).cloned().flatten().unwrap_or_else(|| "web".into());
     core.notifier.set_open(account_id, &open, false);
     if let Some(wv) = core.app.get_webview(&label(account_id)) {
+        // WebKit can retain a native drag destination after hiding. Remove its hit
+        // area as well, so background Zalo/Messenger cannot receive another chat's drop.
+        let _ = wv.set_position(LogicalPosition::new(-10000.0, -10000.0));
         let _ = wv.hide();
         // A hidden child must not remain the native first responder.
         if let Some(main) = core.app.get_webview("main") { let _ = main.set_focus(); }
     }
 }
+
+/// Native chat activation clears every provider's input surface, including stale placements.
+#[cfg(desktop)]
+pub fn hide_all(core: &Core) {
+    for name in core.app.webviews().keys().filter(|name| name.starts_with("web-")) {
+        hide(core, name.trim_start_matches("web-"));
+    }
+}
+#[cfg(mobile)]
+pub fn hide_all(_core: &Core) {}
 
 #[cfg(desktop)]
 pub fn close(core: &Core, account_id: &str) {

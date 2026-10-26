@@ -6,7 +6,18 @@
   const pic = (el) => { const i = el.querySelector('img[src^="https://"]'); return i ? i.src : ''; };
   // "vài giây" / "5 phút" / "3 giờ" / "2 ngày" … → seconds ago (-1 = unknown), so rows sort by real activity
   const UNIT = { giây: 1, phút: 60, giờ: 3600, ngày: 86400, tuần: 604800, tháng: 2592000, năm: 31536000 };
-  const ago = (text) => { if (/vài giây/i.test(text)) return 30; const m = /(\d+)\s*(giây|phút|giờ|ngày|tuần|tháng|năm)(?=\s|$|[·,])/i.exec(text); return m ? +m[1] * UNIT[m[2].toLowerCase()] : -1; };
+  const ago = (text) => {
+    if (/vài giây/i.test(text)) return 30;
+    const m = /(\d+)\s*(giây|phút|giờ|ngày|tuần|tháng|năm)(?=\s|$|[·,])/i.exec(text);
+    if (m) return +m[1] * UNIT[m[2].toLowerCase()];
+    // weekday ("T2"…"T7", "CN") = that day in the past week; "25/10" or "25/10/25" = that date
+    const now = new Date();
+    const wd = /(?:^|\s)(T[2-7]|CN)(?=\s|$|[·,])/.exec(text);
+    if (wd) { const d = wd[1] === 'CN' ? 0 : +wd[1][1] - 1; let back = (now.getDay() - d + 7) % 7; if (!back) back = 7; return back * 86400; }
+    const dm = /(?:^|\s)(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?(?=\s|$|[·,])/.exec(text);
+    if (dm) { let y = dm[3] ? +dm[3] : now.getFullYear(); if (y < 100) y += 2000; const t = new Date(y, +dm[2] - 1, +dm[1]).getTime(); return t > now.getTime() ? -1 : Math.floor((now.getTime() - t) / 1000); }
+    return -1;
+  };
   const lines = (el) => tx(el).split('\n').map((s) => s.trim()).filter(Boolean);
   // a real pointer sequence: these apps often act on mousedown/pointerdown, not click
   const press = (el) => {
@@ -19,6 +30,21 @@
   // textContent, not innerText: no forced layout on 16+ rows every tick
   const tc = (el) => ((el && el.textContent) || '').replace(/\s+/g, ' ').trim();
   const zaloTitle = (e) => tc(e.querySelector('.truncate')) || lines(e)[0] || '';
+  // the age sits on its own innerText line (textContent glues "K2024.1" + "3 ngày" into "13 ngày");
+  // innerText forces layout, so it is read once per row text and cached
+  const zaloAges = new WeakMap();
+  const zaloAgo = (e) => {
+    const sig = e.textContent;
+    const c = zaloAges.get(e);
+    if (c && c.sig === sig) return c.v;
+    const l = lines(e);
+    let v = ago(l[1] || '');
+    if (v < 0) v = ago(l.join(' '));
+    if (v < 0) v = ago(tc(e)); // last resort: glued textContent
+    const out = { ago: v, age_text: (l[1] || '').slice(0, 20) };
+    zaloAges.set(e, { sig, v: out });
+    return out;
+  };
   const zaloRows = () => zaloItems().map((e) => {
     const title = zaloTitle(e);
     const msg = e.querySelector('[class*="z-conv-message"]');
@@ -26,7 +52,7 @@
     const badge = e.querySelector('.conv-action__unread-v2 .z-noti-badge__content');
     const m = badge && /fa-(\d+|5_?plus)_24/i.exec(badge.className);
     const unread = m ? (/plus/i.test(m[1]) ? 6 : +m[1]) : (e.querySelector('.z-conv-message.--unread') ? 1 : 0);
-    return { id: title, title, preview, unread, outgoing: /^(Bạn|You):\s*/i.test(preview), pinned: /\bpinned\b/.test(e.className), photo: pic(e), ago: ago(tc(e)) };
+    return { id: title, title, preview, unread, outgoing: /^(Bạn|You):\s*/i.test(preview), pinned: /\bpinned\b/.test(e.className), photo: pic(e), ...zaloAgo(e) };
   }).filter((r) => r.id);
   // Messenger: thread links in grid cells; cell text = [Đang hoạt động] Name [Tin nhắn chưa đọc:] preview · age
   const AGE = /^(vài giây|\d+ (phút|giờ|ngày|tuần|tháng|năm))( trước)?$/i;
@@ -129,6 +155,29 @@
   };
   let lastRows = '', lastState = '';
   const state = (value) => { if (value !== lastState) { if (value !== 'ready') lastRows = ''; lastState = value; send('state', value); } };
+  // A failed lazy bundle otherwise leaves Zalo blank until a manual reload. Keep
+  // cookies/session intact and bound retries across reloads of this same webview.
+  let chunkRecoveryPending = false;
+  window.addEventListener?.('unhandledrejection', (event) => {
+    if (base !== 'Zalo' || !/ChunkLoadError|Loading chunk .*failed/i.test(String(event.reason))) return;
+    state('load-error');
+    if (chunkRecoveryPending) return;
+    try {
+      const key = 'chatmin.chunk-recovery', now = Date.now();
+      let record = JSON.parse(sessionStorage.getItem(key) || 'null');
+      if (!record || now - record.at > 300000) record = { at: now, attempts: 0 };
+      if (record.attempts >= 2) return;
+      record.attempts++;
+      sessionStorage.setItem(key, JSON.stringify(record));
+      chunkRecoveryPending = true;
+      setTimeout(() => {
+        chunkRecoveryPending = false;
+        const url = new URL(location.href);
+        url.searchParams.set('_cm_reload', String(Date.now()));
+        location.replace(url.href);
+      }, 1000);
+    } catch (_) { /* unavailable sessionStorage: leave the manual reload action */ }
+  });
   const tick = () => {
     try {
       style();
