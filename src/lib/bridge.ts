@@ -123,7 +123,7 @@ export const api = {
   logJs: (msg: string) => (isTauri ? call<void>("log_js", { msg }) : Promise.resolve()),
   /** per-account notification settings: Rust decides and sends notifications (notify.rs) */
   notifyPrefs: (prefs: Record<string, unknown>) => (isTauri ? call<void>("notify_prefs", { prefs }) : Promise.resolve()),
-  notifyTest: () => (isTauri ? call<void>("notify_test") : Promise.resolve()),
+  notifyTest: (delayMs = 0) => (isTauri ? call<void>("notify_test", { delayMs }) : Promise.resolve()),
   notifyIsland: (enabled?: boolean) => (isTauri ? call<boolean>("notify_island", { enabled }) : Promise.resolve(enabled ?? true)),
   notifyAppearance: (appearance: import("./island-appearance").IslandAppearance) => (isTauri ? call<void>("notify_appearance", { appearance }) : Promise.resolve()),
   /** Android: "granted" | "denied" | "prompt"; `ask` shows the system dialog when undecided */

@@ -43,8 +43,8 @@ export function inboxUnread(s: Pick<State, "inboxSeen" | "inboxRead" | "chats" |
   return (s.chats[k]?.unread ?? 1) > 0;
 }
 export interface Translation { state: "loading" | "ok" | "err"; text: string }
-export interface NotifyPrefs { enabled: boolean; mentions: boolean; quiet: boolean; from: string; to: string; preview: boolean }
-export const DEFAULT_NOTIFY: NotifyPrefs = { enabled: true, mentions: false, quiet: false, from: "22:00", to: "08:00", preview: true };
+export interface NotifyPrefs { enabled: boolean; mentions: boolean; quiet: boolean; from: string; to: string; preview: boolean; dockBounce: boolean }
+export const DEFAULT_NOTIFY: NotifyPrefs = { enabled: true, mentions: false, quiet: false, from: "22:00", to: "08:00", preview: true, dockBounce: true };
 
 export interface MenuItem { icon: IconName; label: string; kbd?: string; danger?: boolean; run: () => void }
 /** Popovers anchor below `y` (an element's bottom) and flip above `top` when they don't fit. */

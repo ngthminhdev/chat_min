@@ -210,12 +210,15 @@ export function Settings() {
           )}
           <Row
             title="Kiểm tra thông báo"
-            help={isMobile ? "Gửi một thông báo thử. Nếu không thấy, kiểm tra quyền Thông báo của ChatMin trong Cài đặt Android." : mac && island ? "Hiện thông báo thử ở notch. Rê chuột lên để giữ thông báo, bấm × để đóng." : "Gửi thông báo hệ thống ngay. Nếu không thấy, kiểm tra quyền thông báo của ChatMin trong cài đặt hệ thống."}
+            help={isMobile ? "Gửi một thông báo thử. Nếu không thấy, kiểm tra quyền Thông báo của ChatMin trong Cài đặt Android." : mac ? "Xem thử ngay, hoặc thử Dock rồi nhấn ⌘H để ẩn app trong 3 giây. Phép thử bỏ qua giờ im lặng và tùy chọn tài khoản; vẫn theo Giảm chuyển động của macOS." : "Gửi thông báo hệ thống ngay. Nếu không thấy, kiểm tra quyền thông báo của ChatMin trong cài đặt hệ thống."}
             icon="bell"
           >
             <button className="tool-btn" onClick={() => void api.notifyTest().catch(fail)}>
               {mac && island ? "Xem thử ở notch" : "Gửi thông báo thử"}
             </button>
+            {mac && <button className="tool-btn" onClick={() => {
+              void api.notifyTest(3000).then(() => toast("Nhấn ⌘H để ẩn ChatMin và xem biểu tượng Dock sau 3 giây", "bell")).catch(fail);
+            }}>Thử Dock sau 3 giây</button>}
           </Row>
           {accounts.map((a) => {
             const p = { ...DEFAULT_NOTIFY, ...notif[a.id] };
@@ -228,6 +231,9 @@ export function Settings() {
                 <Row title="Chỉ khi được nhắc tên" help="Chỉ báo khi bạn được nhắc tên.">
                   <Toggle checked={p.mentions} label={`Chỉ khi được nhắc tên ${a.name}`} onChange={(v) => setNotif(a.id, { mentions: v })} />
                 </Row>
+                {mac && <Row title="Nhảy biểu tượng ở Dock" help="Nhảy ngắn khi ChatMin ở nền; tối đa một lần mỗi 10 giây. Tôn trọng giờ im lặng và Giảm chuyển động của macOS.">
+                  <Toggle checked={p.dockBounce} label={`Nhảy Dock ${a.name}`} onChange={(v) => setNotif(a.id, { dockBounce: v })} />
+                </Row>}
                 <Row title="Im lặng theo giờ" help="Dùng múi giờ máy. Khung giờ có thể qua nửa đêm.">
                   <Toggle checked={p.quiet} label={`Im lặng ${a.name}`} onChange={(v) => setNotif(a.id, { quiet: v })} />
                 </Row>

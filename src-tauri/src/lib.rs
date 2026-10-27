@@ -15,6 +15,7 @@ mod island_style;
 mod island_view;
 mod model;
 mod notify;
+mod notify_state;
 mod store;
 mod tg;
 
@@ -912,6 +913,7 @@ async fn account_remove(core: C<'_>, id: String) -> Res<()> {
         _ => web::close(&core, &id),
     }
     core.store().remove_account(&id)?;
+    core.notifier.remove_account(&core.app, &id);
     core.health.lock().unwrap().remove(&id);
     core.emit_accounts();
     Ok(())
@@ -1165,6 +1167,7 @@ fn clipboard_files() -> Vec<String> {
 fn show_on_activate(app: tauri::AppHandle) {
     use objc2_foundation::{NSNotification, NSNotificationCenter};
     let block = block2::RcBlock::new(move |_: std::ptr::NonNull<NSNotification>| {
+        notify::cancel_attention();
         if let Some(w) = app.get_window("main") {
             if !w.is_visible().unwrap_or(true) {
                 let _ = w.show();
@@ -1870,8 +1873,16 @@ async fn search(
 }
 
 #[tauri::command]
-fn notify_test(app: tauri::AppHandle) {
-    notify::test(&app);
+fn notify_test(app: tauri::AppHandle, delay_ms: Option<u64>) {
+    let delay = delay_ms.unwrap_or(0).min(10_000);
+    if delay == 0 {
+        notify::test(&app);
+    } else {
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+            notify::test(&app);
+        });
+    }
 }
 
 #[tauri::command]
@@ -2088,6 +2099,12 @@ pub fn run() {
                 web_open: Default::default(),
             });
             app.manage(core.clone());
+            // Native listeners may deliver before WebKit has hydrated Settings.
+            match core.store().ui_state() {
+                Ok(Some(snapshot)) => core.notifier.set_prefs(notify::saved_prefs(&snapshot)),
+                Ok(None) => {},
+                Err(error) => eprintln!("[notify] could not restore preferences: {error}"),
+            }
             // WKWebView caps rendering updates near 60 Hz by default, so on a 120 Hz
             // display scrolling moves only every other frame. Opt out via the WebKit
             // feature flag (private API; measured 60.6 → 120.3 rAF/s on macOS 26).

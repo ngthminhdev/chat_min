@@ -2,6 +2,7 @@
 //! the window is hidden (close only hides it) WebKit throttles or suspends its webview, so
 //! deciding this in JS made alerts late or missing exactly when they matter most.
 use crate::model::{Chat, Msg};
+use crate::notify_state::{Digest, UnreadBadge};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -13,7 +14,7 @@ use tauri_plugin_notification::NotificationExt;
 
 /// Per-account settings, mirrored from the Settings screen (store.ts `NotifyPrefs`).
 #[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase")]
 pub struct Prefs {
     pub enabled: bool,
     pub mentions: bool,
@@ -21,12 +22,19 @@ pub struct Prefs {
     pub from: String,
     pub to: String,
     pub preview: bool,
+    pub dock_bounce: bool,
 }
 
 impl Default for Prefs {
     fn default() -> Self {
-        Self { enabled: true, mentions: false, quiet: false, from: "22:00".into(), to: "08:00".into(), preview: true }
+        Self { enabled: true, mentions: false, quiet: false, from: "22:00".into(), to: "08:00".into(), preview: true, dock_bounce: true }
     }
+}
+
+/// Invalid entries must not discard the other accounts' quiet/privacy settings.
+pub fn saved_prefs(snapshot: &serde_json::Value) -> HashMap<String, Prefs> {
+    snapshot.get("notif").and_then(|v| v.as_object()).into_iter().flatten()
+        .filter_map(|(id, value)| serde_json::from_value(value.clone()).ok().map(|p| (id.clone(), p))).collect()
 }
 
 impl Prefs {
@@ -69,10 +77,12 @@ pub struct Notifier {
     /// (account id, chat id) open on screen
     active: Mutex<Option<(String, String)>>,
     /// unread per chat, muted chats as 0; their sum is the Dock badge
-    unread: Mutex<HashMap<(String, String), i32>>,
-    badge: Mutex<i64>,
+    unread: Mutex<UnreadBadge>,
+    badge: Mutex<Option<i64>>,
+    badge_scheduled: std::sync::atomic::AtomicBool,
     /// (chat title, "account|chat") waiting for the summary
-    missed: Mutex<Vec<(String, String)>>,
+    missed: Mutex<Digest>,
+    missed_scheduled: std::sync::atomic::AtomicBool,
     /// phone: the app left the screen (the webview reports `visibilitychange`, mobile.ts)
     background: std::sync::atomic::AtomicBool,
 }
@@ -146,7 +156,7 @@ impl Notifier {
         match Self::rings(&p, chat, m, followed, watching, crate::now_ms(), &now_hm) {
             Ring::No => return Ring::No,
             Ring::Later => {
-                self.later(app, &chat.title, &format!("{}|{}", m.account_id, m.chat_id));
+                self.later(app, &chat.title, &format!("{}|{}", m.account_id, m.chat_id), m.mentions_me);
                 return Ring::Later;
             }
             Ring::Now => {}
@@ -161,7 +171,7 @@ impl Notifier {
         };
         // a thread reply opens its thread: in the space it's folded out of sight
         let thread = if m.thread_reply { m.thread_id.as_str() } else { "" };
-        show_photo(app, &title, &body, &format!("{}|{}\n{}\n{thread}", m.account_id, m.chat_id, m.id), photo_source(chat, m));
+        show_photo(app, &title, &body, &format!("{}|{}\n{}\n{thread}", m.account_id, m.chat_id, m.id), photo_source(chat, m), p.dock_bounce);
         Ring::Now
     }
 
@@ -171,30 +181,45 @@ impl Notifier {
         let Some(chat) = chat else { return };
         let p = self.prefs.lock().unwrap().get(&m.account_id).cloned().unwrap_or_default();
         let now_hm = chrono::Local::now().format("%H:%M").to_string();
-        if !p.enabled || p.quiet_at(&now_hm) || self.watching(app, &m.account_id, &m.chat_id) {
+        if !p.enabled || p.mentions || chat.muted || p.quiet_at(&now_hm) || self.watching(app, &m.account_id, &m.chat_id) {
             return;
         }
         let t = crate::tg::plain(&m.text, m.media.as_ref());
         let body = if p.preview && !t.is_empty() { format!("{emoji} vào tin của bạn: {t}") } else { format!("{emoji} vào tin của bạn") };
         let thread = if m.thread_reply { m.thread_id.as_str() } else { "" };
-        show(app, &format!("Biểu cảm mới · {}", chat.title), &body, &format!("{}|{}\n{}\n{thread}", m.account_id, m.chat_id, m.id));
+        show_photo(app, &format!("Biểu cảm mới · {}", chat.title), &body, &format!("{}|{}\n{}\n{thread}", m.account_id, m.chat_id, m.id), "", p.dock_bounce);
     }
 
     /// Queues a missed message; a catch-up burst settles for a few seconds, then rings once.
-    fn later(&self, app: &AppHandle, title: &str, key: &str) {
-        let first = {
-            let mut q = self.missed.lock().unwrap();
-            q.push((title.into(), key.into()));
-            q.len() == 1
-        };
-        if first {
+    fn later(&self, app: &AppHandle, title: &str, key: &str, mentioned: bool) {
+        self.missed.lock().unwrap().push(title, key, mentioned);
+        if !self.missed_scheduled.swap(true, std::sync::atomic::Ordering::AcqRel) {
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 if let Some(core) = app.try_state::<std::sync::Arc<crate::Core>>() {
-                    let q = std::mem::take(&mut *core.notifier.missed.lock().unwrap());
-                    if let Some((title, body, key)) = summary(&q) {
-                        show(&app, &title, &body, &key);
+                    let mut q = {
+                        let mut pending = core.notifier.missed.lock().unwrap();
+                        core.notifier.missed_scheduled.store(false, std::sync::atomic::Ordering::Release);
+                        std::mem::take(&mut *pending)
+                    };
+                    let now_hm = chrono::Local::now().format("%H:%M").to_string();
+                    let prefs = core.notifier.prefs.lock().unwrap().clone();
+                    for (account, p) in &prefs { if p.mentions { q.only_mentions(account); } }
+                    q.groups.retain_mut(|group| {
+                        let Some((account, chat)) = group.key.split_once('|') else { return false };
+                        let p = prefs.get(account).cloned().unwrap_or_default();
+                        let current = core.store().chat(account, chat).ok().flatten();
+                        let Some(current) = current else { return false };
+                        if current.muted {
+                            if !account.starts_with("tg-") { return false; }
+                            group.count = group.mentions;
+                        }
+                        group.count > 0 && current.unread > 0 && p.enabled && !p.quiet_at(&now_hm) && !core.notifier.watching(&app, account, chat)
+                    });
+                    if let Some((title, body, key)) = q.summary() {
+                        let bounce = q.groups.iter().any(|g| prefs.get(g.key.split('|').next().unwrap_or("")).cloned().unwrap_or_default().dock_bounce);
+                        show_photo(&app, &title, &body, &key, "", bounce);
                     }
                 }
             });
@@ -209,49 +234,80 @@ impl Notifier {
         let p = self.prefs.lock().unwrap().get(&chat.account_id).cloned().unwrap_or_default();
         let now_hm = chrono::Local::now().format("%H:%M").to_string();
         if p.enabled && !p.mentions && !p.quiet_at(&now_hm) {
-            show(app, &chat.title, web_body(&p, body), &format!("{}|{}", chat.account_id, chat.id));
+            show_photo(app, &chat.title, web_body(&p, body), &format!("{}|{}", chat.account_id, chat.id), "", p.dock_bounce);
         }
     }
 
     /// Keeps the Dock badge equal to the unread total of unmuted chats.
     pub fn track(&self, app: &AppHandle, chat: &Chat, removed: bool) {
-        let n = if removed || chat.muted { 0 } else { chat.unread.max(0) };
-        let (was, total): (i32, i64) = {
-            let mut u = self.unread.lock().unwrap();
-            let was = u.insert((chat.account_id.clone(), chat.id.clone()), n).unwrap_or(0);
-            (was, u.values().map(|&v| v as i64).sum())
+        let n = if removed { 0 } else { chat.unread.max(0) };
+        let (was, total) = {
+            let mut unread = self.unread.lock().unwrap();
+            if chat.muted { unread.update_muted(&chat.account_id, &chat.id, n, true) }
+            else { unread.update(&chat.account_id, &chat.id, n) }
         };
         // read (here, on the phone, on the web): its banners in Notification Center go too
-        if was > 0 && n == 0 {
-            clear_delivered(app, if total == 0 { None } else { Some(chat.title.clone()) });
+        if (was > 0 || removed) && n == 0 {
+            let chat_key = format!("{}|{}", chat.account_id, chat.id);
+            self.missed.lock().unwrap().remove_chat(&chat_key);
+            clear_delivered(app, Some(chat_key.clone()));
             #[cfg(target_os = "macos")]
             {
-                let key = if total == 0 { None } else { Some(format!("{}|{}", chat.account_id, chat.id)) };
-                let _ = app.run_on_main_thread(move || crate::island::clear(key.as_deref()));
+                let _ = app.run_on_main_thread(move || {
+                    crate::island::clear(Some(&chat_key));
+                    if total == 0 { mac::cancel_attention(); }
+                });
             }
         }
-        let mut badge = self.badge.lock().unwrap();
-        if *badge != total {
-            *badge = total;
-            #[cfg(desktop)]
-            if let Some(w) = app.get_window("main") {
-                let _ = w.set_badge_count(if total > 0 { Some(total) } else { None });
-            }
-        }
+        if was != n || *self.badge.lock().unwrap() != Some(total) { self.schedule_badge(app); }
     }
-}
 
-/// "3 tin nhắn trong lúc vắng" / "Minh, Backend Go, Lan +2 chat"; clicking opens the first.
-fn summary(q: &[(String, String)]) -> Option<(String, String, String)> {
-    let (_, key) = q.first()?;
-    let mut chats: Vec<&str> = vec![];
-    for (t, _) in q {
-        if !chats.contains(&t.as_str()) {
-            chats.push(t);
+    fn schedule_badge(&self, app: &AppHandle) {
+        #[cfg(desktop)]
+        if !self.badge_scheduled.swap(true, std::sync::atomic::Ordering::AcqRel) {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+                let handle = app.clone();
+                if let Err(error) = app.run_on_main_thread(move || {
+                    let Some(core) = handle.try_state::<std::sync::Arc<crate::Core>>() else { return };
+                    core.notifier.badge_scheduled.store(false, std::sync::atomic::Ordering::Release);
+                    let total = core.notifier.unread.lock().unwrap().total;
+                    let mut applied = core.notifier.badge.lock().unwrap();
+                    if *applied != Some(total) {
+                        if let Some(w) = handle.get_window("main") {
+                            match w.set_badge_count(if total > 0 { Some(total) } else { None }) {
+                                Ok(()) => *applied = Some(total),
+                                Err(error) => eprintln!("[notify] badge update failed: {error}"),
+                            }
+                        }
+                    }
+                }) {
+                    if let Some(core) = app.try_state::<std::sync::Arc<crate::Core>>() {
+                        core.notifier.badge_scheduled.store(false, std::sync::atomic::Ordering::Release);
+                    }
+                    eprintln!("[notify] badge dispatch failed: {error}");
+                }
+            });
         }
+        #[cfg(mobile)]
+        let _ = app;
     }
-    let more = if chats.len() > 3 { format!(" +{} chat", chats.len() - 3) } else { String::new() };
-    Some((format!("{} tin nhắn trong lúc vắng", q.len()), format!("{}{more}", chats[..chats.len().min(3)].join(", ")), key.clone()))
+
+    pub fn remove_account(&self, app: &AppHandle, account: &str) {
+        self.unread.lock().unwrap().remove_account(account);
+        self.missed.lock().unwrap().remove_account(account);
+        self.prefs.lock().unwrap().remove(account);
+        #[cfg(target_os = "macos")]
+        {
+            let account = account.to_owned();
+            let _ = app.run_on_main_thread(move || {
+                mac::clear_account(account.clone());
+                crate::island::clear_account(&account);
+            });
+        }
+        self.schedule_badge(app);
+    }
 }
 
 /// Account-level problems (session expired): always shown, whatever the message settings.
@@ -261,7 +317,10 @@ pub fn alert(app: &AppHandle, title: &str, body: &str) {
 
 /// Settings → "Gửi thông báo thử": the same path a message takes, minus the rules.
 pub fn test(app: &AppHandle) {
-    show(app, "ChatMin", "Thông báo đang hoạt động. Bấm vào để mở ChatMin.", "");
+    // Repeat tests are separate deliveries; an empty first line still only opens the app.
+    static NEXT_TEST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let target = format!("\npreview-{}", NEXT_TEST.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+    show(app, "ChatMin", "Thông báo đang hoạt động. Bấm vào để mở ChatMin.", &target);
 }
 
 /// Android: a high-importance channel (heads-up banner, sound) for messages. Android 8+
@@ -342,21 +401,28 @@ pub fn on_click(app: &AppHandle) {
     mac::install(app);
 }
 
+#[cfg(target_os = "macos")]
+pub fn cancel_attention() { mac::cancel_attention(); }
+
 /// `chat`: "account|chat", the key the frontend opens when the notification is clicked.
 fn show(app: &AppHandle, title: &str, body: &str, chat: &str) {
-    show_photo(app, title, body, chat, "");
+    show_photo(app, title, body, chat, "", true);
 }
-fn show_photo(app: &AppHandle, title: &str, body: &str, chat: &str, photo: &str) {
+fn show_photo(app: &AppHandle, title: &str, body: &str, chat: &str, photo: &str, dock_bounce: bool) {
     #[cfg(target_os = "macos")]
     {
         // Serialize native delivery and mode-switch cleanup on the same main thread.
         let (title, body, target) = (title.to_owned(), body.to_owned(), chat.to_owned());
         let handle = app.clone();
         let photo = photo.to_owned();
+        let queued = std::time::Instant::now();
         if let Err(error) = app.run_on_main_thread(move || {
+            if crate::island::session_active() { mac::attention(dock_bounce); }
+            eprintln!("[notify] dispatch queue_us={} mode={}", queued.elapsed().as_micros(), if SYSTEM_MODE.load(std::sync::atomic::Ordering::Relaxed) { "system" } else { "island" });
             if SYSTEM_MODE.load(std::sync::atomic::Ordering::Relaxed) {
                 mac::show(&title, &body, &target);
             } else {
+                if !crate::island::session_active() { return; }
                 let callback_app = handle.clone();
                 let open = std::rc::Rc::new(move |target: &str| open(&callback_app, target));
                 if !crate::island::show(&title, &body, &target, &photo, open) {
@@ -376,7 +442,7 @@ fn show_photo(app: &AppHandle, title: &str, body: &str, chat: &str, photo: &str)
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = photo;
+        let _ = (photo, dock_bounce);
         let n = app.notification().builder().title(title).body(body).sound("default").extra("chat", chat);
         #[cfg(mobile)]
         let n = n.channel_id(CHANNEL).icon("ic_stat_chatmin");
@@ -387,16 +453,15 @@ fn show_photo(app: &AppHandle, title: &str, body: &str, chat: &str, photo: &str)
     }
 }
 
-/// Removes delivered banners of the chat titled `title` (ours read "Who" for a DM and
-/// "Who · Chat" otherwise), or all of them.
-fn clear_delivered(app: &AppHandle, title: Option<String>) {
+/// Remove exactly this account/chat, even when other chats share its display name.
+fn clear_delivered(app: &AppHandle, key: Option<String>) {
     #[cfg(target_os = "macos")]
     {
         let _ = app;
-        mac::clear(title);
+        mac::clear(key);
     }
     #[cfg(not(target_os = "macos"))]
-    let _ = (app, title);
+    let _ = (app, key);
 }
 
 /// macOS notifications through the UserNotifications framework. The old
@@ -405,6 +470,9 @@ fn clear_delivered(app: &AppHandle, title: Option<String>) {
 /// Needs a signed .app bundle (`bundle.macOS.signingIdentity` in tauri.conf.json).
 #[cfg(target_os = "macos")]
 mod mac {
+    use crate::notify_state::BounceGate;
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSApplication, NSRequestUserAttentionType, NSWorkspace};
     use objc2::rc::Retained;
     use objc2::runtime::{Bool, ProtocolObject};
     use objc2::{define_class, msg_send, AnyThread, DefinedClass};
@@ -415,6 +483,31 @@ mod mac {
     };
     use std::ptr::NonNull;
     use tauri::AppHandle;
+
+    thread_local! {
+        static ATTENTION: std::cell::RefCell<(BounceGate, Option<isize>)> = std::cell::RefCell::new((BounceGate::default(), None));
+    }
+    pub fn attention(enabled: bool) {
+        let Some(mtm) = MainThreadMarker::new() else { return };
+        let app = NSApplication::sharedApplication(mtm);
+        let reduced = NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion();
+        ATTENTION.with(|state| {
+            let mut state = state.borrow_mut();
+            if state.0.allow(std::time::Instant::now(), enabled, app.isActive(), reduced) {
+                if let Some(request) = state.1.take() { app.cancelUserAttentionRequest(request); }
+                state.1 = Some(app.requestUserAttention(NSRequestUserAttentionType::InformationalRequest));
+                eprintln!("[notify] dock attention requested");
+            }
+        });
+    }
+    pub fn cancel_attention() {
+        let Some(mtm) = MainThreadMarker::new() else { return };
+        ATTENTION.with(|state| {
+            if let Some(request) = state.borrow_mut().1.take() {
+                NSApplication::sharedApplication(mtm).cancelUserAttentionRequest(request);
+            }
+        });
+    }
 
     struct Ivars {
         app: AppHandle,
@@ -486,9 +579,11 @@ mod mac {
         content.setTitle(&NSString::from_str(title));
         content.setBody(&NSString::from_str(body));
         content.setSound(Some(&UNNotificationSound::defaultSound()));
+        content.setThreadIdentifier(&NSString::from_str(chat.split('\n').next().unwrap_or("")));
         let info = NSDictionary::from_slices(&[&*NSString::from_str("chat")], &[&*NSString::from_str(chat)]);
         unsafe { content.setUserInfo(&Retained::cast_unchecked::<NSDictionary>(info)) };
-        let id = NSString::from_str(&format!("chatmin-{}", crate::now_ms()));
+        static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let id = NSString::from_str(&format!("chatmin-{}-{}", crate::now_ms(), NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
         let request = UNNotificationRequest::requestWithIdentifier_content_trigger(&id, &content, None);
         let done = block2::RcBlock::new(|err: *mut NSError| {
             // A request submitted just before switching modes may complete after cleanup.
@@ -505,20 +600,32 @@ mod mac {
         UNUserNotificationCenter::currentNotificationCenter().addNotificationRequest_withCompletionHandler(&request, Some(&done));
     }
 
-    pub fn clear(title: Option<String>) {
+    pub fn clear(key: Option<String>) {
+        clear_matching(key, None);
+    }
+    pub fn clear_account(account: String) {
+        clear_matching(None, Some(account));
+    }
+    fn clear_matching(key: Option<String>, account: Option<String>) {
         if !bundled() {
             return;
         }
         let center = UNUserNotificationCenter::currentNotificationCenter();
-        let Some(title) = title else { return center.removeAllDeliveredNotifications() };
-        let tail = format!(" · {title}");
+        if key.is_none() && account.is_none() { return center.removeAllDeliveredNotifications(); }
         let done = block2::RcBlock::new(move |delivered: NonNull<NSArray<UNNotification>>| {
             let delivered = unsafe { delivered.as_ref() };
             let ids: Vec<Retained<NSString>> = delivered
                 .iter()
                 .filter(|n| {
-                    let t = n.request().content().title().to_string();
-                    t == title || t.ends_with(&tail)
+                    let content = n.request().content();
+                    let info = content.userInfo();
+                    info.objectForKey(&*NSString::from_str("chat"))
+                        .and_then(|v| v.downcast::<NSString>().ok())
+                        .is_some_and(|target| {
+                            let target = target.to_string();
+                            if let Some(key) = &key { target.split('\n').next() == Some(key.as_str()) }
+                            else { target.split('|').next() == account.as_deref() }
+                        })
                 })
                 .map(|n| n.request().identifier())
                 .collect();
@@ -547,6 +654,19 @@ pub fn new_reaction(old: &Msg, new: &Msg) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_prefs_restore_before_webview_and_tolerate_one_invalid_account() {
+        let prefs = saved_prefs(&serde_json::json!({"notif": {
+            "tg-a": {"enabled": false}, "gc-b": {"quiet": true, "dockBounce": false},
+            "broken": {"enabled": "invalid"}
+        }}));
+        assert!(!prefs["tg-a"].enabled);
+        assert!(prefs["tg-a"].dock_bounce);
+        assert!(prefs["gc-b"].quiet);
+        assert!(!prefs["gc-b"].dock_bounce);
+        assert!(!prefs.contains_key("broken"));
+    }
 
     #[test]
     fn notice_uses_sender_photo_and_only_falls_back_to_the_matching_private_chat() {
@@ -607,13 +727,6 @@ mod tests {
         assert_eq!(Notifier::rings(&Prefs { quiet: true, ..Default::default() }, &dm, &msg(|_| {}), false, false, now, "23:00"), Ring::No);
     }
 
-    #[test]
-    fn away_summary() {
-        let q = |v: &[&str]| v.iter().map(|t| (t.to_string(), format!("k-{t}"))).collect::<Vec<_>>();
-        assert_eq!(summary(&[]), None);
-        assert_eq!(summary(&q(&["Minh", "Lan", "Minh"])).unwrap(), ("3 tin nhắn trong lúc vắng".into(), "Minh, Lan".into(), "k-Minh".into()));
-        assert_eq!(summary(&q(&["A", "B", "C", "D", "E"])).unwrap().1, "A, B, C +2 chat");
-    }
 
     #[test]
     fn quiet_hours() {

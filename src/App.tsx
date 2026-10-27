@@ -146,8 +146,9 @@ export default function App() {
   const notif = useApp((s) => s.notif);
   const accountIds = useApp((s) => s.accounts.map((a) => a.id).join("|"));
   useEffect(() => {
-    void api.notifyPrefs(Object.fromEntries(useApp.getState().accounts.map((a) => [a.id, { ...DEFAULT_NOTIFY, ...notif[a.id] }])));
-  }, [notif, accountIds]);
+    if (!booted) return;
+    void api.notifyPrefs(Object.fromEntries(useApp.getState().accounts.map((a) => [a.id, { ...DEFAULT_NOTIFY, ...notif[a.id] }]))).catch((e) => api.logJs(`notification prefs: ${e}`));
+  }, [notif, accountIds, booted]);
 
   useGlobalHandlers();
   useAndroidNavigation();

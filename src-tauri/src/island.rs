@@ -9,7 +9,7 @@ use objc2::runtime::ProtocolObject;
 use objc2::{define_class, msg_send, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::*;
 use objc2_foundation::{
-    NSNotification, NSNotificationCenter, NSNumber, NSObject, NSObjectProtocol, NSOperationQueue, NSRect, NSString, NSTimer,
+    NSNotification, NSNotificationCenter, NSNumber, NSObject, NSObjectProtocol, NSOperationQueue, NSRect, NSRunLoop, NSRunLoopCommonModes, NSString, NSTimer,
 };
 use objc2_quartz_core::CAMediaTimingFunction;
 use std::{
@@ -72,6 +72,7 @@ struct Island {
     follow_pointer: bool,
     motion_target: Option<NSRect>,
     motion_active: bool,
+    refresh_after_motion: bool,
     visual_mode: Mode,
     actions: Retained<Actions>,
     queue: IslandQueue,
@@ -138,7 +139,11 @@ fn with_island(f: impl FnOnce(&mut Island)) {
 }
 fn timer(seconds: f64, f: impl Fn() + 'static) -> Retained<NSTimer> {
     let block = block2::RcBlock::new(move |_: NonNull<NSTimer>| f());
-    unsafe { NSTimer::scheduledTimerWithTimeInterval_repeats_block(seconds, false, &block) }
+    unsafe {
+        let timer = NSTimer::timerWithTimeInterval_repeats_block(seconds, false, &block);
+        NSRunLoop::mainRunLoop().addTimer_forMode(&timer, NSRunLoopCommonModes);
+        timer
+    }
 }
 fn stop(slot: &mut Option<Retained<NSTimer>>) {
     if let Some(t) = slot.take() {
@@ -286,6 +291,7 @@ impl Island {
             follow_pointer: true,
             motion_target: None,
             motion_active: false,
+            refresh_after_motion: false,
             visual_mode: Mode::Compact,
             actions,
             queue: IslandQueue::default(),
@@ -313,6 +319,11 @@ impl Island {
         }));
     }
     fn schedule(&mut self) {
+        // The first message must not wait for the burst batching window.
+        if !self.motion_active && (!self.panel.isVisible() || self.mode == Mode::Compact) {
+            self.render(MainThreadMarker::new().unwrap(), Mode::Notice, true);
+            return;
+        }
         if self.pending.is_some() {
             return;
         }
@@ -353,6 +364,7 @@ impl Island {
         self.hovered = false;
         self.mode = Mode::Compact;
         self.motion_active = false;
+        self.refresh_after_motion = false;
         self.motion_target = None;
         let frame = self.panel.frame();
         let target = rect(
@@ -587,11 +599,11 @@ impl Island {
         content
     }
     fn render(&mut self, mtm: MainThreadMarker, mode: Mode, animate: bool) -> bool {
+        let started = std::time::Instant::now();
         // Keep pending delivery/hover deadlines through unrelated content updates.
         if mode == Mode::Expanded {
             stop(&mut self.hover_timer);
         }
-        stop(&mut self.timer);
         if self.queue.groups.is_empty() {
             self.dismiss();
             return true;
@@ -622,6 +634,14 @@ impl Island {
         let fresh = !self.panel.isVisible();
         let geometry_changed = self.motion_target != Some(target);
         let keep_motion = self.motion_active && !geometry_changed && !screen_changed && old_mode == mode;
+        if keep_motion {
+            // Replacing the fading tree here makes new content jump to full opacity.
+            // Keep its click snapshots and layers alive until the transition completes.
+            self.refresh_after_motion = true;
+            return true;
+        }
+        self.refresh_after_motion = false;
+        stop(&mut self.timer);
         let animate = animate && !reduced() && !screen_changed && reanimate(old_mode, mode, fresh, geometry_changed);
         if !keep_motion {
             self.generation.set(self.generation.get() + 1);
@@ -712,6 +732,10 @@ impl Island {
                         i.visual_mode = i.mode;
                         i.root.appearance(i.appearance, i.mode, notch, body_top);
                         i.tint.appearance(i.appearance, i.mode, notch, body_top);
+                        if i.refresh_after_motion {
+                            i.refresh_after_motion = false;
+                            i.render(MainThreadMarker::new().unwrap(), i.mode, false);
+                        }
                         i.hovered = within(i.panel.frame());
                         if i.hovered {
                             i.arm_hover();
@@ -739,7 +763,7 @@ impl Island {
         }
         self.arm();
         eprintln!(
-            "[island] mode={mode:?} from={old_mode:?} groups={} total={} theme_light={} notch={} width={} height={} key={} active_space={} top={} screen_top={}",
+            "[island] mode={mode:?} from={old_mode:?} groups={} total={} theme_light={} notch={} width={} height={} key={} active_space={} top={} screen_top={} render_us={}",
             self.queue.groups.len(),
             self.queue.total(),
             self.appearance.light,
@@ -749,7 +773,8 @@ impl Island {
             self.panel.isKeyWindow(),
             self.panel.isOnActiveSpace(),
             target.origin.y + target.size.height,
-            s.origin.y + s.size.height
+            s.origin.y + s.size.height,
+            started.elapsed().as_micros()
         );
         true
     }
@@ -787,6 +812,8 @@ pub fn set_avatar(target: &str, source: &str, path: &str) {
         }
     });
 }
+pub fn session_active() -> bool { SESSION_ACTIVE.with(Cell::get) }
+
 pub fn show(title: &str, body: &str, target: &str, photo: &str, open: Open) -> bool {
     let Some(mtm) = MainThreadMarker::new() else { return false };
     ISLAND.with(|cell| {
@@ -796,7 +823,7 @@ pub fn show(title: &str, body: &str, target: &str, photo: &str, open: Open) -> b
             return true;
         }
         if i.queue.push_with_avatar(title, body, target, photo) {
-            i.follow_pointer = true;
+            i.follow_pointer = !i.hovered;
             i.schedule();
         }
         true
@@ -812,6 +839,14 @@ pub fn clear(chat: Option<&str>) {
         } else {
             i.dismiss();
         }
+    });
+}
+pub fn clear_account(account: &str) {
+    let Some(mtm) = MainThreadMarker::new() else { return };
+    with_island(|i| {
+        let before = i.queue.groups.len();
+        i.queue.groups.retain(|g| g.key.split('|').next() != Some(account));
+        if before != i.queue.groups.len() { i.render(mtm, i.mode, true); }
     });
 }
 /// A provider-free executable uses this exact native surface for local visual/interaction QA.
@@ -878,6 +913,31 @@ pub fn preview() {
         callback.clone(),
     );
     let scene = std::fs::read_to_string(std::env::temp_dir().join("chatmin-island-preview-scene")).unwrap_or_default();
+    if scene.trim() == "notification-stress" {
+        // Synthetic deliveries through the production queue/render path, without providers.
+        let original = ISLAND.with(|cell| cell.borrow().as_ref().and_then(|i| i.content.clone()));
+        let callback = callback.clone();
+        let _ = timer(0.12, move || {
+            for n in 0..100 {
+                show("Synthetic sender · Test group", "Notification burst", &format!("tg-stress|1\nm{n}"), "", callback.clone());
+            }
+        });
+        let _ = timer(0.25, move || {
+            with_island(|i| {
+                let retained = original.as_ref().zip(i.content.as_ref()).is_some_and(|(a,b)| std::ptr::eq::<Content>(&**a, &**b));
+                println!("STRESS during_motion={} tree_retained={} total={} key={}", i.motion_active, retained, i.queue.total(), i.panel.isKeyWindow());
+            });
+        });
+        let _ = timer(0.8, || {
+            with_island(|i| {
+                let latest = i.queue.groups.iter().any(|g| g.target == "tg-stress|1\nm99" && g.count == 100);
+                println!("STRESS settled={} latest={} total={} groups={} pending={}", !i.motion_active, latest, i.queue.total(), i.queue.groups.len(), i.pending.is_some());
+            });
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+            std::process::exit(0); // provider-free preview only
+        });
+    }
     if !photo.is_empty() {
         let output = std::env::temp_dir().join("chatmin-island-preview-thumb.png");
         let _ = std::fs::remove_file(&output);
