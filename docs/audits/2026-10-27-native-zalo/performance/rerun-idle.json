@@ -1,0 +1,187 @@
+{
+  "phase": "rerun-idle",
+  "durationSeconds": 20.513674250018084,
+  "method": "ps cumulative CPU delta / elapsed; RSS includes shared mappings; WebKit inferred roles matched app launch time, confirmed roles matched open app data handles",
+  "samples": {
+    "app": [
+      {
+        "cpuPercentOneCore": 1.9799755999220063,
+        "rssMiB": 177.6875
+      },
+      {
+        "cpuPercentOneCore": 1.9406681939003114,
+        "rssMiB": 177.6875
+      },
+      {
+        "cpuPercentOneCore": 1.9487594002239164,
+        "rssMiB": 177.6875
+      },
+      {
+        "cpuPercentOneCore": 0.9714385732346796,
+        "rssMiB": 177.6875
+      },
+      {
+        "cpuPercentOneCore": 2.946535600648616,
+        "rssMiB": 177.703125
+      },
+      {
+        "cpuPercentOneCore": 0.9784348478415225,
+        "rssMiB": 177.703125
+      },
+      {
+        "cpuPercentOneCore": 1.9579444937232542,
+        "rssMiB": 177.65625
+      },
+      {
+        "cpuPercentOneCore": 1.9392560374071905,
+        "rssMiB": 177.65625
+      },
+      {
+        "cpuPercentOneCore": 1.9418118279387344,
+        "rssMiB": 177.65625
+      },
+      {
+        "cpuPercentOneCore": 0.9748725384455685,
+        "rssMiB": 177.65625
+      },
+      {
+        "cpuPercentOneCore": 1.9448174274825525,
+        "rssMiB": 177.65625
+      },
+      {
+        "cpuPercentOneCore": 1.9587637778465943,
+        "rssMiB": 177.65625
+      },
+      {
+        "cpuPercentOneCore": 0.9782766336498595,
+        "rssMiB": 177.65625
+      },
+      {
+        "cpuPercentOneCore": 1.9457461908016445,
+        "rssMiB": 177.65625
+      },
+      {
+        "cpuPercentOneCore": 1.945992545820891,
+        "rssMiB": 177.65625
+      },
+      {
+        "cpuPercentOneCore": 1.9593654546053767,
+        "rssMiB": 177.671875
+      },
+      {
+        "cpuPercentOneCore": 0.9710066710286054,
+        "rssMiB": 177.671875
+      },
+      {
+        "cpuPercentOneCore": 1.9475098232974164,
+        "rssMiB": 177.6875
+      },
+      {
+        "cpuPercentOneCore": 0.981270329332062,
+        "rssMiB": 177.703125
+      },
+      {
+        "cpuPercentOneCore": 1.9500623965339334,
+        "rssMiB": 177.703125
+      }
+    ],
+    "zalo_worker": [
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 94.046875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 94.046875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 94.046875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 94.046875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 94.046875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 94.046875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 94.046875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 94.046875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 94.046875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 94.046875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 94.046875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 94.046875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 94.046875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 94.046875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 94.046875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 94.046875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 94.046875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 94.046875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 94.046875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 94.046875
+      }
+    ]
+  },
+  "stats": {
+    "app": {
+      "cpuMedian": 1.9452818091420985,
+      "cpuP95": 1.9799755999220063,
+      "cpuMax": 2.946535600648616,
+      "rssMedianMiB": 177.671875,
+      "rssMaxMiB": 177.703125
+    },
+    "zalo_worker": {
+      "cpuMedian": 0.0,
+      "cpuP95": 0,
+      "cpuMax": 0,
+      "rssMedianMiB": 94.046875,
+      "rssMaxMiB": 94.046875
+    }
+  }
+}

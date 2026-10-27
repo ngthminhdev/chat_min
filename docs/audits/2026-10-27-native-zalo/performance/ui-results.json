@@ -1,0 +1,413 @@
+{
+  "scope": "Synthetic production React components in headless Playwright WebKit, 1280x900, 1000 text/code messages per chat, no real accounts or provider calls. Fresh browser per provider. Timings exclude server/native IPC. Switch total waits for content and two extra animation frames.",
+  "providers": {
+    "zalo": {
+      "frameGaps": {
+        "p95": 20,
+        "max": 22,
+        "over25": 0,
+        "count": 92
+      },
+      "switching": {
+        "median": 8,
+        "p95": 10,
+        "samples": [
+          {
+            "cpu": 9,
+            "total": 100
+          },
+          {
+            "cpu": 8,
+            "total": 100
+          },
+          {
+            "cpu": 10,
+            "total": 100
+          },
+          {
+            "cpu": 8,
+            "total": 100
+          },
+          {
+            "cpu": 9,
+            "total": 101
+          },
+          {
+            "cpu": 8,
+            "total": 100
+          },
+          {
+            "cpu": 9,
+            "total": 100
+          },
+          {
+            "cpu": 7,
+            "total": 100
+          },
+          {
+            "cpu": 8,
+            "total": 100
+          },
+          {
+            "cpu": 8,
+            "total": 100
+          }
+        ]
+      },
+      "refresh": {
+        "median": 1,
+        "p95": 1,
+        "samples": [
+          {
+            "cpu": 1,
+            "total": 34
+          },
+          {
+            "cpu": 1,
+            "total": 33
+          },
+          {
+            "cpu": 1,
+            "total": 33
+          },
+          {
+            "cpu": 1,
+            "total": 33
+          },
+          {
+            "cpu": 0,
+            "total": 33
+          },
+          {
+            "cpu": 1,
+            "total": 33
+          },
+          {
+            "cpu": 1,
+            "total": 34
+          },
+          {
+            "cpu": 0,
+            "total": 33
+          },
+          {
+            "cpu": 1,
+            "total": 33
+          },
+          {
+            "cpu": 1,
+            "total": 34
+          }
+        ]
+      },
+      "rows": 9,
+      "functional": {
+        "lateGrowthFollow": true,
+        "offscreenJump": true,
+        "prependAnchorDelta": 0,
+        "awayAppendStable": true,
+        "notificationJump": true,
+        "bottomFollow": true,
+        "mounted": 6
+      },
+      "scroll": {
+        "frames": 89,
+        "p95": 17,
+        "max": 18,
+        "over25": 0,
+        "mounted": 12
+      },
+      "lazyToolbar": true,
+      "keyboardActions": true,
+      "hoverActions": true,
+      "escapeRestoresFocus": true,
+      "typing": {
+        "frames": 38,
+        "p95": 18,
+        "max": 18,
+        "over25": 0,
+        "anchorDelta": 0,
+        "composerHeight": 176
+      },
+      "thread": {
+        "threadPrependAnchorDelta": 0,
+        "rootJump": true,
+        "mounted": 16
+      },
+      "unexpectedPageErrors": [],
+      "resizeObserverWarnings": 1
+    },
+    "telegram": {
+      "frameGaps": {
+        "p95": 21,
+        "max": 22,
+        "over25": 0,
+        "count": 92
+      },
+      "switching": {
+        "median": 9,
+        "p95": 10,
+        "samples": [
+          {
+            "cpu": 9,
+            "total": 100
+          },
+          {
+            "cpu": 9,
+            "total": 99
+          },
+          {
+            "cpu": 9,
+            "total": 102
+          },
+          {
+            "cpu": 10,
+            "total": 100
+          },
+          {
+            "cpu": 8,
+            "total": 99
+          },
+          {
+            "cpu": 7,
+            "total": 100
+          },
+          {
+            "cpu": 8,
+            "total": 100
+          },
+          {
+            "cpu": 8,
+            "total": 99
+          },
+          {
+            "cpu": 8,
+            "total": 100
+          },
+          {
+            "cpu": 9,
+            "total": 100
+          }
+        ]
+      },
+      "refresh": {
+        "median": 1,
+        "p95": 1,
+        "samples": [
+          {
+            "cpu": 1,
+            "total": 34
+          },
+          {
+            "cpu": 1,
+            "total": 34
+          },
+          {
+            "cpu": 1,
+            "total": 31
+          },
+          {
+            "cpu": 1,
+            "total": 34
+          },
+          {
+            "cpu": 1,
+            "total": 34
+          },
+          {
+            "cpu": 1,
+            "total": 33
+          },
+          {
+            "cpu": 1,
+            "total": 35
+          },
+          {
+            "cpu": 1,
+            "total": 33
+          },
+          {
+            "cpu": 1,
+            "total": 33
+          },
+          {
+            "cpu": 1,
+            "total": 34
+          }
+        ]
+      },
+      "rows": 9,
+      "functional": {
+        "lateGrowthFollow": true,
+        "offscreenJump": true,
+        "prependAnchorDelta": 0,
+        "awayAppendStable": true,
+        "notificationJump": true,
+        "bottomFollow": true,
+        "mounted": 6
+      },
+      "scroll": {
+        "frames": 89,
+        "p95": 17,
+        "max": 17,
+        "over25": 0,
+        "mounted": 12
+      },
+      "lazyToolbar": true,
+      "keyboardActions": true,
+      "hoverActions": true,
+      "escapeRestoresFocus": true,
+      "typing": {
+        "frames": 38,
+        "p95": 18,
+        "max": 19,
+        "over25": 0,
+        "anchorDelta": 0,
+        "composerHeight": 176
+      },
+      "thread": {
+        "threadPrependAnchorDelta": 0,
+        "rootJump": true,
+        "mounted": 16
+      },
+      "unexpectedPageErrors": [],
+      "resizeObserverWarnings": 1
+    },
+    "gchat": {
+      "frameGaps": {
+        "p95": 21,
+        "max": 21,
+        "over25": 0,
+        "count": 92
+      },
+      "switching": {
+        "median": 8,
+        "p95": 10,
+        "samples": [
+          {
+            "cpu": 8,
+            "total": 100
+          },
+          {
+            "cpu": 7,
+            "total": 99
+          },
+          {
+            "cpu": 10,
+            "total": 100
+          },
+          {
+            "cpu": 8,
+            "total": 99
+          },
+          {
+            "cpu": 8,
+            "total": 100
+          },
+          {
+            "cpu": 7,
+            "total": 100
+          },
+          {
+            "cpu": 9,
+            "total": 100
+          },
+          {
+            "cpu": 8,
+            "total": 100
+          },
+          {
+            "cpu": 9,
+            "total": 101
+          },
+          {
+            "cpu": 8,
+            "total": 100
+          }
+        ]
+      },
+      "refresh": {
+        "median": 1,
+        "p95": 1,
+        "samples": [
+          {
+            "cpu": 1,
+            "total": 34
+          },
+          {
+            "cpu": 1,
+            "total": 34
+          },
+          {
+            "cpu": 1,
+            "total": 34
+          },
+          {
+            "cpu": 1,
+            "total": 34
+          },
+          {
+            "cpu": 0,
+            "total": 33
+          },
+          {
+            "cpu": 1,
+            "total": 33
+          },
+          {
+            "cpu": 1,
+            "total": 33
+          },
+          {
+            "cpu": 1,
+            "total": 33
+          },
+          {
+            "cpu": 1,
+            "total": 34
+          },
+          {
+            "cpu": 0,
+            "total": 33
+          }
+        ]
+      },
+      "rows": 9,
+      "functional": {
+        "lateGrowthFollow": true,
+        "offscreenJump": true,
+        "prependAnchorDelta": 0,
+        "awayAppendStable": true,
+        "notificationJump": true,
+        "bottomFollow": true,
+        "mounted": 6
+      },
+      "scroll": {
+        "frames": 89,
+        "p95": 18,
+        "max": 19,
+        "over25": 0,
+        "mounted": 12
+      },
+      "lazyToolbar": true,
+      "keyboardActions": true,
+      "hoverActions": true,
+      "escapeRestoresFocus": true,
+      "typing": {
+        "frames": 39,
+        "p95": 19,
+        "max": 19,
+        "over25": 0,
+        "anchorDelta": 0,
+        "composerHeight": 176
+      },
+      "thread": {
+        "threadPrependAnchorDelta": 0,
+        "rootJump": true,
+        "mounted": 16
+      },
+      "unexpectedPageErrors": [],
+      "resizeObserverWarnings": 1
+    }
+  }
+}

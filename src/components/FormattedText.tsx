@@ -1,5 +1,5 @@
 import { memo, useEffect, useState } from 'react';
-import { createTextFormatter } from '../lib/format-worker-client';
+import { createTextFormatter, plainHtml } from '../lib/format-worker-client';
 import { api } from '../lib/bridge';
 const formatter = createTextFormatter(
   () => new Worker(new URL('../lib/format.worker.ts', import.meta.url), { type: 'module' }),
@@ -11,7 +11,7 @@ export const FormattedText = memo(function FormattedText({ text }: { text: strin
   const [result, setResult] = useState(() => ({ text, html: formatter.peek(text) }));
   useEffect(() => formatter.subscribe(text, html => setResult({ text, html })), [text]);
   const html = result.text === text ? result.html : formatter.peek(text);
-  return html === undefined
-    ? <div className="tx text-skeleton" role="status" aria-label="Đang hiển thị nội dung"><span /><span /></div>
-    : <div className="tx" dangerouslySetInnerHTML={{ __html: html }} />;
+  // Cold rows show escaped text at (near) final height. A skeleton resized every row
+  // once the worker answered, and Virtuoso then shifted scrollTop under the reader.
+  return <div className="tx" dangerouslySetInnerHTML={{ __html: html ?? plainHtml(text) }} />;
 });

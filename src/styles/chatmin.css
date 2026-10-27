@@ -237,7 +237,7 @@ button.tab-close { padding: 0; border: 0; background: transparent; font-family: 
 }
 /* Bridge the visual gap so the toolbar stays hovered while moving up from a message. */
 .msg-actions::after { content: ""; position: absolute; top: 100%; left: -4px; right: -4px; height: 8px; }
-.msg:hover .msg-actions, .msg:focus-within .msg-actions { opacity: 1; pointer-events: auto; }
+.msg-col:has(> .message-surface:hover) > .msg-actions, .msg:focus-visible .msg-actions, .msg-actions:hover, .msg-actions:focus-within { opacity: 1; pointer-events: auto; }
 /* the bar hangs above the bubble's right end for every message; an incoming bubble narrower
    than the bar gets it above its left end instead (fitActions) */
 .msg.act-left .msg-actions { left: 0; right: auto; }
@@ -698,6 +698,10 @@ body.inspector-unavailable .main.r2-tab .inspector, body.inspector-unavailable .
 
 /* ── real-app additions (not in the prototype: live data states) ─────────── */
 .workspace > .page-view { min-height: 0; }
+/* The formatter emits <br> for line breaks; pre-wrap also retains indentation
+   and tabs in ordinary messages and in the worker's initial plain HTML. */
+.bubble .tx, .cmsg .tx { line-height: 1.5; }
+.bubble .tx p, .cmsg .tx p, .bubble .tx li, .cmsg .tx li { white-space: pre-wrap; tab-size: 4; }
 .bubble .tx p { margin: 0; }
 .bubble .tx p + p { margin-top: 8px; }
 .bubble .tx code { padding: 1px 5px; border-radius: 5px; background: color-mix(in oklab, var(--text), transparent 90%); font: .9em var(--font-mono); color: var(--purple); }
@@ -1229,7 +1233,7 @@ body.light .jump-bottom.has-new { color: #fff; }
 /* (descendant, not child: the meta sits in .message-footer inside .message-surface) */
 .msg:not(.last) .msg-col .msg-meta { position: absolute; bottom: 6px; right: calc(100% + 6px); opacity: 0; transition: opacity .12s; pointer-events: none; }
 .msg:not(.me):not(.last) .msg-col .msg-meta { right: auto; left: calc(100% + 6px); }
-.msg:not(.last):hover .msg-col .msg-meta, .msg:not(.last) .msg-col .msg-meta.pending { opacity: 1; }
+.msg:not(.last):has(.message-surface:hover) .msg-col .msg-meta, .msg:not(.last) .msg-col .msg-meta.pending { opacity: 1; }
 /* a footer that only held that meta takes no room in the run */
 .msg:not(.last) .message-footer:not(:has(.reactions)) { position: absolute; inset: auto 0 0; height: 0; }
 .acc-chats { overflow: hidden; }
@@ -1476,7 +1480,7 @@ body:is([data-background="glass"], [data-background="clear"]) .composer-tools { 
 body:is([data-background="glass"], [data-background="clear"]) :is(.thread-compose, .r2-header, .settings-card, .inbox-shell, .thread-head, .summary-card, .pop, .context-menu, .palette, .prompt-dialog, .confirm-dialog, .emoji-pop, .tip, .toast, .msg-actions) { background: var(--app-bg); }
 /* Standalone status labels have a single, compact surface. */
 body:is([data-background="glass"], [data-background="clear"]) .service-msg { width: fit-content; margin-left: auto; margin-right: auto; padding: 3px 12px; }
-body:is([data-background="glass"], [data-background="clear"]) :is(.day-sep span, .unread-sep span, .history-start, .thread-count, .service-msg, .older-loading, .conv-empty, .side-empty) {
+body:is([data-background="glass"], [data-background="clear"]) :is(.day-sep span, .unread-sep span, .history-start, .thread-count, .service-msg, .conv-empty, .side-empty) {
   background: var(--reading-surface);
   border-radius: var(--radius-sm);
   padding-inline: 6px;
@@ -1625,8 +1629,26 @@ body:is([data-background="glass"], [data-background="clear"]) .inbox-shell { bor
 .skeleton-row { display: flex; gap: 12px; align-items: flex-start; }
 .skeleton-row > i { flex: 0 0 28px; height: 28px; border-radius: 50%; background: var(--line); }
 .skeleton-row > span { width: 64%; max-width: 420px; padding: 12px; border-radius: var(--radius-md); background: color-mix(in oklab, var(--text), transparent 96%); }
-.skeleton-row b, .text-skeleton > span { display: block; height: 7px; margin: 5px 0; border-radius: 3px; background: var(--line); }
-.skeleton-row b:last-child, .text-skeleton > span:last-child { width: 66%; }
+.skeleton-row b { display: block; height: 7px; margin: 5px 0; border-radius: 3px; background: var(--line); }
+.skeleton-row b:last-child { width: 66%; }
 .skeleton-row.outgoing { flex-direction: row-reverse; }
-.text-skeleton { width: min(360px, 48vw); padding: 6px 0; min-height: 40px; }
 @media (max-width: 760px) { .timeline-row { padding-left: 12px; padding-right: 12px; } }
+
+.quick-reaction-settings { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.quick-reaction-settings .tool-btn { min-width: 34px; font-size: 18px; }
+.quick-reaction-settings .tool-btn:last-child { font-size: var(--fs-sm); }
+
+/* Native Zalo uses the same timeline, composer and semantic theme tokens. */
+.zalo-history-note { padding: 8px 16px; border-bottom: 1px solid var(--line); color: var(--text-3); font-size: var(--fs-sm); background: var(--pane); }
+.zalo-account-actions { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 10px; }
+.zalo-account-actions .tool-btn { font-size: var(--fs-sm); }
+dialog.zalo-contacts { display: flex; flex-direction: column; gap: 12px; width: min(440px, calc(100vw - 32px)); max-height: min(560px, calc(100vh - 64px)); padding: 20px; color: var(--text); background: var(--pane); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: var(--shadow); }
+dialog.zalo-contacts::backdrop { background: rgb(0 0 0 / 45%); }
+.zalo-contacts-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.zalo-contact-list { min-height: 120px; overflow-y: auto; }
+.zalo-contact-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 8px; border: 0; border-radius: var(--radius-md); color: var(--text); background: transparent; text-align: left; cursor: pointer; }
+.zalo-contact-row:hover, .zalo-contact-row:focus-visible { background: var(--pane-2); }
+.zalo-contact-row span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.zalo-contact-row svg { width: 16px; height: 16px; flex-shrink: 0; color: var(--text-3); }
+
+.media-unavailable { display: flex; min-height: 120px; padding: 16px; align-items: center; justify-content: center; flex-direction: column; gap: 10px; color: var(--muted); font-size: 12px; text-align: center; cursor: default; }

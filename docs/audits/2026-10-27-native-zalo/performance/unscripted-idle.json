@@ -1,0 +1,543 @@
+{
+  "phase": "unscripted-idle",
+  "durationSeconds": 20.67341437502182,
+  "method": "ps cumulative CPU delta / elapsed; RSS includes shared mappings; WebKit inferred roles matched app launch time, confirmed roles matched open app data handles",
+  "samples": {
+    "app": [
+      {
+        "cpuPercentOneCore": 0.9948617460086036,
+        "rssMiB": 135.140625
+      },
+      {
+        "cpuPercentOneCore": 1.9329026665063962,
+        "rssMiB": 135.1875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 135.1875
+      },
+      {
+        "cpuPercentOneCore": 0.9671441396242181,
+        "rssMiB": 135.1875
+      },
+      {
+        "cpuPercentOneCore": 0.971631045459769,
+        "rssMiB": 135.296875
+      },
+      {
+        "cpuPercentOneCore": 0.9751745742065323,
+        "rssMiB": 135.296875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 135.296875
+      },
+      {
+        "cpuPercentOneCore": 0.9631866452333311,
+        "rssMiB": 135.296875
+      },
+      {
+        "cpuPercentOneCore": 0.9703734863392393,
+        "rssMiB": 135.296875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 135.296875
+      },
+      {
+        "cpuPercentOneCore": 0.9661409461283627,
+        "rssMiB": 135.296875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 135.296875
+      },
+      {
+        "cpuPercentOneCore": 0.95782317413294,
+        "rssMiB": 135.296875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 135.296875
+      },
+      {
+        "cpuPercentOneCore": 1.9432878945432612,
+        "rssMiB": 135.453125
+      },
+      {
+        "cpuPercentOneCore": 0.9644574141587972,
+        "rssMiB": 135.453125
+      },
+      {
+        "cpuPercentOneCore": 0.9644210213598755,
+        "rssMiB": 135.453125
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 135.453125
+      },
+      {
+        "cpuPercentOneCore": 0.9684365934864674,
+        "rssMiB": 135.453125
+      },
+      {
+        "cpuPercentOneCore": 0.964752059928649,
+        "rssMiB": 135.453125
+      }
+    ],
+    "zalo_worker": [
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 69.09375
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 69.09375
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 69.09375
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 69.09375
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 69.09375
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 69.09375
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 69.09375
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 69.09375
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 69.09375
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 69.09375
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 69.09375
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 69.09375
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 69.09375
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 69.09375
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 69.09375
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 69.09375
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 69.09375
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 69.09375
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 69.09375
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 69.09375
+      }
+    ],
+    "webkit_main_inferred": [
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 139.1875
+      },
+      {
+        "cpuPercentOneCore": 0.9664513332531981,
+        "rssMiB": 139.265625
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 139.265625
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 139.265625
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 139.265625
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 139.265625
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 139.265625
+      },
+      {
+        "cpuPercentOneCore": 0.9631866452334168,
+        "rssMiB": 139.265625
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 139.265625
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 139.265625
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 139.265625
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 139.265625
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 139.265625
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 139.265625
+      },
+      {
+        "cpuPercentOneCore": 1.9432878945431749,
+        "rssMiB": 145.21875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 145.21875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 145.21875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 145.234375
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 145.234375
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 145.203125
+      }
+    ],
+    "messenger_webcontent_confirmed": [
+      {
+        "cpuPercentOneCore": 3.979446984034414,
+        "rssMiB": 414.953125
+      },
+      {
+        "cpuPercentOneCore": 2.899353999759766,
+        "rssMiB": 414.953125
+      },
+      {
+        "cpuPercentOneCore": 2.899057241782238,
+        "rssMiB": 415.0
+      },
+      {
+        "cpuPercentOneCore": 2.9014324188722243,
+        "rssMiB": 415.015625
+      },
+      {
+        "cpuPercentOneCore": 8.744679409138094,
+        "rssMiB": 419.5625
+      },
+      {
+        "cpuPercentOneCore": 2.9255237226197703,
+        "rssMiB": 419.46875
+      },
+      {
+        "cpuPercentOneCore": 3.8517793587960916,
+        "rssMiB": 419.546875
+      },
+      {
+        "cpuPercentOneCore": 2.8895599357001647,
+        "rssMiB": 419.625
+      },
+      {
+        "cpuPercentOneCore": 1.9407469726783062,
+        "rssMiB": 419.703125
+      },
+      {
+        "cpuPercentOneCore": 2.941942962090941,
+        "rssMiB": 419.65625
+      },
+      {
+        "cpuPercentOneCore": 2.8984228383849167,
+        "rssMiB": 419.6875
+      },
+      {
+        "cpuPercentOneCore": 3.8745082312967654,
+        "rssMiB": 419.640625
+      },
+      {
+        "cpuPercentOneCore": 3.83129269653176,
+        "rssMiB": 419.84375
+      },
+      {
+        "cpuPercentOneCore": 3.8588977966599094,
+        "rssMiB": 419.984375
+      },
+      {
+        "cpuPercentOneCore": 2.914931841814935,
+        "rssMiB": 419.890625
+      },
+      {
+        "cpuPercentOneCore": 7.715659313270377,
+        "rssMiB": 420.75
+      },
+      {
+        "cpuPercentOneCore": 3.857684085439845,
+        "rssMiB": 420.796875
+      },
+      {
+        "cpuPercentOneCore": 2.9144883069075562,
+        "rssMiB": 420.859375
+      },
+      {
+        "cpuPercentOneCore": 10.652802528351312,
+        "rssMiB": 421.328125
+      },
+      {
+        "cpuPercentOneCore": 2.8942561797861184,
+        "rssMiB": 421.34375
+      }
+    ],
+    "webkit_networking_confirmed": [
+      {
+        "cpuPercentOneCore": 0.9948617460086036,
+        "rssMiB": 23.125
+      },
+      {
+        "cpuPercentOneCore": 0.9664513332532839,
+        "rssMiB": 23.125
+      },
+      {
+        "cpuPercentOneCore": 0.9663524139273554,
+        "rssMiB": 23.125
+      },
+      {
+        "cpuPercentOneCore": 1.934288279248264,
+        "rssMiB": 23.125
+      },
+      {
+        "cpuPercentOneCore": 1.9432620909196243,
+        "rssMiB": 23.796875
+      },
+      {
+        "cpuPercentOneCore": 1.9503491484130646,
+        "rssMiB": 23.8125
+      },
+      {
+        "cpuPercentOneCore": 0.9629448396991085,
+        "rssMiB": 23.859375
+      },
+      {
+        "cpuPercentOneCore": 0.9631866452333311,
+        "rssMiB": 23.859375
+      },
+      {
+        "cpuPercentOneCore": 0.9703734863391531,
+        "rssMiB": 23.859375
+      },
+      {
+        "cpuPercentOneCore": 0.9806476540302556,
+        "rssMiB": 23.859375
+      },
+      {
+        "cpuPercentOneCore": 1.9322818922568115,
+        "rssMiB": 23.859375
+      },
+      {
+        "cpuPercentOneCore": 0.9686270578241054,
+        "rssMiB": 23.71875
+      },
+      {
+        "cpuPercentOneCore": 1.9156463482659651,
+        "rssMiB": 23.71875
+      },
+      {
+        "cpuPercentOneCore": 0.9647244491649773,
+        "rssMiB": 23.71875
+      },
+      {
+        "cpuPercentOneCore": 0.9716439472715874,
+        "rssMiB": 23.671875
+      },
+      {
+        "cpuPercentOneCore": 0.9644574141587972,
+        "rssMiB": 23.671875
+      },
+      {
+        "cpuPercentOneCore": 1.9288420427198367,
+        "rssMiB": 23.671875
+      },
+      {
+        "cpuPercentOneCore": 0.9714961023025763,
+        "rssMiB": 23.671875
+      },
+      {
+        "cpuPercentOneCore": 1.9368731869729348,
+        "rssMiB": 23.671875
+      },
+      {
+        "cpuPercentOneCore": 0.9647520599287347,
+        "rssMiB": 23.671875
+      }
+    ],
+    "webkit_gpu_inferred": [
+      {
+        "cpuPercentOneCore": 0.9948617460086477,
+        "rssMiB": 41.421875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 41.421875
+      },
+      {
+        "cpuPercentOneCore": 0.9663524139273554,
+        "rssMiB": 41.421875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 41.421875
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 41.4375
+      },
+      {
+        "cpuPercentOneCore": 0.9751745742065757,
+        "rssMiB": 41.4375
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 41.4375
+      },
+      {
+        "cpuPercentOneCore": 0.9631866452333311,
+        "rssMiB": 41.4375
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 41.4375
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 41.4375
+      },
+      {
+        "cpuPercentOneCore": 0.9661409461284057,
+        "rssMiB": 41.4375
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 41.4375
+      },
+      {
+        "cpuPercentOneCore": 0.95782317413294,
+        "rssMiB": 41.4375
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 41.4375
+      },
+      {
+        "cpuPercentOneCore": 2.9149318418148487,
+        "rssMiB": 43.9375
+      },
+      {
+        "cpuPercentOneCore": 0.9644574141587972,
+        "rssMiB": 43.953125
+      },
+      {
+        "cpuPercentOneCore": 0.9644210213599184,
+        "rssMiB": 43.953125
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 43.953125
+      },
+      {
+        "cpuPercentOneCore": 0.9684365934864674,
+        "rssMiB": 43.953125
+      },
+      {
+        "cpuPercentOneCore": 0,
+        "rssMiB": 43.9375
+      }
+    ]
+  },
+  "stats": {
+    "app": {
+      "cpuMedian": 0.9646047370437231,
+      "cpuP95": 1.9329026665063962,
+      "cpuMax": 1.9432878945432612,
+      "rssMedianMiB": 135.296875,
+      "rssMaxMiB": 135.453125
+    },
+    "zalo_worker": {
+      "cpuMedian": 0.0,
+      "cpuP95": 0,
+      "cpuMax": 0,
+      "rssMedianMiB": 69.09375,
+      "rssMaxMiB": 69.09375
+    },
+    "webkit_main_inferred": {
+      "cpuMedian": 0.0,
+      "cpuP95": 0.9664513332531981,
+      "cpuMax": 1.9432878945431749,
+      "rssMedianMiB": 139.265625,
+      "rssMaxMiB": 145.234375
+    },
+    "messenger_webcontent_confirmed": {
+      "cpuMedian": 2.9337333423553558,
+      "cpuP95": 8.744679409138094,
+      "cpuMax": 10.652802528351312,
+      "rssMedianMiB": 419.671875,
+      "rssMaxMiB": 421.34375
+    },
+    "webkit_networking_confirmed": {
+      "cpuMedian": 0.9715700247870819,
+      "cpuP95": 1.9432620909196243,
+      "cpuMax": 1.9503491484130646,
+      "rssMedianMiB": 23.6953125,
+      "rssMaxMiB": 23.859375
+    },
+    "webkit_gpu_inferred": {
+      "cpuMedian": 0.47891158706647,
+      "cpuP95": 0.9948617460086477,
+      "cpuMax": 2.9149318418148487,
+      "rssMedianMiB": 41.4375,
+      "rssMaxMiB": 43.953125
+    }
+  }
+}

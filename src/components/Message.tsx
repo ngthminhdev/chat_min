@@ -6,14 +6,15 @@ import { dayLabel, fileSize, hm, plain } from "../lib/format";
 import { FormattedText } from "./FormattedText";
 import { CAP_OFF_NOTE, type Cap } from "../lib/platforms";
 import type { Chat, Media, Msg, MsgPeople } from "../lib/types";
-import { anchor, confirmDialog, fail, openThreadTab, pickReaction, retry, threadUnread, threadTabKey, saveMedia, toast, toggleReaction, useApp, type MenuItem } from "../store";
+import { anchor, confirmDialog, fail, openThreadTab, pickReaction, retry, threadUnread, threadTabKey, saveMedia, toast, toggleReaction, useApp, wantThreadCount, type MenuItem } from "../store";
 import { api } from "../lib/bridge";
 import { PersonAvatar, useAvatar } from "../ui/Avatar";
 import { Icon, type IconName } from "../ui/Icon";
 import { useDownload } from "./Conversation";
 import lottie from "lottie-web/build/player/lottie_light";
 import { translateMsg, trKey } from "../ai";
-import { fileActionLabel, threadReplyCountLabel } from "../lib/micro-ux";
+import { fileActionLabel, threadTotalLabel } from "../lib/micro-ux";
+import { useWhenVisible } from "./useWhenVisible";
 import { isMobile } from "../lib/mobile";
 import { isReplySwipe } from "../lib/mobile-gestures";
 
@@ -51,8 +52,12 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
   // owns focus, so Escape can return to its invoking toolbar.
   const [actions, setActions] = useState(false);
   useLayoutEffect(() => {
-    if (actions && !m.outgoing && row.current) fitActions(row.current);
-  }, [actions, m.outgoing]);
+    const el = row.current, col = el?.querySelector<HTMLElement>(".msg-col");
+    if (!actions || !el || !col) return;
+    const fit = () => fitActions(el);
+    fit(); const observer = new ResizeObserver(fit); observer.observe(col);
+    return () => observer.disconnect();
+  }, [actions]);
   const resetSwipe = (el: HTMLElement) => {
     swipe.current = null;
     el.style.removeProperty("--reply-drag");
@@ -135,7 +140,6 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
         if (target.closest("button, a, input, textarea, audio, video, .img-msg, .file-card")) return;
         if (target.closest(".message-surface, .msg-meta")) showMessageMenu(e, k, tab, m, caps);
       } : undefined}
-      onMouseEnter={() => setActions(true)}
       onContextMenu={(e: React.MouseEvent) => {
         if (e.defaultPrevented) return;
         resetSwipe(e.currentTarget as HTMLElement);
@@ -152,7 +156,7 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
     >
       {side}
       <div className="msg-col">
-        <div className="message-surface">
+        <div className="message-surface" onMouseEnter={() => setActions(true)}>
         {sender}
         <div className={`bubble${(m.media?.kind === "sticker" || m.media?.name === "Sticker") && !m.text ? " sticker" : ""}`}>
           {quote}
@@ -223,7 +227,7 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
         <Meta m={m} caps={caps} />
         </div>
         {seenBy && caps.readReceipts && chat.kind !== "dm" && <SeenBy m={m} />}
-        {caps.threads && chat.threaded && <ThreadLink k={k} m={m} replies={replies} open={threadOpen} />}
+        {caps.threads && chat.threaded && tab === k && <ThreadLink k={k} m={m} replies={replies} open={threadOpen} />}
         {m.status === "failed" && (
           <div className="fail-row">
             {m.error || "Không gửi được"}
@@ -283,7 +287,12 @@ export const MessageItem = memo(function MessageItem({ k, tab = k, m, chat, caps
 function fitActions(row: HTMLElement) {
   const col = row.querySelector<HTMLElement>(".msg-col");
   const bar = row.querySelector<HTMLElement>(".msg-actions");
-  if (col && bar) row.classList.toggle("act-left", col.offsetWidth < bar.offsetWidth);
+  if (col && bar) {
+    row.classList.toggle("act-left", !row.classList.contains("me") && col.offsetWidth < bar.offsetWidth);
+    const surface = col.querySelector<HTMLElement>(".message-surface");
+    const body = surface?.getClientRects().length ? surface : col.querySelector<HTMLElement>(".bubble");
+    if (body) bar.style.top = `${body.getBoundingClientRect().top - col.getBoundingClientRect().top}px`;
+  }
 }
 
 function Meta({ m, caps }: { m: Msg; caps: Record<Cap, boolean> }) {
@@ -355,6 +364,7 @@ function MediaView({ accountId, media, sending, tile, anchorId, chatKey, message
   const inline = isVideo && (media.name === "GIF" || media.name === "Sticker" || media.name === "Video tròn" || (media.size > 0 && media.size < 5e6));
   const dl = useDownload(accountId, media, (isImage && (media.size === 0 || media.size < 15e6)) || inline);
   const [playing, setPlaying] = useState(false);
+  const [badPoster, setBadPoster] = useState("");
   // an album tile is square and keeps the message id so quotes can still jump to it
   const ratio = tile ? "1" : media.width && media.height ? `${media.width}/${media.height}` : undefined;
   const box = { style: { aspectRatio: ratio, width: tile ? undefined : fitWidth(media) }, id: anchorId ? `m-${anchorId}` : undefined, "data-message-id": messageId };
@@ -412,15 +422,22 @@ function MediaView({ accountId, media, sending, tile, anchorId, chatKey, message
     );
   }
   if (isImage) {
-    const src = dl.path ? fileSrc(dl.path) : poster;
+    const src = dl.path ? fileSrc(dl.path) : poster !== badPoster ? poster : "";
+    const unavailable = dl.state === "error" || !media.fileRef;
     return (
       <figure
-        className={`img-msg${media.kind === "sticker" ? " sticker" : ""}${dl.path ? "" : " pending"}`}
+        className={`img-msg${media.kind === "sticker" ? " sticker" : ""}${dl.path || dl.state === "error" ? "" : " pending"}`}
         {...box}
         onClick={() => void view()}
         onContextMenu={(e) => menu(e, true)}
       >
-        {src ? <img className="od-media" src={src} alt={media.name} onError={dl.path ? dl.broken : undefined} /> : <span className="veil-spinner" />}
+        {src ? <img className="od-media" src={src} alt={media.name} onError={dl.path ? dl.broken : () => setBadPoster(poster)} /> : unavailable ? (
+          <span className="media-unavailable">
+            <span>{media.kind === "sticker" ? "Không tải được sticker" : "Ảnh không còn khả dụng"}</span>
+            {media.fileRef && <button type="button" className="btn" onClick={e => { e.stopPropagation(); void dl.get(true); }}>Thử tải lại</button>}
+          </span>
+        ) : <span className="veil-spinner" />}
+        {src && dl.state === "error" && <span className="media-badge">Chỉ có ảnh xem trước</span>}
         {src && busy && <span className="play">{busy}</span>}
       </figure>
     );
@@ -490,7 +507,7 @@ function MediaView({ accountId, media, sending, tile, anchorId, chatKey, message
           className="tool-btn icon-only"
           aria-label={fileActionLabel(media, !!dl.path)}
           data-tip={fileActionLabel(media, !!dl.path)}
-          disabled={dl.state === "loading" || sending}
+          disabled={dl.state === "loading" || sending || (!media.fileRef && !dl.path && !media.url)}
           onClick={act}
         >
           {busy ?? (sending ? <span className="veil-spinner" /> : null) ?? (
@@ -504,19 +521,26 @@ function MediaView({ accountId, media, sending, tile, anchorId, chatKey, message
 }
 
 function ThreadLink({ k, m, replies, open }: { k: string; m: Msg; replies?: Msg[]; open: boolean }) {
-  const unread = useApp((s) => (replies ? threadUnread(s, k, m.threadId, replies) : 0));
-  const n = replies?.length ?? 0;
+  // the thread list knows replies this page never loaded; Google's total refines both
+  const summary = useApp((s) => s.threadList[k]?.items.find((t) => t.threadId === m.threadId));
+  const total = useApp((s) => s.threadCounts[`${k}#${m.threadId}`]);
+  const shown = replies?.length ? replies : summary?.recent ?? [];
+  const unread = useApp((s) => (shown.length ? threadUnread(s, k, m.threadId, shown) : 0));
+  const n = Math.max(replies?.length ?? 0, summary?.replies ?? 0);
   const token = useApp(s => {
     const page = s.threadPages[threadTabKey(k, m.threadId)];
     return page?.truncated ? undefined : page?.token;
   });
-  if (!n) return null;
-  const faces = [...new Map(replies!.map((r) => [r.senderName, r])).values()].slice(0, 3);
+  const ref = useRef<HTMLButtonElement>(null);
+  useWhenVisible(ref, () => wantThreadCount(k, m.threadId), m.threadId, n > 0);
+  if (!n && !total?.count) return null;
+  const faces = [...new Map(shown.map((r) => [r.senderName, r])).values()].slice(0, 3);
+  const last = Math.max(shown[shown.length - 1]?.ts ?? 0, summary?.lastTs ?? 0);
   return (
-    <button className={`thread-link${open ? " open" : ""}${unread ? " has-new" : ""}`} onClick={() => openThread(k, m)}>
+    <button ref={ref} className={`thread-link${open ? " open" : ""}${unread ? " has-new" : ""}`} onClick={() => openThread(k, m)}>
       <span className="faces">{faces.map((f) => <PersonAvatar key={f.senderName} name={f.senderName} accountId={f.accountId} photo={f.senderPhoto} />)}</span>
-      {threadReplyCountLabel(n, token)} trả lời{unread > 0 && <b className="thread-new">· {unread} mới</b>} <Icon name="external-link" />
-      <small>lần cuối {hm(replies![n - 1].ts)}</small>
+      {threadTotalLabel(total, n, replies?.length ? token : "")} trả lời{unread > 0 && <b className="thread-new">· {unread} mới</b>} <Icon name="external-link" />
+      {last > 0 && <small>lần cuối {hm(last)}</small>}
     </button>
   );
 }

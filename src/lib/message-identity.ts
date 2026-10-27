@@ -3,6 +3,23 @@ import type { Msg } from "./types";
 /** UI-only identity; provider IDs remain authoritative for every API operation. */
 export const messageRenderKey = (m: Msg) => m.uiKey ?? m.id;
 
+/** Recover the provider ID lineage before replaying echoes that beat the send response. */
+export function correlateAcknowledgement(response: Msg, changes: { oldId: string; msg: Msg }[]): Msg {
+  const ids = new Set([response.id, ...(response.uiPreviousIds ?? [])]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const change of changes) {
+      if (!ids.has(change.oldId) && !ids.has(change.msg.id)) continue;
+      for (const id of [change.oldId, change.msg.id]) if (!ids.has(id)) { ids.add(id); grew = true; }
+    }
+  }
+  const related = changes.filter(change => ids.has(change.oldId) && ids.has(change.msg.id));
+  const retired = new Set(related.map(change => change.oldId));
+  const final = retired.has(response.id) ? related.find(change => !retired.has(change.msg.id))?.msg ?? response : response;
+  return { ...final, uiPreviousIds: [...ids].filter(id => id !== final.id) };
+}
+
 // Provider snapshots are JSON values. Keep React's row identity when a refresh
 // only deserializes the same data, including nested media/reactions/link cards.
 function sameValue(a: unknown, b: unknown): boolean {

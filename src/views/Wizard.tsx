@@ -91,8 +91,8 @@ export function Wizard() {
                       setPlatform={setPlatform}
                       next={() => {
                         setError("");
-                        // Messenger / Zalo: nothing to configure — the site's own login runs in its webview
-                        if (platform === "messenger" || platform === "zalo") {
+                        // Messenger retains the provider website; Zalo has native QR authentication.
+                        if (platform === "messenger") {
                           api.webAdd(platform)
                             .then((a) => {
                               leave(`Đã thêm ${a.name} — đăng nhập ngay trong khung chat`);
@@ -149,6 +149,8 @@ export function Wizard() {
                 ? "ChatMin đăng nhập như một thiết bị Telegram mới (TDLib). Phiên lưu trên máy này; xoá tài khoản sẽ đăng xuất thiết bị."
                 : platform === "gchat"
                   ? "ChatMin dùng Google Chat API bằng quyền của bạn (OAuth). Cần tài khoản Google Workspace; tin gửi từ ChatMin hiển thị như tin của bạn."
+                  : platform === "zalo"
+                    ? "Quét QR bằng Zalo trên điện thoại. Phiên lưu riêng trên máy; tin nhắn hiển thị trong ChatMin. Kết nối dùng giao thức không chính thức."
                   : `Đăng nhập ${PLATFORMS[platform].name} trong cửa sổ ứng dụng. Mỗi tài khoản dùng một phiên riêng trên máy này.`}
             </p>
           </aside>
@@ -175,7 +177,7 @@ function PlatformStep({ platform, setPlatform, next }: { platform: Platform; set
           >
             <span className="provider-logo">{on ? <Glyph platform={p as Platform} /> : <Icon name="messages-square" />}</span>
             <strong>{label}</strong>
-            <span className="provider-description">{p === "messenger" || p === "zalo" ? "Đăng nhập trong ứng dụng" : p === "telegram" ? "Số điện thoại hoặc mã QR" : "Tài khoản Google Workspace"}</span>
+            <span className="provider-description">{p === "messenger" ? "Đăng nhập trong ứng dụng" : p === "zalo" ? "Quét QR · Hội thoại trong ChatMin" : p === "telegram" ? "Số điện thoại hoặc mã QR" : "Tài khoản Google Workspace"}</span>
             <span className="provider-selection" aria-hidden="true">{platform === p && <Icon name="check" />}</span>
           </button>
         ))}
@@ -199,6 +201,7 @@ interface AuthProps {
 
 function AuthStep(p: AuthProps) {
   const configured = useApp((s) => (p.platform === "telegram" ? s.tgConfigured : s.gchatConfigured));
+  if (p.platform === "zalo") return <ZaloAuth {...p} />;
   if (!configured) return <ConfigForm platform={p.platform} back={p.back} setError={p.setError} />;
   return p.platform === "telegram" ? <TelegramAuth {...p} /> : <GoogleAuth {...p} />;
 }
@@ -557,4 +560,36 @@ function NameStep({ accountId, finish }: { accountId: string; finish: () => void
       </Actions>
     </form>
   );
+}
+
+function ZaloAuth({ existing, setError, back, onAccount, done }: AuthProps) {
+  const [accountId, setAccountId] = useState<string>();
+  const [starting, setStarting] = useState(false);
+  const auth = useApp(s => accountId ? s.auth[accountId] : undefined);
+  const live = useRef(true);
+  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
+  useEffect(() => {
+    if (auth?.step === "ready" && accountId) done(accountId);
+    if (auth?.step === "error") setError(auth.error);
+  }, [auth, accountId]);
+  const start = async () => {
+    setStarting(true); setError("");
+    try {
+      const id = await api.zaloLoginStart(accountId ?? existing);
+      if (!live.current) { void api.loginCancel(id); return; }
+      setAccountId(id); onAccount(id);
+    } catch (e) { if (live.current) setError(String(e)); }
+    finally { if (live.current) setStarting(false); }
+  };
+  return <div className="wizard-form">
+    <p>Mở Zalo trên điện thoại, quét QR và xác nhận đăng nhập.</p>
+    {accountId && auth?.step !== "error" && <>
+      <div className="qr-box">{auth?.info ? <img src={auth.info} alt="Mã QR đăng nhập Zalo" /> : <span className="veil-spinner" />}</div>
+      <p className="r2-muted" role="status">{auth?.info ? "Quét mã trong Zalo trên điện thoại." : "Đang chờ Zalo. Nếu đã quét, xác nhận trên điện thoại."}</p>
+    </>}
+    <div className="connection-note">Đóng phiên Zalo Web khác để tránh ngắt kết nối. Tin cũ có thể không được Zalo trả đầy đủ; ChatMin giữ các tin đã đồng bộ trên máy.</div>
+    <Actions back={back}>
+      <button type="button" className="tool-btn primary" disabled={starting} onClick={() => void start()}>{starting ? "Đang tạo mã…" : accountId ? "Tạo mã QR mới" : "Đăng nhập Zalo bằng QR"}</button>
+    </Actions>
+  </div>;
 }

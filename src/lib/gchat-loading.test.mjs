@@ -21,15 +21,17 @@ function fixture(overrides = {}) {
     cachedMessages: async () => [[], []], setOpen: async () => {}, read: async () => {},
     thread: (...args) => { calls.push(['thread', ...args]); return new Promise(() => {}); },
     threadRoot: async (...args) => { calls.push(['root', ...args]); return [msg('root', 1, false)]; },
+    primaryMessages: async () => ({ messages: [], before: 0, hasMore: false }),
+    threadList: async () => ({ threads: [], hasMore: false }),
     ...overrides,
   }, { get: (o,k) => o[k] ?? (async () => []) });
   const messages = api.messages;
   api.messages = (a,c,b,...rest) => { calls.push(["messages",a,c,b,...rest]); return b > 0 ? Promise.resolve([]) : messages(a,c,b,...rest); };
   const modules = {
-    zustand: require('zustand'), './lib/bridge': { api }, './lib/message-identity': identity,
-    './lib/ui-persistence': persistence, './lib/appearance': { windowAppearance: () => ({ mode:'solid', transparency:0 }) },
+    zustand: require('zustand'), './lib/bridge': { api, onEvent: () => () => {} }, './lib/message-identity': identity,
+    './lib/micro-ux': { bare: e => e.replace(/\uFE0F/g,'') }, './lib/ui-persistence': persistence, './lib/appearance': { windowAppearance: () => ({ mode:'solid', transparency:0 }) },
     './lib/format': { plain: x => x }, './lib/mobile': { isMobile:false },
-    './lib/mobile-navigation': { mobileConversationVisible: () => true }, './lib/platforms': { PLATFORMS: { gchat: { caps:{} } } }, './lib/themes': {}, './lib/toast-queue': {},
+    './lib/mobile-navigation': { mobileConversationVisible: () => true }, './lib/platforms': { PLATFORMS: { gchat: { caps:{} } } }, './lib/themes': {}, './lib/toast-queue': { queueToast: (items, item) => [...items, item] },
   };
   const exports = {};
   vm.runInNewContext(compiled, { exports, require: name => { if (!(name in modules)) throw Error(name); return modules[name]; },
@@ -205,7 +207,9 @@ test('capping a previously complete thread after live growth invalidates its exa
 test('thread-heavy trimming retains main roots and main history uses an independent cursor', async () => {
   const requests=[];
   const roots=Array.from({length:50},(_,i)=>msg(`primary-${i}`,100+i,false));
-  const f=fixture({primaryMessages:async(...args)=>{requests.push(args);return {messages:[msg('older-primary',90,false)],before:90,hasMore:true};},messages:async()=>Array.from({length:100},(_,i)=>msg(`tail-${i}`,500+i))});
+  const f=fixture({primaryMessages:async(...args)=>{requests.push(args);return args[2]
+    ? {messages:[msg('older-primary',90,false)],before:90,hasMore:true}
+    : {messages:roots,before:100,hasMore:true};},messages:async()=>Array.from({length:100},(_,i)=>msg(`tail-${i}`,500+i))});
   const tab=f.threadTabKey(K,T);
   f.set({msgs:{[K]:[...roots,...Array.from({length:300},(_,i)=>msg(`body-${i}`,200+i))]},
     threadTabs:{[tab]:{chatKey:K,threadId:T,rootId:'primary-0',title:'Thread'}},threadPages:{[tab]:{token:'thread-next',limit:300}},
@@ -216,7 +220,8 @@ test('thread-heavy trimming retains main roots and main history uses an independ
   assert.equal(f.state().msgs[K].filter(m=>!m.threadReply).length,50,'latest reply-only refresh preserves main roots');
   const threadPage=f.state().threadPages[tab];
   await f.loadOlder(K);await settle();
-  assert.equal(requests[0][2],100,'main cursor starts at oldest primary, independent of reply history');
+  assert.equal(requests[0][2],0,'opening primes thread starters as a page of their own');
+  assert.equal(requests[1][2],100,'main cursor starts at oldest primary, independent of reply history');
   assert.ok(f.state().msgs[K].some(m=>m.id==='older-primary'));
   assert.equal(f.state().threadPages[tab],threadPage);
 });
@@ -255,4 +260,143 @@ test('a failed latest request is released so opening the chat can retry', async 
   await f.loadLatest(K);
   assert.equal(requests, 2);
   assert.equal(f.state().loadErr[K], '');
+});
+
+test('optimistic outgoing messages keep their sender group through acknowledgement', async () => {
+  const { layoutMessages } = await import('./message-layout.ts');
+  const pending = deferred();
+  const f = fixture({ send: () => pending.promise });
+  const previous = { ...msg('previous', 1, false), senderId: 'users/me', outgoing: true, ts: Date.now() - 1000 };
+  f.set({ accounts: [{ id: 'gc-test', platform: 'gchat', selfId: 'users/me', name: 'Me' }], msgs: { [K]: [previous] } });
+  const sending = f.send(K, 'hello');
+  const optimistic = f.state().msgs[K].at(-1);
+  const before = layoutMessages(f.state().msgs[K]).at(-1);
+  pending.resolve({ ...optimistic, id: 'server-message', senderId: 'users/me', sort: 2, status: 'sent' });
+  await sending;
+  const after = layoutMessages(f.state().msgs[K]).at(-1);
+  assert.equal(before.first, after.first, 'ACK must not change the bubble group and its 16px spacing');
+  assert.equal(optimistic.senderId, 'users/me');
+});
+
+test('an outgoing native echo before the send response never adds a duplicate bubble', async () => {
+  const pending = deferred();
+  const f = fixture({ send: () => pending.promise });
+  f.set({ msgs: { [K]: [] } });
+  const sending = f.send(K, 'hello');
+  const optimistic = f.state().msgs[K][0];
+  const echo = { ...optimistic, id: 'provider-pending', sort: 2 };
+  f.applyEvent({ type: 'message', msg: echo, isNew: false });
+  assert.equal(f.state().msgs[K].length, 1, 'native echo must not push a second copy before correlation is known');
+  pending.resolve(echo); await sending;
+  assert.equal(f.state().msgs[K].length, 1);
+  assert.equal(f.state().msgs[K][0].id, echo.id);
+});
+
+test('early ID changes preserve one bubble and do not swallow identical messages from another device', async () => {
+  const pending = deferred(); const f = fixture({ send: () => pending.promise });
+  f.set({ msgs: { [K]: [] } }); const sending = f.send(K, 'same text');
+  const local = f.state().msgs[K][0];
+  const provider = { ...local, id: 'P', sort: 2 };
+  f.applyEvent({ type: 'message', msg: provider, isNew: false });
+  f.applyEvent({ type: 'messageIdChanged', oldId: 'P', msg: { ...provider, id: 'F', status: 'sent' } });
+  f.applyEvent({ type: 'message', msg: { ...provider, id: 'other-device', sort: 3, status: 'sent' }, isNew: false });
+  const incoming = { ...provider, id: 'incoming', outgoing: false, sort: 1 };
+  f.applyEvent({ type: 'message', msg: incoming, isNew: false });
+  assert.ok(f.state().msgs[K].some(m => m.id === incoming.id), 'incoming messages never wait for the send request');
+  pending.resolve(provider); await sending;
+  const messages = f.state().msgs[K];
+  assert.equal(messages.length, 3);
+  assert.equal(messages.find(m => m.id === 'F').uiKey, local.id);
+  assert.ok(messages.some(m => m.id === 'other-device'));
+});
+
+test('parallel identical sends retain two stable optimistic identities', async () => {
+  const first = deferred(), second = deferred(); let call = 0;
+  const f = fixture({ send: () => (++call === 1 ? first.promise : second.promise) });
+  f.set({ msgs: { [K]: [] } });
+  const one = f.send(K, 'repeat'), two = f.send(K, 'repeat');
+  const locals = [...f.state().msgs[K]];
+  const a = { ...locals[0], id: 'P1', sort: 1 }, b = { ...locals[1], id: 'P2', sort: 2 };
+  for (const m of [a,b]) f.applyEvent({ type: 'message', msg: m, isNew: false });
+  first.resolve(a); await one;
+  assert.equal(f.state().msgs[K].length, 2);
+  second.resolve(b); await two;
+  assert.deepEqual(Array.from(f.state().msgs[K], m => m.uiKey).sort(), locals.map(m => m.id).sort());
+});
+
+test('heart quick reaction uses the provider variant and removes the existing heart variant', async () => {
+  const reactions = [];
+  const f = fixture({ reactions: async () => ['❤','👍'], react: async (...args) => { reactions.push(args); } });
+  const m = { ...msg('heart',1,false), reactions:[], outgoing:false };
+  f.set({ msgs:{ [K]:[m] } });
+  await f.toggleReaction(K,m,'❤️');
+  assert.equal(reactions.length,1);
+  assert.equal(reactions[0][3],'❤');
+  assert.equal(reactions[0][4],true);
+  const updated = f.state().msgs[K][0];
+  await f.toggleReaction(K,updated,'❤️');
+  assert.equal(reactions[1][3],'❤');
+  assert.equal(reactions[1][4],false);
+  assert.equal(f.state().msgs[K][0].reactions.length,0);
+});
+
+
+test('boot restores native pins and custom reactions when the WebView cache is empty', async () => {
+  const f = fixture({
+    appState: async () => ({ accounts:[{id:'gc-test',platform:'gchat'}], chats:[{accountId:'gc-test',id:'spaces/test',lastTs:1}],health:{},mutedThreads:[] }),
+    uiState: async () => ({ favorites:[K], prefs:{quickReactions:['🔥','❤️','👍','😂','😮','🙏']} }),
+  });
+  await f.boot();
+  assert.deepEqual(Array.from(f.state().favorites),[K]);
+  assert.equal(f.state().prefs.quickReactions[0],'🔥');
+  assert.equal(f.state().prefs.size,13);
+});
+
+test('the thread list is its own flow: not limited to threads of the loaded tail, live replies move and count once', async () => {
+  const calls=[];
+  const summary=(id,last,replies)=>({threadId:`spaces/test/threads/${id}`,replies,lastSort:last,lastTs:last,root:msg(`root-${id}`,1,false),recent:[]});
+  const f=fixture({threadList:async(...args)=>{calls.push(args);return args[2]
+    ? {threads:[summary('old',5,1)],hasMore:false}
+    : {threads:Array.from({length:30},(_,i)=>summary(`t${i}`,100-i,2)),hasMore:true};}});
+  f.set({msgs:{[K]:Array.from({length:100},(_,i)=>msg(`busy-${i}`,1000+i))}});
+  await f.loadThreadList(K);await settle();
+  assert.equal(f.state().threadList[K].items.length,30,'one busy thread in the tail does not shrink the list');
+  assert.equal(f.state().threadList[K].state,'idle');
+  await f.loadThreadList(K,true);await settle();
+  assert.equal(calls[1][2],71,'the next page starts below the last listed thread');
+  assert.equal(f.state().threadList[K].items.length,31);
+  assert.equal(f.state().threadList[K].state,'done');
+  f.set({threadCounts:{[`${K}#spaces/test/threads/t5`]:{count:7,exact:true}}});
+  const live={...msg('live',2000),threadId:'spaces/test/threads/t5'};
+  f.applyEvent({type:'message',msg:live,isNew:true,inbox:false});
+  f.applyEvent({type:'message',msg:live,isNew:true,inbox:false});
+  const top=f.state().threadList[K].items[0];
+  assert.equal(top.threadId,'spaces/test/threads/t5');
+  assert.equal(top.replies,3);
+  assert.equal(f.state().threadCounts[`${K}#spaces/test/threads/t5`].count,8,'a replayed event is not a second reply');
+});
+
+test('reply totals are asked once per thread with at most two requests in flight', async () => {
+  const pending=[];let peak=0,inFlight=0;
+  const f=fixture({threadCount:(...args)=>{inFlight++;peak=Math.max(peak,inFlight);const d=deferred();pending.push({args,d});
+    return d.promise.finally(()=>{inFlight--;});}});
+  for (const t of ['a','b','c','d','a']) f.wantThreadCount(K,`spaces/test/threads/${t}`);
+  await settle();
+  assert.equal(pending.length,2);
+  pending[0].d.resolve({count:300,exact:true});await settle();
+  assert.equal(f.state().threadCounts[`${K}#spaces/test/threads/a`].count,300);
+  assert.equal(pending[2].args[2],'spaces/test/threads/d','of the queued asks, the latest is on screen now');
+  pending.slice(1).forEach(p=>p.d.resolve({count:1,exact:true}));await settle();
+  pending.slice(3).forEach(p=>p.d.resolve({count:1,exact:true}));await settle();
+  assert.equal(pending.length,4,'a repeated ask never repeats the request');
+  assert.equal(peak,2);
+});
+
+test('my own send asks the timeline to land on it, an incoming message never does', async () => {
+  const f=fixture({send:async()=>({...msg('mine',600,false),threadId:'',outgoing:true})});
+  f.set({msgs:{[K]:[msg('root',1,false)]}});
+  f.applyEvent({type:'message',msg:{...msg('theirs',500,false),threadId:''},isNew:true,inbox:false});
+  assert.equal(f.state().sent,0,'incoming keeps the reading position');
+  await f.send(K,'hello');await settle();
+  assert.equal(f.state().sent,1);
 });

@@ -1,0 +1,52 @@
+{
+  "scope": "Offline production modules imported directly; synthetic rows and EventEmitter/fake APIs only. Excludes network/Rust ingestion/SQLite writes/IPC/UI.",
+  "node": "v22.20.0",
+  "rows": 10000,
+  "unique_senders": 250,
+  "normalize_10000": {
+    "iterations": 100,
+    "median_ms": 3.5079999999999814,
+    "p95_ms": 3.7607080000000224,
+    "max_ms": 3.9076670000000036
+  },
+  "old_messages_10000": {
+    "iterations": 100,
+    "median_ms": 5.883749999999964,
+    "p95_ms": 6.591709000000037,
+    "max_ms": 11.24533299999996
+  },
+  "history_batching": {
+    "input_messages": 10000,
+    "history_events": 100,
+    "output_messages": 10000,
+    "maximum_configured_batch": 100,
+    "profile_api_calls_seeded": 0
+  },
+  "profile_cold_10000_requests": {
+    "iterations": 30,
+    "median_ms": 1.5247079999999187,
+    "p95_ms": 2.107582999999977,
+    "max_ms": 2.274208999999928,
+    "requests": 10000,
+    "distinct_identities": 250,
+    "load_calls": 5,
+    "loaded_identities": 250,
+    "max_batch": 50,
+    "profile_update_events": 5,
+    "cached_profiles": 250,
+    "includes_timer_delay": true
+  },
+  "backlog_coalescing": {
+    "concurrent_readers": 20,
+    "fake_page_requests": 3,
+    "rows_each": 300,
+    "all_share_result": true,
+    "elapsed_ms": 0.5336660000000393
+  },
+  "group_history_coalescing": {
+    "concurrent_requests": 20,
+    "fake_provider_calls": 1,
+    "messages_each": 50,
+    "elapsed_ms": 0.4593330000000151
+  }
+}

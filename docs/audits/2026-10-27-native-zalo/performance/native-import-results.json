@@ -1,0 +1,112 @@
+{
+  "scope": "Real debug Rust process -> Store::open/migrations -> JSONL/Serde -> import_zalo_records batches of 100 -> messages/thread index/FTS/chat metadata writes on synthetic temporary DB only.",
+  "input_messages": 10000,
+  "input_chats": 20,
+  "media_fraction": 0.25,
+  "native_process_includes": "Process startup/shutdown, SQLite open/migrations, input file reads, JSON decode, validation, 100 transactions, writes/index maintenance and final connection close. Generation/build excluded.",
+  "cold_limit": "Fresh synthetic SQLite DB per first import; OS cache not purged. Repeat imports reuse same DB. No disk-cold claim.",
+  "samples": [
+    {
+      "initial_ms": 3085.4885,
+      "repeat_ms": 553.2448,
+      "initial_report": {
+        "read": 10000,
+        "inserted": 10000,
+        "existing": 0
+      },
+      "repeat_report": {
+        "read": 10000,
+        "inserted": 0,
+        "existing": 10000
+      },
+      "counters_after_repeat": {
+        "messages": 10000,
+        "fts_rows": 10000,
+        "chats": 20,
+        "unread_sum": 0,
+        "media_messages": 2500
+      },
+      "database_bytes": 10895360
+    },
+    {
+      "initial_ms": 1041.9475,
+      "repeat_ms": 548.2999,
+      "initial_report": {
+        "read": 10000,
+        "inserted": 10000,
+        "existing": 0
+      },
+      "repeat_report": {
+        "read": 10000,
+        "inserted": 0,
+        "existing": 10000
+      },
+      "counters_after_repeat": {
+        "messages": 10000,
+        "fts_rows": 10000,
+        "chats": 20,
+        "unread_sum": 0,
+        "media_messages": 2500
+      },
+      "database_bytes": 10895360
+    },
+    {
+      "initial_ms": 1043.1621,
+      "repeat_ms": 549.0774,
+      "initial_report": {
+        "read": 10000,
+        "inserted": 10000,
+        "existing": 0
+      },
+      "repeat_report": {
+        "read": 10000,
+        "inserted": 0,
+        "existing": 10000
+      },
+      "counters_after_repeat": {
+        "messages": 10000,
+        "fts_rows": 10000,
+        "chats": 20,
+        "unread_sum": 0,
+        "media_messages": 2500
+      },
+      "database_bytes": 10895360
+    }
+  ],
+  "input_bytes": 10340288,
+  "bounded_queries": {
+    "latest_50": {
+      "iterations": 200,
+      "median_ms": 0.212,
+      "p95_ms": 0.2574,
+      "max_ms": 0.4198,
+      "rows": 50,
+      "query_plan": [
+        "SEARCH messages USING INDEX messages_sort (account_id=? AND chat_id=? AND sort<?)"
+      ]
+    },
+    "older_50": {
+      "iterations": 200,
+      "median_ms": 0.2102,
+      "p95_ms": 0.2482,
+      "max_ms": 0.3227,
+      "rows": 50,
+      "query_plan": [
+        "SEARCH messages USING INDEX messages_sort (account_id=? AND chat_id=? AND sort<?)"
+      ]
+    }
+  },
+  "initial_import": {
+    "iterations": 3,
+    "median_ms": 1043.1621,
+    "p95_ms": 3085.4885,
+    "max_ms": 3085.4885
+  },
+  "idempotent_repeat_import": {
+    "iterations": 3,
+    "median_ms": 549.0774,
+    "p95_ms": 553.2448,
+    "max_ms": 553.2448
+  },
+  "limitations": "Debug build, 3 process samples only, no release-build throughput claim; query phase uses Python SQLite/json.loads. No UI/IPC/provider/network or concurrent writer. Temp DBs and JSONL deleted after run."
+}

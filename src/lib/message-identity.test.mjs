@@ -84,3 +84,18 @@ test("nested provider changes still replace a row while preserving unaffected ro
   const reacted = reconcileMessage(next, { ...original, media: { name: "new" }, reactions: [{ emoji: "👍", count: 2, mine: true }] });
   assert.equal(reacted[1].reactions[0].count, 2);
 });
+
+test('acknowledgement resolves a queued native ID chain without losing the optimistic key', async () => {
+  const { correlateAcknowledgement, reconcileMessage, messageRenderKey } = await import('./message-identity.ts');
+  assert.equal(typeof correlateAcknowledgement, 'function');
+  const changes = [{ oldId: 'P', msg: msg('F') }, { oldId: 'F', msg: msg('G', { status: 'seen' }) }];
+  for (const response of [msg('P'), msg('G', { status: 'seen' })]) {
+    const resolved = correlateAcknowledgement(response, changes);
+    let list = reconcileMessage([msg('local')], resolved, 'local');
+    for (const change of changes) list = reconcileMessage(list, change.msg, change.oldId);
+    list = reconcileMessage(list, msg('P'));
+    assert.equal(list.length, 1);
+    assert.equal(list[0].id, 'G');
+    assert.equal(messageRenderKey(list[0]), 'local');
+  }
+});

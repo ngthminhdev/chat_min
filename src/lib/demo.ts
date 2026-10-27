@@ -282,6 +282,18 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
     }
     case "thread_root":
       return (msgs[k(a.accountId, a.chatId)] ?? []).filter(x => x.threadId === a.threadId && !x.threadReply).slice(0, 1);
+    case "thread_list": {
+      const all = msgs[k(a.accountId, a.chatId)] ?? [];
+      const byThread = new Map<string, Msg[]>();
+      for (const x of all) if (x.threadReply && x.threadId) byThread.set(x.threadId, [...(byThread.get(x.threadId) ?? []), x]);
+      const threads = [...byThread].map(([threadId, replies]) => ({
+        threadId, replies: replies.length, lastSort: replies[replies.length - 1].sort, lastTs: replies[replies.length - 1].ts,
+        root: all.find(x => x.threadId === threadId && !x.threadReply) ?? null, recent: replies.slice(-3),
+      })).filter(t => !a.before || t.lastSort < a.before).sort((x, y) => y.lastSort - x.lastSort);
+      return { threads: threads.slice(0, a.limit), hasMore: threads.length > a.limit };
+    }
+    case "thread_count":
+      return { count: (msgs[k(a.accountId, a.chatId)] ?? []).filter(x => x.threadId === a.threadId && x.threadReply).length, exact: true };
     case "thread": {
       const list = (msgs[k(a.accountId, a.chatId)] ?? []).filter(x => x.threadId === a.threadId);
       const end = a.pageToken ? Number(a.pageToken) : list.length;

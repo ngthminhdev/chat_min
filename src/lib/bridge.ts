@@ -2,7 +2,7 @@
 // goes to the in-memory demo backend, so the UI can be checked without real accounts.
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { Account, AiView, AppState, CoreEvent, Member, Msg, MsgPeople, StickerPack, Topic } from "./types";
+import type { Account, Chat, AiView, AppState, CoreEvent, Member, Msg, MsgPeople, StickerPack, ThreadSummary, Topic } from "./types";
 
 // `?demo`: the in-memory backend even inside a Tauri webview — the Android webview pointed at
 // the vite server (dev-only) still gets Tauri's IPC injected, which refuses a foreign origin
@@ -41,6 +41,8 @@ export function onAppShortcut(cb: (shortcut: AppShortcut) => void): () => void {
 
 export const api = {
   appState: () => call<AppState>("app_state"),
+  uiState: () => isTauri ? call<Record<string, unknown> | null>("ui_state") : Promise.resolve(null),
+  uiStateSet: (value: object) => isTauri ? call<void>("ui_state_set", { value }) : Promise.resolve(),
   configSet: (a: { tgApiId?: string; tgApiHash?: string; gchatJson?: string }) => call<void>("config_set", a),
   tgLoginStart: (accountId?: string) => call<string>("tg_login_start", { accountId }),
   tgPhone: (accountId: string, phone: string) => call<void>("tg_phone", { accountId, phone }),
@@ -49,6 +51,9 @@ export const api = {
   tgQr: (accountId: string) => call<void>("tg_qr", { accountId }),
   tgResend: (accountId: string) => call<void>("tg_resend", { accountId }),
   gchatLogin: () => call<Account>("gchat_login"),
+  zaloLoginStart: (accountId?: string) => call<string>("zalo_login_start", { accountId }),
+  zaloContacts: (accountId: string) => call<{ id: string; name: string; photo: string }[]>("zalo_contacts", { accountId }),
+  zaloOpenChat: (accountId: string, chatId: string) => call<Chat>("zalo_open_chat", { accountId, chatId }),
   loginCancel: (accountId?: string) => call<void>("login_cancel", { accountId }),
   accountUpdate: (id: string, patch: { name?: string; color?: string }) => call<void>("account_update", { id, ...patch }),
   accountRemove: (id: string) => call<void>("account_remove", { id }),
@@ -62,6 +67,9 @@ export const api = {
   thread: (accountId: string, chatId: string, threadId: string, pageToken = "", limit = 20) =>
     call<{ messages: Msg[]; nextPageToken: string }>("thread", { accountId, chatId, threadId, pageToken, limit }),
   threadRoot: (accountId: string, chatId: string, threadId: string) => call<Msg[]>("thread_root", { accountId, chatId, threadId }),
+  threadList: (accountId: string, chatId: string, before: number, limit: number, remote: boolean) =>
+    call<{ threads: ThreadSummary[]; hasMore: boolean }>("thread_list", { accountId, chatId, before, limit, remote }),
+  threadCount: (accountId: string, chatId: string, threadId: string) => call<{ count: number; exact: boolean }>("thread_count", { accountId, chatId, threadId }),
   pinned: (accountId: string, chatId: string) => call<Msg[]>("pinned", { accountId, chatId }),
   members: (accountId: string, chatId: string) => call<Member[]>("members", { accountId, chatId }),
   /** `plain`: send the text as typed, no markdown (composer toggle) */
@@ -98,7 +106,7 @@ export const api = {
     call<Msg[]>("topic_history", { accountId, chatId, topic, before, limit }),
   forward: (accountId: string, chatId: string, fromChatId: string, msgId: string, topic?: string) => call<void>("forward", { accountId, chatId, fromChatId, msgId, topic }),
   deleteChat: (accountId: string, chatId: string, revoke: boolean) => call<void>("delete_chat", { accountId, chatId, revoke }),
-  download: (accountId: string, fileRef: string, name: string) => call<string>("download", { accountId, fileRef, name }),
+  download: (accountId: string, fileRef: string, name: string, refresh = false) => call<string>("download", { accountId, fileRef, name, refresh }),
   search: (query: string, limit = 40, accountId?: string, chatId?: string) => call<Msg[]>("search", { query, limit, accountId, chatId }),
   aiConfig: () => call<AiView>("ai_config"),
   aiConfigSet: (a: Omit<AiView, "hasKey"> & { key?: string }) => call<void>("ai_config_set", a),

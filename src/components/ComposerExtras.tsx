@@ -12,7 +12,8 @@ import { Icon } from "../ui/Icon";
 const packsCache = new Map<string, Promise<StickerPack[]>>();
 
 export function StickerPanel({ id, accountId, onPick, onClose }: { id?: string; accountId: string; onPick: (s: StickerView) => void; onClose: (restoreFocus?: boolean) => void }) {
-  const [packs, setPacks] = useState<StickerPack[] | null>(null);
+  const [loaded, setLoaded] = useState<{ accountId: string; packs: StickerPack[] } | null>(null);
+  const packs = loaded?.accountId === accountId ? loaded.packs : null;
   const [tab, setTab] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
   const reduceMotion = useReducedMotion();
@@ -20,7 +21,8 @@ export function StickerPanel({ id, accountId, onPick, onClose }: { id?: string; 
   useEffect(() => {
     if (!packsCache.has(accountId)) packsCache.set(accountId, api.stickers(accountId).catch((e) => (packsCache.delete(accountId), fail(e), [])));
     let alive = true;
-    void packsCache.get(accountId)!.then((p) => alive && setPacks(p));
+    setTab(0);
+    void packsCache.get(accountId)!.then((p) => alive && setLoaded({ accountId, packs: p }));
     return () => {
       alive = false;
     };
@@ -56,7 +58,7 @@ export function StickerPanel({ id, accountId, onPick, onClose }: { id?: string; 
       {!packs ? (
         <div className="sticker-empty"><span className="veil-spinner" /> Đang tải sticker…</div>
       ) : !packs.length ? (
-        <div className="sticker-empty">Chưa có bộ sticker nào trong tài khoản Telegram này</div>
+        <div className="sticker-empty">Chưa tải được sticker cho tài khoản này</div>
       ) : (
         <>
           <div className="sticker-tabs" role="tablist" aria-label="Bộ sticker">

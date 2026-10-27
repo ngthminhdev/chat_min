@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { api, fileSrc } from "../lib/bridge";
 import { esc, fuzzy, hm, norm, plain } from "../lib/format";
-import { bare, EMOJI, nextEmojiIndex, searchEmoji } from "../lib/micro-ux";
+import { quickReactions, reactionChoices, nextEmojiIndex, searchEmoji } from "../lib/micro-ux";
 import { COLORS, COLOR_LABELS } from "../lib/platforms";
 import { IconPicker } from "./Folders";
 import type { Chat, Msg } from "../lib/types";
@@ -14,8 +14,6 @@ import { Glyph, Icon, type IconName } from "../ui/Icon";
 import { ThemeGrid } from "../ui/ThemeGrid";
 import { isMobile } from "../lib/mobile";
 
-/** Long-press sheet: the reactions people actually use, in Telegram's order. */
-const QUICK = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
 function useOverlayFocus(ref: React.RefObject<HTMLElement>, open: boolean) {
   const previous = useRef<HTMLElement | null>(null);
@@ -373,7 +371,7 @@ function Popover() {
           {pop.kind === "menu" && pop.title && <div className="mobile-menu-title">{pop.title}</div>}
           {pop.kind === "menu" && pop.quick && (
             <div className="quick-reactions" role="group" aria-label="Biểu cảm nhanh">
-              {QUICK.map((emoji) => <button key={emoji} type="button" onClick={() => { close(); pop.quick!.pick(emoji); }}>{emoji}</button>)}
+              {quickReactions(useApp.getState().prefs.quickReactions).map((emoji) => <button key={emoji} type="button" onClick={() => { close(); pop.quick!.pick(emoji); }}>{emoji}</button>)}
               <button type="button" className="quick-more" aria-label="Thêm biểu cảm" onClick={() => { close(); pop.quick!.more(); }}><Icon name="plus" /></button>
             </div>
           )}
@@ -418,7 +416,7 @@ function Popover() {
 
 function PopBody({ pop, close }: { pop: Pop; close: () => void }) {
   if (pop.kind === "emoji") {
-    return <EmojiPicker only={pop.only} onPick={(emoji) => { close(); pop.onPick(emoji); }} />;
+    return <EmojiPicker only={pop.only} initiallyExpanded={pop.expanded} onPick={(emoji) => { close(); pop.onPick(emoji); }} />;
   }
   if (pop.kind === "icons") {
     return <IconPicker value={pop.value} onPick={(name) => { close(); pop.onPick(name); }} />;
@@ -439,13 +437,14 @@ function PopBody({ pop, close }: { pop: Pop; close: () => void }) {
   return <ColorPicker accountId={pop.accountId} value={pop.value} onPick={pop.onPick && ((c) => { close(); pop.onPick!(c); })} close={close} />;
 }
 
-function EmojiPicker({ onPick, only }: { onPick: (emoji: string) => void; only?: string[] }) {
-  const [expanded, setExpanded] = useState(false);
+function EmojiPicker({ onPick, only, initiallyExpanded = false }: { onPick: (emoji: string) => void; only?: string[]; initiallyExpanded?: boolean }) {
+  const preferred = useApp(s => s.prefs.quickReactions);
+  const [expanded, setExpanded] = useState(initiallyExpanded);
   const [query, setQuery] = useState("");
   const input = useRef<HTMLInputElement>(null);
   const grid = useRef<HTMLDivElement>(null);
-  const all = only ? only.map((e) => EMOJI.find((x) => bare(x[0]) === bare(e)) ?? ([e, e, ""] as const)) : EMOJI;
-  const items = expanded ? searchEmoji(query, all) : all.slice(0, 16);
+  const choices = reactionChoices(preferred, only, expanded);
+  const items = expanded ? searchEmoji(query, choices) : choices;
   useEffect(() => { if (expanded) input.current?.focus(); }, [expanded]);
   return (
     <>
@@ -461,6 +460,7 @@ function EmojiPicker({ onPick, only }: { onPick: (emoji: string) => void; only?:
         setExpanded(!expanded); setQuery("");
         if (expanded) requestAnimationFrame(() => grid.current?.querySelector<HTMLButtonElement>("button")?.focus());
       }}>{expanded ? "Thu gọn" : "Thêm biểu cảm…"}</button>
+      {!initiallyExpanded && <button className="emoji-more" onClick={() => useApp.setState({ pop: null, route: "settings" })}>Tùy chỉnh biểu cảm nhanh…</button>}
     </>
   );
 }

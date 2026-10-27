@@ -15,7 +15,7 @@ const EMPH: [RegExp, string][] = [
   // "**Starting, **VIBE", which Google's rich composer writes for a bold run ending in a space
   // a zero-width space right after a marker (U+200B) keeps it literal: tg.rs/gchat emit it
   // for markup characters that are plain text, the composer's "plain text" toggle too
-  [/(^|[^\w*])\*\*(?=[^\s\u200B])([^*\n]*?\S\s*)\*\*(?!\*)/g, "strong"],
+  [/(^|[^\w*])\*\*(?=[^\s\u200B])([^*\n]*?\S[^\S\r\n]*)\*\*(?!\*)/g, "strong"],
   [/(^|[^\w*])\*(?=[^\s\u200B])([^*\n]*?\S)\*(?![\w*])/g, "strong"],
   [/(^|[^\w_])_(?=[^\s\u200B])([^_\n]*?\S)_(?![\w_])/g, "em"],
   [/(^|[^\w~])~(?=[^\s\u200B])([^~\n]*?\S)~(?![\w~])/g, "s"],
@@ -97,20 +97,16 @@ export function fmt(text: string, me: string[] = []): string {
 }
 
 function formatBody(text: string, me: string[]): string {
-  return text
+  return text.replace(/\r\n?/g, "\n")
     .split(/```([\w+#-]*)\n?([\s\S]*?)\n?```/g)
-    .map((part, i, parts) =>
-      i % 3 === 1
-        ? codeBlock(parts[i + 1], part)
-        : i % 3 === 2
-        ? ""
-        : esc(part)
-            .replace(/^\n+|\n+$/g, "")
-            .split(/\n{2,}/)
-            .filter((p) => p.trim())
-            .map((p) => para(p, me))
-            .join(""),
-    )
+    .map((part, i, parts) => {
+      if (i % 3 === 1) return codeBlock(parts[i + 1], part);
+      if (i % 3 === 2) return "";
+      // A fence occupies its own line; consume only its separating newline.
+      if (i > 0) part = part.replace(/^\n/, "");
+      if (i + 1 < parts.length) part = part.replace(/\n$/, "");
+      return part ? para(esc(part), me) : "";
+    })
     .join("");
 }
 
@@ -120,7 +116,7 @@ export function plain(text: string): string {
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
     .replace(/@\{([^}]+)\}/g, "@$1")
     .replace(/`/g, "")
-    .replace(/\*\*(?=[^\s\u200B])([^*\n]*?\S\s*)\*\*/g, "$1")
+    .replace(/\*\*(?=[^\s\u200B])([^*\n]*?\S[^\S\r\n]*)\*\*/g, "$1")
     .replace(/(^|[^\w*_~])[*_~](?=[^\s\u200B])([^*_~\n]*?\S)[*_~](?![\w*_~])/g, "$1$2")
     .replace(/^\s*[*-]\s+/gm, "• ")
     .replace(/\u200B/g, "")

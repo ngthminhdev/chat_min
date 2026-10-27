@@ -11,6 +11,7 @@ import {
 } from "../store";
 import { ChatAvatar } from "../ui/Avatar";
 import { Glyph, Icon } from "../ui/Icon";
+import { ZaloContacts } from "./ZaloContacts";
 import { TypingIndicator } from "./TypingIndicator";
 import { FolderGroups, folderItems, inFolders } from "./Folders";
 
@@ -306,6 +307,7 @@ function AccountGroup({ account: a, chats, filter, query, drag: accDrag }: { acc
       <AnimatePresence initial={false}>
         {!collapsed && (
           <motion.div className="acc-chats" initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.18, ease: EASE }}>
+        {a.platform === "zalo" && <ZaloContacts accountId={a.id} />}
         {loading ? (
           <div className="side-empty"><span className="veil-spinner" /> Đang tải danh sách…</div>
         ) : list.length ? (

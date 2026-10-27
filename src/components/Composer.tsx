@@ -518,8 +518,8 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
             <button
               className={`tool-btn icon-only composer-record${recorder.recording ? " rec-on" : ""}`}
               aria-label={recorder.recording ? "Huỷ ghi âm" : "Ghi tin nhắn thoại"}
-              data-tip={recorder.recording ? "Huỷ ghi âm" : "Ghi tin nhắn thoại"}
-              disabled={blocked || saving || !!editId}
+              data-tip={recorder.recording ? "Huỷ ghi âm" : caps.voice ? "Ghi tin nhắn thoại" : "Nền tảng này chưa hỗ trợ gửi ghi âm"}
+              disabled={blocked || saving || !!editId || !caps.voice}
               onClick={() => (recorder.recording ? void recorder.stop(false) : void recorder.start())}
             >
               <Icon name={recorder.recording ? "x" : "mic"} />

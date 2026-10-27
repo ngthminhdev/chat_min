@@ -10,6 +10,7 @@ import { anchor, confirmDialog, DEFAULT_NOTIFY, fail, toast, useApp, type Notify
 import { removeAccount, renameAccount } from "../App";
 import { startWizard } from "./Wizard";
 import { Glyph, Icon, type IconName } from "../ui/Icon";
+import { quickReactions, replaceQuickReaction } from "../lib/micro-ux";
 import { isMobile } from "../lib/mobile";
 
 const SHORTCUTS: [string, string][] = [
@@ -120,6 +121,17 @@ export function Settings() {
           </Row>
         </section>
 
+        <section className="settings-card">
+          <h3>Biểu cảm</h3>
+          <Row title="Biểu cảm nhanh" help="Bấm từng vị trí để đổi emoji. Một số nhóm giới hạn biểu cảm được phép dùng." icon="smile">
+            <div className="quick-reaction-settings" role="group" aria-label="Tùy chỉnh biểu cảm nhanh">
+              {quickReactions(prefs.quickReactions).map((emoji, index) => <button key={index} type="button" className="tool-btn" aria-label={`Đổi biểu cảm nhanh ${index + 1}: ${emoji}`} onClick={e => useApp.setState({ pop: { kind: "emoji", ...anchor(e.currentTarget), expanded: true,
+                onPick: picked => setPrefs({ quickReactions: replaceQuickReaction(quickReactions(useApp.getState().prefs.quickReactions), index, picked) }) } })}>{emoji}</button>)}
+              <button type="button" className="tool-btn" onClick={() => setPrefs({ quickReactions: quickReactions() })}>Đặt lại</button>
+            </div>
+          </Row>
+        </section>
+
         <AiCard />
 
         <section className="settings-card">
@@ -157,7 +169,7 @@ export function Settings() {
                           ...anchor(e.currentTarget),
                           items: [
                             { icon: "pencil", label: "Đổi tên", run: () => renameAccount(a.id) },
-                            a.platform === "messenger" || a.platform === "zalo"
+                            a.platform === "messenger"
                               ? { icon: "refresh-cw", label: "Tải lại trang", run: () => void api.webReload(a.id) }
                               : { icon: "refresh-cw", label: "Đăng nhập lại", run: () => startWizard(a.id) },
                             { icon: "trash-2", label: "Xoá tài khoản…", danger: true, run: () => removeAccount(a.id) },

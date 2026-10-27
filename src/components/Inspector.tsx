@@ -1,12 +1,12 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useShallow } from "zustand/react/shallow";
 import { api, fileSrc } from "../lib/bridge";
 import { dayLabel, fileSize, fmtCount, hm, listTime, norm, plain } from "../lib/format";
 import { CAP_LABELS, CAP_OFF_NOTE, PLATFORMS, type Cap } from "../lib/platforms";
-import type { Member, Msg } from "../lib/types";
-import { fileActionLabel, mediaSection } from "../lib/micro-ux";
-import { capsOf, chatKeyOf, fail, loadTopics, openThreadTab, openTopicTab, saveMedia, threadTabKey, threadUnread, toast, useApp, type InspTab } from "../store";
+import type { Member, Msg, ThreadSummary } from "../lib/types";
+import { fileActionLabel, mediaSection, threadTotalLabel } from "../lib/micro-ux";
+import { useWhenVisible } from "./useWhenVisible";
+import { capsOf, chatKeyOf, fail, loadThreadList, loadTopics, openThreadTab, openTopicTab, saveMedia, threadTabKey, threadUnread, toast, useApp, wantThreadCount, type InspTab } from "../store";
 import { ChatAvatar, PersonAvatar } from "../ui/Avatar";
 import { Glyph, Icon } from "../ui/Icon";
 import { useDownload } from "./Conversation";
@@ -415,41 +415,65 @@ function PinnedTabBody({ k }: { k: string }) {
 
 /** Google Chat threads of the loaded history, most recently active first. */
 function ThreadsTab({ k }: { k: string }) {
-  const list = useApp((s) => s.msgs[k]);
-  const tabs = useApp((s) => s.tabs);
-  const marks = useApp(useShallow((s) => ({ unreadMark: s.unreadMark, fresh: s.fresh, threadSeen: s.threadSeen })));
+  const list = useApp((s) => s.threadList[k]);
+  const msgs = useApp((s) => s.msgs[k]);
+  useEffect(() => {
+    // opening the chat read the cache only; here the list may also walk older history
+    const current = useApp.getState().threadList[k];
+    if (!current || (current.state === "idle" && current.items.length < 30)) void loadThreadList(k, !!current?.items.length);
+  }, [k]);
+  // the timeline may hold newer replies and starters than the cached summary
   const rows = useMemo(() => {
-    const roots = (list ?? []).filter((m) => !m.threadReply && m.threadId && !m.deleted && m.kind !== "service");
-    const replies: Record<string, Msg[]> = {};
-    for (const m of list ?? []) if (m.threadReply) (replies[m.threadId] ??= []).push(m);
-    return roots
-      .map((r) => ({ root: r, replies: replies[r.threadId] ?? [], last: Math.max(r.ts, ...(replies[r.threadId] ?? []).map((x) => x.ts)) }))
-      .filter((x) => x.replies.length)
-      .sort((a, b) => b.last - a.last);
-  }, [list]);
-  if (!list) return <div className="insp-empty"><span className="veil-spinner" /></div>;
-  if (!rows.length) return <div className="insp-empty"><Icon name="message-circle-reply" />Chưa có luồng trả lời nào trong phần đã tải</div>;
+    const loaded: Record<string, Msg[]> = {}, roots: Record<string, Msg> = {};
+    for (const m of msgs ?? []) {
+      if (m.threadReply) (loaded[m.threadId] ??= []).push(m);
+      else if (m.threadId) roots[m.threadId] = m;
+    }
+    return (list?.items ?? []).map((t) => {
+      const replies = (loaded[t.threadId]?.length ?? 0) > t.recent.length ? loaded[t.threadId] : t.recent;
+      return { t, root: t.root ?? roots[t.threadId] ?? null, replies, floor: Math.max(t.replies, loaded[t.threadId]?.length ?? 0) };
+    });
+  }, [list, msgs]);
+  const more = useRef<HTMLDivElement>(null), autoAt = useRef(-1);
+  // reaching the end loads on its own once per length: a walk that found no new thread
+  // waits for the button instead of paging through a long reply-only history
+  useWhenVisible(more, () => {
+    if (autoAt.current === rows.length) return;
+    autoAt.current = rows.length;
+    void loadThreadList(k, true);
+  }, `${k}:${rows.length}`, list?.state === "idle", 0);
+  if (!list || (!rows.length && list.state === "loading")) return <div className="insp-empty"><span className="veil-spinner" /></div>;
+  if (!rows.length && list.state === "done") return <div className="insp-empty"><Icon name="message-circle-reply" />Chưa có luồng trả lời nào</div>;
   return (
     <div className="side-threads">
-      {rows.map(({ root, replies, last }) => {
-        const faces = [...new Map(replies.map((r) => [r.senderName, r])).values()].slice(0, 3);
-        const unread = threadUnread(marks, k, root.threadId, replies);
-        return (
-          <button key={root.id} className={`side-thread${tabs.includes(threadTabKey(k, root.threadId)) ? " open" : ""}${unread ? " has-new" : ""}`} onClick={() => openThreadTab(k, root)}>
-            <span className="hd">
-              <b>{root.outgoing ? "Bạn" : root.senderName}</b>
-              <time>{dayLabel(last).split(" · ")[0]} {hm(last)}</time>
-            </span>
-            <span className="tx">{plain(root.text) || root.media?.name}</span>
-            <span className="meta">
-              <span className="faces">{faces.map((f) => <PersonAvatar key={f.senderName} name={f.senderName} accountId={f.accountId} photo={f.senderPhoto} />)}</span>
-              {replies.length} trả lời
-              {unread > 0 && <b className="thread-new">· {unread} mới</b>}
-            </span>
-          </button>
-        );
-      })}
+      {rows.map((row) => <ThreadRow key={row.t.threadId} k={k} {...row} />)}
+      {list.state !== "done" && <div ref={more} className="insp-empty">
+        {list.state === "loading" ? <span className="veil-spinner" /> : <button className="tool-btn" onClick={() => void loadThreadList(k, true)}>Tải thêm luồng</button>}
+      </div>}
     </div>
+  );
+}
+
+function ThreadRow({ k, t, root, replies, floor }: { k: string; t: ThreadSummary; root: Msg | null; replies: Msg[]; floor: number }) {
+  const open = useApp((s) => s.tabs.includes(threadTabKey(k, t.threadId)));
+  const total = useApp((s) => s.threadCounts[`${k}#${t.threadId}`]);
+  const unread = useApp((s) => threadUnread(s, k, t.threadId, replies));
+  const ref = useRef<HTMLButtonElement>(null);
+  useWhenVisible(ref, () => wantThreadCount(k, t.threadId), t.threadId);
+  const faces = [...new Map(replies.map((r) => [r.senderName, r])).values()].slice(0, 3);
+  return (
+    <button ref={ref} className={`side-thread${open ? " open" : ""}${unread ? " has-new" : ""}`} onClick={() => openThreadTab(k, root ?? replies[0])}>
+      <span className="hd">
+        <b>{root ? (root.outgoing ? "Bạn" : root.senderName) : "…"}</b>
+        <time>{dayLabel(t.lastTs).split(" · ")[0]} {hm(t.lastTs)}</time>
+      </span>
+      <span className="tx">{root ? plain(root.text) || root.media?.name : plain(replies[0]?.text ?? "")}</span>
+      <span className="meta">
+        <span className="faces">{faces.map((f) => <PersonAvatar key={f.senderName} name={f.senderName} accountId={f.accountId} photo={f.senderPhoto} />)}</span>
+        {threadTotalLabel(total, floor, "")} trả lời
+        {unread > 0 && <b className="thread-new">· {unread} mới</b>}
+      </span>
+    </button>
   );
 }
 

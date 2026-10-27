@@ -37,3 +37,6 @@ gchat-credentials.json
 # os / logs
 .DS_Store
 *.log
+
+# generated bundled Zalo protocol worker and runtime
+/src-tauri/resources/zalo/

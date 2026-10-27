@@ -5,7 +5,8 @@ type FormatWorker = {
   terminate: () => void;
 };
 type Job = { id: number; text: string; listeners: Set<(html: string) => void> };
-const plainHtml = (text: string) => '<p>' + text.replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]!).replace(/\n/g, '<br>') + '</p>';
+/** Escaped text with line breaks only: same line count as the rich result, so a cold row keeps its height. */
+export const plainHtml = (text: string) => '<p>' + text.replace(/\r\n?/g, '\n').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]!).replace(/\n/g, '<br>') + '</p>';
 
 /** One worker job at a time; rows that unmount while waiting never enter its queue. */
 export function createTextFormatter(makeWorker: () => FormatWorker, onEngine?: (engine: 'worker' | 'plain') => void) {

@@ -71,6 +71,7 @@ export function Conversation() {
       </div>
     );
   }
+  if (chat.kind === "web" && platform === "zalo") return <div className="content empty"><div className="conv-empty"><span className="ring"><Icon name="messages-square" /></span><strong>Kết nối Zalo vào ChatMin</strong><p>Quét QR để xem và gửi tin ngay trong giao diện ChatMin.</p><button className="tool-btn primary" onClick={() => startWizard(chat.accountId)}>Kết nối bằng QR</button></div></div>;
   if (chat.kind === "web") return <WebConversation chatKey={active} />;
   const h = healthOf(chat.accountId).health;
   const banner = HEALTH_MSG[h];
@@ -156,6 +157,7 @@ export function Conversation() {
           </div>
         )}
       </div>
+      {platform === "zalo" && <div className="zalo-history-note" role="note">ChatMin lưu tin đã đồng bộ trên máy. Zalo có thể không trả đầy đủ lịch sử cũ.</div>}
       <SummaryCard tab={active} />
       <MessageList k={active} key={active} />
       <Composer k={active} key={`c-${active}`} />
@@ -240,7 +242,7 @@ function MessageList({ k }: { k: string }) {
       <div className="conv-empty">
         <span className="ring"><Icon name="message-square-text" /></span>
         <strong>Chưa có tin nhắn với {chat?.title}</strong>
-        <p>Đây là đầu cuộc trò chuyện. Gửi lời chào đầu tiên. Nháp được lưu riêng cho tab này.</p>
+        <p>{chat?.accountId.startsWith("zalo-") ? "Chưa có tin trong dữ liệu Zalo trả về. Tin cũ có thể chưa được đồng bộ; bạn vẫn có thể gửi tin mới." : "Đây là đầu cuộc trò chuyện. Gửi lời chào đầu tiên. Nháp được lưu riêng cho tab này."}</p>
       </div>
     );
   } else {
@@ -251,7 +253,7 @@ function MessageList({ k }: { k: string }) {
       header={<>
         {older === "idle" && <div className="history-start"><button className="tool-btn" onClick={() => void loadOlder(k)}>Tải tin nhắn cũ hơn</button></div>}
         {older === "loading" && <div className="older-loading"><span className="veil-spinner" /></div>}
-        {older === "done" && <div className="history-start">Đầu cuộc trò chuyện</div>}
+        {older === "done" && <div className="history-start">{chat?.accountId.startsWith("zalo-") ? "Đã hết tin được lưu và tin Zalo trả về" : "Đầu cuộc trò chuyện"}</div>}
       </>}
       footer={caps.typing && <div className="typing-slot" aria-live="polite">
         {typing?.until ? <><PersonAvatar name={typing.who || chat?.title || "?"} size="sm" accountId={chat?.accountId} photo={chat?.kind === "dm" ? chat.photo || chat.photoRef : ""} /><TypingIndicator label={`${typing.who || chat?.title} đang gõ`} /></> : null}
@@ -363,33 +365,37 @@ export function JumpBottom({ away, fresh, onClick }: { away: boolean; fresh: num
 }
 
 export function useDownload(accountId: string, media: { fileRef: string; name: string; localPath: string } | null, auto: boolean) {
-  const [path, setPath] = useState(media?.localPath ?? "");
-  const [state, setState] = useState<"idle" | "loading" | "error">("idle");
-  const get = async () => {
+  const identity = JSON.stringify([accountId, media?.fileRef, media?.name, media?.localPath]);
+  const current = useRef(identity);
+  current.current = identity;
+  const [result, setResult] = useState({ identity, path: media?.localPath ?? "", state: "idle" as "idle" | "loading" | "error" });
+  const path = result.identity === identity ? result.path : media?.localPath ?? "";
+  const state = result.identity === identity ? result.state : "idle";
+  const get = async (reset = false) => {
     if (!media?.fileRef || state === "loading") return path;
-    setState("loading");
+    const previous = reset ? "" : path;
+    setResult({ identity, path: previous, state: "loading" });
     try {
-      const p = await api.download(accountId, media.fileRef, media.name);
-      setPath(p);
-      setState("idle");
+      const p = await api.download(accountId, media.fileRef, media.name, reset);
+      if (current.current !== identity) return "";
+      setResult({ identity, path: p, state: "idle" });
       return p;
     } catch {
-      setState("error");
+      if (current.current === identity) setResult({ identity, path: previous, state: "error" });
       return "";
     }
   };
   useEffect(() => {
     if (auto && !path && media?.fileRef) void get();
-  }, [auto, media?.fileRef]);
+  }, [auto, identity]);
   const pct = useApp((s) => (media ? s.progress[`${accountId}|${media.fileRef}`] : undefined));
-  // the cached localPath can be outside the asset scope after a restart (a file I sent from
-  // Desktop) or gone: fetch it again once through `download`, which opens the scope
-  const retried = useRef(false);
+  const retried = useRef("");
   const broken = () => {
-    if (retried.current || !media?.fileRef) return;
-    retried.current = true;
-    setPath("");
-    void get();
+    if (!media?.fileRef) return;
+    if (retried.current === identity) { setResult({ identity, path: "", state: "error" }); return; }
+    retried.current = identity;
+    setResult({ identity, path: "", state: "idle" });
+    void get(true);
   };
   return { path, state, get, broken, pct: state === "loading" ? pct : undefined };
 }

@@ -1,0 +1,247 @@
+{
+  "scope": "Exact Store::msgs/primary_msgs/search SQL with Python json.loads; not Rust serde/IPC/UI/provider timings.",
+  "runtime": "3.15.0",
+  "sqlite": "3.54.1",
+  "cold_limit": "Reopened connections reset SQLite page/statement caches. OS filesystem cache not flushed; no disk-cold claim. Connection-open time excluded.",
+  "database_bytes": 49033216,
+  "wal_bytes": 6674432,
+  "page_size": 4096,
+  "sqlite_cache_size": -2000,
+  "providers": {
+    "telegram": {
+      "accounts": 1,
+      "cached_chats": 59,
+      "cached_messages": 10114,
+      "largest_chat_messages": 2133,
+      "latest_50": {
+        "rows": 50,
+        "first_existing_connection_ms": 0.2881,
+        "warm": {
+          "iterations": 200,
+          "median_ms": 0.1718,
+          "p95_ms": 0.2111,
+          "max_ms": 0.307
+        },
+        "reopened_sqlite_cache_os_warm": {
+          "iterations": 30,
+          "median_ms": 0.2321,
+          "p95_ms": 0.2899,
+          "max_ms": 0.3272
+        },
+        "query_plan": [
+          "SEARCH messages USING INDEX messages_sort (account_id=? AND chat_id=? AND sort<?)"
+        ]
+      },
+      "older_50": {
+        "rows": 50,
+        "first_existing_connection_ms": 0.5475,
+        "warm": {
+          "iterations": 200,
+          "median_ms": 0.1779,
+          "p95_ms": 0.2095,
+          "max_ms": 0.2916
+        },
+        "reopened_sqlite_cache_os_warm": {
+          "iterations": 30,
+          "median_ms": 0.2389,
+          "p95_ms": 0.324,
+          "max_ms": 0.3552
+        },
+        "query_plan": [
+          "SEARCH messages USING INDEX messages_sort (account_id=? AND chat_id=? AND sort<?)"
+        ]
+      },
+      "search_fixed_prefix": {
+        "rows": 50,
+        "first_existing_connection_ms": 30.6148,
+        "warm": {
+          "iterations": 60,
+          "median_ms": 8.4889,
+          "p95_ms": 9.1692,
+          "max_ms": 9.2027
+        },
+        "reopened_sqlite_cache_os_warm": {
+          "iterations": 30,
+          "median_ms": 9.0655,
+          "p95_ms": 10.359,
+          "max_ms": 10.4852
+        },
+        "query_plan": [
+          "SCAN f VIRTUAL TABLE INDEX 0:M4",
+          "SEARCH m USING INDEX sqlite_autoindex_messages_1 (account_id=? AND chat_id=? AND id=?)",
+          "USE TEMP B-TREE FOR ORDER BY"
+        ]
+      }
+    },
+    "gchat": {
+      "accounts": 1,
+      "cached_chats": 109,
+      "cached_messages": 13576,
+      "largest_chat_messages": 4943,
+      "latest_50": {
+        "rows": 50,
+        "first_existing_connection_ms": 1.1407,
+        "warm": {
+          "iterations": 200,
+          "median_ms": 0.213,
+          "p95_ms": 0.2273,
+          "max_ms": 0.3215
+        },
+        "reopened_sqlite_cache_os_warm": {
+          "iterations": 30,
+          "median_ms": 0.2668,
+          "p95_ms": 0.353,
+          "max_ms": 0.3794
+        },
+        "query_plan": [
+          "SEARCH messages USING INDEX messages_sort (account_id=? AND chat_id=? AND sort<?)"
+        ]
+      },
+      "older_50": {
+        "rows": 50,
+        "first_existing_connection_ms": 1.9414,
+        "warm": {
+          "iterations": 200,
+          "median_ms": 0.1709,
+          "p95_ms": 0.1815,
+          "max_ms": 0.1961
+        },
+        "reopened_sqlite_cache_os_warm": {
+          "iterations": 30,
+          "median_ms": 0.241,
+          "p95_ms": 0.3157,
+          "max_ms": 0.3236
+        },
+        "query_plan": [
+          "SEARCH messages USING INDEX messages_sort (account_id=? AND chat_id=? AND sort<?)"
+        ]
+      },
+      "primary_latest_50": {
+        "rows": 50,
+        "first_existing_connection_ms": 6.5956,
+        "warm": {
+          "iterations": 200,
+          "median_ms": 1.4686,
+          "p95_ms": 1.6736,
+          "max_ms": 1.7707
+        },
+        "reopened_sqlite_cache_os_warm": {
+          "iterations": 30,
+          "median_ms": 1.7709,
+          "p95_ms": 2.0527,
+          "max_ms": 2.2334
+        },
+        "query_plan": [
+          "SEARCH messages USING INDEX messages_sort (account_id=? AND chat_id=? AND sort<?)"
+        ]
+      },
+      "search_fixed_prefix": {
+        "rows": 50,
+        "first_existing_connection_ms": 21.1222,
+        "warm": {
+          "iterations": 60,
+          "median_ms": 12.6263,
+          "p95_ms": 13.2329,
+          "max_ms": 13.7284
+        },
+        "reopened_sqlite_cache_os_warm": {
+          "iterations": 30,
+          "median_ms": 12.6266,
+          "p95_ms": 12.8437,
+          "max_ms": 13.0999
+        },
+        "query_plan": [
+          "SCAN f VIRTUAL TABLE INDEX 0:M4",
+          "SEARCH m USING INDEX sqlite_autoindex_messages_1 (account_id=? AND chat_id=? AND id=?)",
+          "USE TEMP B-TREE FOR ORDER BY"
+        ]
+      }
+    },
+    "zalo": {
+      "accounts": 1,
+      "cached_chats": 33,
+      "cached_messages": 974,
+      "largest_chat_messages": 247,
+      "latest_50": {
+        "rows": 50,
+        "first_existing_connection_ms": 0.6909,
+        "warm": {
+          "iterations": 200,
+          "median_ms": 0.2781,
+          "p95_ms": 0.2907,
+          "max_ms": 0.3033
+        },
+        "reopened_sqlite_cache_os_warm": {
+          "iterations": 30,
+          "median_ms": 0.3499,
+          "p95_ms": 0.4428,
+          "max_ms": 0.4672
+        },
+        "query_plan": [
+          "SEARCH messages USING INDEX messages_sort (account_id=? AND chat_id=? AND sort<?)"
+        ]
+      },
+      "older_50": {
+        "rows": 50,
+        "first_existing_connection_ms": 0.3327,
+        "warm": {
+          "iterations": 200,
+          "median_ms": 0.2426,
+          "p95_ms": 0.2998,
+          "max_ms": 0.374
+        },
+        "reopened_sqlite_cache_os_warm": {
+          "iterations": 30,
+          "median_ms": 0.3079,
+          "p95_ms": 0.4166,
+          "max_ms": 0.418
+        },
+        "query_plan": [
+          "SEARCH messages USING INDEX messages_sort (account_id=? AND chat_id=? AND sort<?)"
+        ]
+      },
+      "search_fixed_prefix": {
+        "rows": 50,
+        "first_existing_connection_ms": 8.3588,
+        "warm": {
+          "iterations": 60,
+          "median_ms": 7.1594,
+          "p95_ms": 7.7085,
+          "max_ms": 8.0917
+        },
+        "reopened_sqlite_cache_os_warm": {
+          "iterations": 30,
+          "median_ms": 7.2792,
+          "p95_ms": 7.7441,
+          "max_ms": 7.8104
+        },
+        "query_plan": [
+          "SCAN f VIRTUAL TABLE INDEX 0:M4",
+          "SEARCH m USING INDEX sqlite_autoindex_messages_1 (account_id=? AND chat_id=? AND id=?)",
+          "USE TEMP B-TREE FOR ORDER BY"
+        ]
+      }
+    }
+  },
+  "global_search_fixed_prefix": {
+    "rows": 50,
+    "first_existing_connection_ms": 41.0386,
+    "warm": {
+      "iterations": 60,
+      "median_ms": 26.7061,
+      "p95_ms": 28.2326,
+      "max_ms": 28.8305
+    },
+    "reopened_sqlite_cache_os_warm": {
+      "iterations": 30,
+      "median_ms": 26.6414,
+      "p95_ms": 30.5385,
+      "max_ms": 43.0731
+    },
+    "query_plan": [
+      "SCAN f VIRTUAL TABLE INDEX 0:M4",
+      "SEARCH m USING INDEX sqlite_autoindex_messages_1 (account_id=? AND chat_id=? AND id=?)",
+      "USE TEMP B-TREE FOR ORDER BY"
+    ]
+  }
+}

@@ -57,6 +57,9 @@ export interface Media {
 export interface LinkCard { url: string; site: string; title: string; desc: string }
 export interface Reaction { emoji: string; count: number; mine: boolean }
 
+/** One thread of a threaded space (thread_list): cached reply count is a floor. */
+export interface ThreadSummary { threadId: string; replies: number; lastSort: number; lastTs: number; root: Msg | null; recent: Msg[] }
+
 export interface Msg {
   accountId: string;
   chatId: string;
@@ -101,8 +104,10 @@ export type CoreEvent =
   | { type: "health"; accountId: string; health: HealthState; text: string; until: number }
   | { type: "auth"; accountId: string; step: "phone" | "code" | "password" | "qr" | "ready" | "error"; info: string; error: string }
   | { type: "chat"; chat: Chat }
+  | { type: "profiles"; accountId: string; profiles: { id: string; name: string; photo: string }[] }
   | { type: "chatRemoved"; accountId: string; chatId: string }
   | { type: "message"; msg: Msg; isNew: boolean; inbox?: boolean }
+  | { type: "history"; messages: Msg[]; chats: Chat[] }
   | { type: "messageIdChanged"; oldId: string; msg: Msg }
   | { type: "messagesDeleted"; accountId: string; chatId: string; ids: string[] }
   | { type: "fileProgress"; accountId: string; fileRef: string; pct: number }

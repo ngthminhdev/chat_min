@@ -4,25 +4,39 @@ mod files_android;
 mod gchat;
 #[cfg(any(target_os = "android", test))]
 mod google_android;
-mod model;
-mod store;
-mod tg;
-mod notify;
+#[cfg(target_os = "macos")]
+mod island;
+#[cfg(target_os = "macos")]
+mod island_media;
 #[cfg(any(target_os = "macos", test))]
 mod island_queue;
 mod island_style;
 #[cfg(target_os = "macos")]
-mod island;
-#[cfg(target_os = "macos")]
 mod island_view;
-#[cfg(target_os = "macos")]
-mod island_media;
+mod model;
+mod notify;
+mod store;
+mod tg;
 
 /// Native UI QA without loading credentials, opening accounts, or starting provider listeners.
 #[cfg(all(target_os = "macos", debug_assertions))]
-pub fn preview_notification_island() { island::preview(); }
+pub fn preview_notification_island() {
+    island::preview();
+}
 mod storage;
 mod web;
+mod zalo;
+mod zalo_import;
+mod zalo_profiles;
+
+/// Maintenance command: migrate owned cache without starting any provider listener.
+pub fn import_zalo_cache(
+    database: &std::path::Path,
+    input: &std::path::Path,
+    account: &str,
+) -> Result<String, String> {
+    zalo_import::import_file(database, input, account)
+}
 
 use gchat::GChat;
 use model::{Account, Chat, Event, Member, Msg, Topic};
@@ -36,7 +50,10 @@ use tauri::{Emitter, Manager, State};
 use tg::Tg;
 
 pub fn now_ms() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 /// Developer credentials: Telegram api_id/api_hash and the Google OAuth "Desktop app"
@@ -81,8 +98,9 @@ pub struct Core {
     pub health: Mutex<HashMap<String, Health>>,
     pub tg: Tg,
     pub gchat: GChat,
+    pub zalo: zalo::Zalo,
     pub notifier: notify::Notifier,
-    /// Messenger/Zalo: the thread each account's webview should be showing (None = site default)
+    /// Messenger: the thread each account's webview should be showing (None = site default)
     pub web_open: Mutex<HashMap<String, Option<String>>>,
 }
 
@@ -109,34 +127,59 @@ impl Core {
     }
     pub fn gchat_client(&self) -> Option<(String, String)> {
         let c = self.config.lock().unwrap();
-        (!c.gchat_client_id.is_empty()).then(|| (c.gchat_client_id.clone(), c.gchat_client_secret.clone()))
+        (!c.gchat_client_id.is_empty())
+            .then(|| (c.gchat_client_id.clone(), c.gchat_client_secret.clone()))
     }
 
     pub fn put_chat(&self, chat: Chat) {
-        // the mute switch is local-only for gchat; keep it across server refreshes
+        // Preserve a local mute and write the provider snapshot under one lock.
         let mut chat = chat;
-        if chat.account_id.starts_with("gc-") {
-            let old = self.store().chat(&chat.account_id, &chat.id);
-            if let Ok(Some(old)) = old {
+        let local_mute = matches!(
+            self.platform(&chat.account_id),
+            "gchat" | "messenger" | "zalo"
+        );
+        let store = self.store();
+        if local_mute {
+            if let Ok(Some(old)) = store.chat(&chat.account_id, &chat.id) {
                 chat.muted = old.muted;
                 if old == chat {
                     return;
                 }
             }
         }
-        let _ = self.store().put_chat(&chat);
+        let _ = store.put_chat(&chat);
+        drop(store);
         self.notifier.track(&self.app, &chat, false);
-        self.emit(Event::Chat { chat });
+        let mut shown = vec![chat];
+        self.zalo.profiles.chats(&self.cache_dir, &mut shown);
+        self.emit(Event::Chat {
+            chat: shown.remove(0),
+        });
     }
     pub fn remove_chat(&self, account_id: &str, chat_id: &str) {
         let _ = self.store().remove_chat(account_id, chat_id);
-        self.notifier.track(&self.app, &Chat { account_id: account_id.into(), id: chat_id.into(), ..Default::default() }, true);
-        self.emit(Event::ChatRemoved { account_id: account_id.into(), chat_id: chat_id.into() });
+        self.notifier.track(
+            &self.app,
+            &Chat {
+                account_id: account_id.into(),
+                id: chat_id.into(),
+                ..Default::default()
+            },
+            true,
+        );
+        self.emit(Event::ChatRemoved {
+            account_id: account_id.into(),
+            chat_id: chat_id.into(),
+        });
     }
     fn download_dir(&self) -> PathBuf {
         let d = self.config.lock().unwrap().download_dir.clone();
         if d.is_empty() {
-            self.app.path().download_dir().unwrap_or_else(|_| self.data_dir.clone()).join("ChatMin")
+            self.app
+                .path()
+                .download_dir()
+                .unwrap_or_else(|_| self.data_dir.clone())
+                .join("ChatMin")
         } else {
             d.into()
         }
@@ -149,10 +192,27 @@ impl Core {
             let c = self.config.lock().unwrap();
             (c.cache_mb.unwrap_or(2048), c.keep_days.unwrap_or(30))
         };
-        let (limit, ttl) = if all { (Some(0), Some(0)) } else { ((mb > 0).then_some(mb << 20), (days > 0).then_some(days as u64 * 86400)) };
+        let (limit, ttl) = if all {
+            (Some(0), Some(0))
+        } else {
+            (
+                (mb > 0).then_some(mb << 20),
+                (days > 0).then_some(days as u64 * 86400),
+            )
+        };
         // ponytail: the limit applies to each store (Telegram, ChatMin's own cache), not to their sum
-        let tg = self.tg.optimize(limit.map_or(i64::MAX >> 2, |l| l as i64), ttl.map_or(i32::MAX, |t| t.min(i32::MAX as u64) as i32)).await;
-        let dirs = [self.cache_dir.join("gchat"), self.cache_dir.join("outbox")];
+        let tg = self
+            .tg
+            .optimize(
+                limit.map_or(i64::MAX >> 2, |l| l as i64),
+                ttl.map_or(i32::MAX, |t| t.min(i32::MAX as u64) as i32),
+            )
+            .await;
+        let dirs = [
+            self.cache_dir.join("gchat"),
+            self.cache_dir.join("zalo"),
+            self.cache_dir.join("outbox"),
+        ];
         let ttl = ttl.map(std::time::Duration::from_secs);
         let local: u64 = dirs.iter().map(|d| storage::prune(d, limit, ttl)).sum();
         tg as u64 + local
@@ -160,10 +220,24 @@ impl Core {
 
     /// A muted thread/topic: nothing from it rings or lands in the bell.
     fn thread_muted(&self, m: &Msg) -> bool {
-        !m.thread_id.is_empty() && self.config.lock().unwrap().muted_threads.contains(&format!("{}|{}|{}", m.account_id, m.chat_id, m.thread_id))
+        !m.thread_id.is_empty()
+            && self
+                .config
+                .lock()
+                .unwrap()
+                .muted_threads
+                .contains(&format!("{}|{}|{}", m.account_id, m.chat_id, m.thread_id))
     }
 
     pub fn put_msg(&self, msg: Msg, is_new: bool) {
+        if msg.account_id.starts_with("zalo-")
+            && self
+                .store()
+                .zalo_recalled(&msg.account_id, &msg.chat_id, &msg.id)
+                .unwrap_or(true)
+        {
+            return;
+        }
         // Google Chat lists deleted messages (showDeleted) as a bare id + time: no sender, no
         // thread. Google's own client hides them, so do we — drop the stored copy instead of
         // showing a "?" tombstone at the top level (Telegram deletions already arrive as deletes).
@@ -175,12 +249,19 @@ impl Core {
         // and history loads must agree on whether this ID is a first delivery.
         // reactions on my messages only show up as changed counts: diff against the stored copy
         let before = if msg.outgoing && !msg.reactions.is_empty() {
-            self.store().msg(&msg.account_id, &msg.chat_id, &msg.id).ok().flatten()
+            self.store()
+                .msg(&msg.account_id, &msg.chat_id, &msg.id)
+                .ok()
+                .flatten()
         } else {
             None
         };
         let mut msg = msg;
         gchat::hydrate_cached_media(&self.cache_dir, std::slice::from_mut(&mut msg));
+        zalo::hydrate(&self.cache_dir, std::slice::from_mut(&mut msg));
+        self.zalo
+            .profiles
+            .messages(&self.cache_dir, std::slice::from_mut(&mut msg));
         if let (Some(old), true) = (&before, msg.account_id.starts_with("gc-")) {
             // gchat never says which reactions are mine: keep what we knew unless that count fell
             for r in msg.reactions.iter_mut() {
@@ -192,9 +273,17 @@ impl Core {
         let first_delivery = self.store().put_msg_if_new(&msg).unwrap_or(false);
         if let Some(old) = before {
             if let Some(emoji) = notify::new_reaction(&old, &msg) {
-                let chat = self.store().chat(&msg.account_id, &msg.chat_id).ok().flatten();
-                self.notifier.reaction(&self.app, chat.as_ref(), &msg, &emoji);
-                self.emit(Event::Reacted { msg: msg.clone(), emoji });
+                let chat = self
+                    .store()
+                    .chat(&msg.account_id, &msg.chat_id)
+                    .ok()
+                    .flatten();
+                self.notifier
+                    .reaction(&self.app, chat.as_ref(), &msg, &emoji);
+                self.emit(Event::Reacted {
+                    msg: msg.clone(),
+                    emoji,
+                });
             }
         }
         let is_new = is_new && first_delivery && !msg.deleted;
@@ -207,11 +296,21 @@ impl Core {
                 let followed = !muted
                     && msg.thread_reply
                     && !msg.thread_id.is_empty()
-                    && s.thread_msgs(&msg.account_id, &msg.chat_id, &msg.thread_id).is_ok_and(|t| t.iter().any(|m| m.outgoing));
+                    && s.thread_msgs(&msg.account_id, &msg.chat_id, &msg.thread_id)
+                        .is_ok_and(|t| t.iter().any(|m| m.outgoing));
                 (chat, followed)
             };
-            inbox = !muted && !msg.outgoing && (msg.mentions_me || followed || chat.as_ref().is_some_and(|c| c.kind == "dm" && !c.muted));
-            let rang = if muted { notify::Ring::No } else { self.notifier.message(&self.app, chat.as_ref(), &msg, followed) };
+            inbox = !muted
+                && !msg.outgoing
+                && (msg.mentions_me
+                    || followed
+                    || chat.as_ref().is_some_and(|c| c.kind == "dm" && !c.muted));
+            let rang = if muted {
+                notify::Ring::No
+            } else {
+                self.notifier
+                    .message(&self.app, chat.as_ref(), &msg, followed)
+            };
             // how long a message took to reach us (what the polling cadence is tuned by), and
             // why it did or didn't ring — no names or content
             let c = chat.as_ref();
@@ -220,7 +319,11 @@ impl Core {
                 msg.account_id.split('-').next().unwrap_or(""),
                 now_ms() - msg.ts,
                 c.map_or("?", |c| c.kind.as_str()),
-                if c.is_some_and(|c| c.muted) { " muted" } else { "" },
+                if c.is_some_and(|c| c.muted) {
+                    " muted"
+                } else {
+                    ""
+                },
                 if msg.thread_reply { " reply" } else { "" },
             );
         }
@@ -232,7 +335,10 @@ impl Core {
             let _ = s.remove_msg(&msg.account_id, &msg.chat_id, old_id);
             let _ = s.put_msg(&msg);
         }
-        self.emit(Event::MessageIdChanged { old_id: old_id.into(), msg });
+        self.emit(Event::MessageIdChanged {
+            old_id: old_id.into(),
+            msg,
+        });
     }
     pub fn delete_msgs(&self, account_id: &str, chat_id: &str, ids: Vec<String>) {
         {
@@ -241,25 +347,71 @@ impl Core {
                 let _ = s.remove_msg(account_id, chat_id, id);
             }
         }
-        self.emit(Event::MessagesDeleted { account_id: account_id.into(), chat_id: chat_id.into(), ids });
+        self.emit(Event::MessagesDeleted {
+            account_id: account_id.into(),
+            chat_id: chat_id.into(),
+            ids,
+        });
     }
     pub fn set_health(&self, account_id: &str, health: &str, text: &str, until: i64) {
         eprintln!("[health] {account_id} {health} {text}");
-        let h = Health { health: health.into(), text: text.into(), until };
-        let was = self.health.lock().unwrap().insert(account_id.into(), h).map(|h| h.health);
+        let h = Health {
+            health: health.into(),
+            text: text.into(),
+            until,
+        };
+        let was = self
+            .health
+            .lock()
+            .unwrap()
+            .insert(account_id.into(), h)
+            .map(|h| h.health);
         // with the official apps' alerts turned off, a dead session must not go unnoticed
         if health == "expired" && was.as_deref() != Some("expired") {
-            let name = self.store().accounts().ok().and_then(|v| v.into_iter().find(|a| a.id == account_id)).map(|a| a.name);
-            notify::alert(&self.app, &format!("{} cần đăng nhập lại", name.as_deref().unwrap_or("Tài khoản")), "ChatMin đã ngừng nhận tin của tài khoản này. Mở Settings → Đăng nhập lại.");
+            let name = self
+                .store()
+                .accounts()
+                .ok()
+                .and_then(|v| v.into_iter().find(|a| a.id == account_id))
+                .map(|a| a.name);
+            notify::alert(
+                &self.app,
+                &format!(
+                    "{} cần đăng nhập lại",
+                    name.as_deref().unwrap_or("Tài khoản")
+                ),
+                "ChatMin đã ngừng nhận tin của tài khoản này. Mở Settings → Đăng nhập lại.",
+            );
         }
-        self.emit(Event::Health { account_id: account_id.into(), health: health.into(), text: text.into(), until });
+        self.emit(Event::Health {
+            account_id: account_id.into(),
+            health: health.into(),
+            text: text.into(),
+            until,
+        });
     }
 
     /// Saves a freshly logged-in account. Logging in again to an existing account keeps
     /// its name and color; the same user under a different id is a duplicate.
     pub fn add_account(&self, mut a: Account) -> Result<(), String> {
         let existing = self.store().accounts()?;
-        if let Some(dup) = existing.iter().find(|x| x.platform == a.platform && x.self_id == a.self_id) {
+        if let Some(dup) = existing
+            .iter()
+            .find(|x| x.id != a.id && x.platform == a.platform && x.self_id == a.self_id)
+        {
+            return Err(format!("Account này đã có trong ChatMin (“{}”)", dup.name));
+        }
+        if let Some(same) = existing.iter().find(|x| {
+            x.id == a.id
+                && x.platform == a.platform
+                && (x.self_id == a.self_id || (a.platform == "zalo" && x.self_id == x.id))
+        }) {
+            a.name = same.name.clone();
+            a.color = same.color.clone();
+        } else if let Some(dup) = existing
+            .iter()
+            .find(|x| x.platform == a.platform && x.self_id == a.self_id)
+        {
             if dup.id != a.id {
                 return Err(format!("Account này đã có trong ChatMin (“{}”)", dup.name));
             }
@@ -306,7 +458,8 @@ impl Core {
             let grew = n > chat.unread;
             chat.unread = n;
             if grew {
-                self.notifier.web(&self.app, &chat, &format!("{n} tin nhắn chưa đọc"));
+                self.notifier
+                    .web(&self.app, &chat, &format!("{n} tin nhắn chưa đọc"));
             }
             self.put_chat(chat);
         }
@@ -315,10 +468,16 @@ impl Core {
 
 fn default_name(a: &Account, existing: &[Account]) -> String {
     let base = if a.platform == "gchat" {
-        a.handle.split('@').nth(1).and_then(|d| d.split('.').next()).map(|d| {
-            let mut c = d.chars();
-            c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
-        })
+        a.handle
+            .split('@')
+            .nth(1)
+            .and_then(|d| d.split('.').next())
+            .map(|d| {
+                let mut c = d.chars();
+                c.next()
+                    .map(|f| f.to_uppercase().collect::<String>() + c.as_str())
+                    .unwrap_or_default()
+            })
     } else {
         None
     }
@@ -330,15 +489,24 @@ fn default_name(a: &Account, existing: &[Account]) -> String {
     if !taken(&base) {
         return base;
     }
-    (2..).map(|i| format!("{base} {i}")).find(|n| !taken(n)).unwrap()
+    (2..)
+        .map(|i| format!("{base} {i}"))
+        .find(|n| !taken(n))
+        .unwrap()
 }
 
 fn next_color(existing: &[Account], preferred: &str) -> String {
-    const COLORS: [&str; 8] = ["blue", "purple", "green", "orange", "pink", "amber", "red", "slate"];
+    const COLORS: [&str; 8] = [
+        "blue", "purple", "green", "orange", "pink", "amber", "red", "slate",
+    ];
     if !existing.iter().any(|a| a.color == preferred) {
         return preferred.into();
     }
-    COLORS.iter().find(|c| !existing.iter().any(|a| a.color == **c)).unwrap_or(&"slate").to_string()
+    COLORS
+        .iter()
+        .find(|c| !existing.iter().any(|a| a.color == **c))
+        .unwrap_or(&"slate")
+        .to_string()
 }
 
 type Res<T> = Result<T, String>;
@@ -361,7 +529,8 @@ fn app_state(core: C) -> Res<AppState> {
     let c = core.config.lock().unwrap().clone();
     // one guard at a time: temporaries in a struct literal live to the end of the statement
     let accounts = core.store().accounts()?;
-    let chats = core.store().chats()?;
+    let mut chats = core.store().chats()?;
+    core.zalo.profiles.chats(&core.cache_dir, &mut chats);
     let health = core.health.lock().unwrap().clone();
     Ok(AppState {
         accounts,
@@ -373,20 +542,45 @@ fn app_state(core: C) -> Res<AppState> {
     })
 }
 
+/// UI preferences live beside the account database, independently of WebView data.
+#[tauri::command]
+fn ui_state(core: C) -> Res<Option<Value>> {
+    core.store().ui_state()
+}
+#[tauri::command]
+fn ui_state_set(core: C, value: Value) -> Res<()> {
+    core.store().set_ui_state(&value)
+}
+
 /// Mute/unmute one thread or topic: no banner, no bell entry, no "followed" status.
 #[tauri::command]
-fn thread_mute(core: C, account_id: String, chat_id: String, thread_id: String, muted: bool) -> Res<()> {
+fn thread_mute(
+    core: C,
+    account_id: String,
+    chat_id: String,
+    thread_id: String,
+    muted: bool,
+) -> Res<()> {
     let key = format!("{account_id}|{chat_id}|{thread_id}");
     let mut c = core.config.lock().unwrap();
     c.muted_threads.retain(|k| k != &key);
     if muted {
         c.muted_threads.push(key);
     }
-    write_private(&core.data_dir.join("config.json"), &serde_json::to_string_pretty(&*c).unwrap()).map_err(|e| e.to_string())
+    write_private(
+        &core.data_dir.join("config.json"),
+        &serde_json::to_string_pretty(&*c).unwrap(),
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn config_set(core: C, tg_api_id: Option<String>, tg_api_hash: Option<String>, gchat_json: Option<String>) -> Res<()> {
+fn config_set(
+    core: C,
+    tg_api_id: Option<String>,
+    tg_api_hash: Option<String>,
+    gchat_json: Option<String>,
+) -> Res<()> {
     let mut c = core.config.lock().unwrap();
     if let Some(id) = tg_api_id {
         c.tg_api_id = id.trim().parse().map_err(|_| "api_id phải là số")?;
@@ -396,13 +590,28 @@ fn config_set(core: C, tg_api_id: Option<String>, tg_api_hash: Option<String>, g
     }
     if let Some(j) = gchat_json {
         // accept the JSON downloaded from Cloud Console, or a path to it
-        let raw = if j.trim_start().starts_with('{') { j } else { std::fs::read_to_string(j.trim()).map_err(|e| e.to_string())? };
+        let raw = if j.trim_start().starts_with('{') {
+            j
+        } else {
+            std::fs::read_to_string(j.trim()).map_err(|e| e.to_string())?
+        };
         let v: Value = serde_json::from_str(&raw).map_err(|_| "JSON OAuth client không hợp lệ")?;
-        let inner = if v["installed"].is_object() { &v["installed"] } else { &v["web"] };
+        let inner = if v["installed"].is_object() {
+            &v["installed"]
+        } else {
+            &v["web"]
+        };
         c.gchat_client_id = inner["client_id"].as_str().ok_or("Thiếu client_id")?.into();
-        c.gchat_client_secret = inner["client_secret"].as_str().ok_or("Thiếu client_secret — tạo secret mới trong Cloud Console")?.into();
+        c.gchat_client_secret = inner["client_secret"]
+            .as_str()
+            .ok_or("Thiếu client_secret — tạo secret mới trong Cloud Console")?
+            .into();
     }
-    write_private(&core.data_dir.join("config.json"), &serde_json::to_string_pretty(&*c).unwrap()).map_err(|e| e.to_string())
+    write_private(
+        &core.data_dir.join("config.json"),
+        &serde_json::to_string_pretty(&*c).unwrap(),
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[derive(Serialize)]
@@ -417,8 +626,16 @@ struct StorageView {
 #[tauri::command]
 async fn storage(core: C<'_>) -> Res<StorageView> {
     let core = core.inner().clone();
-    let dirs = [core.cache_dir.join("gchat"), core.cache_dir.join("outbox")];
-    let local_bytes = tauri::async_runtime::spawn_blocking(move || dirs.iter().map(|d| storage::dir_size(d)).sum()).await.unwrap_or(0);
+    let dirs = [
+        core.cache_dir.join("gchat"),
+        core.cache_dir.join("zalo"),
+        core.cache_dir.join("outbox"),
+    ];
+    let local_bytes = tauri::async_runtime::spawn_blocking(move || {
+        dirs.iter().map(|d| storage::dir_size(d)).sum()
+    })
+    .await
+    .unwrap_or(0);
     let tg_bytes = core.tg.files_size().await;
     let (cache_mb, keep_days) = {
         let c = core.config.lock().unwrap();
@@ -426,10 +643,21 @@ async fn storage(core: C<'_>) -> Res<StorageView> {
     };
     let dir = core.download_dir();
     let _ = std::fs::create_dir_all(&dir); // so "Mở" has something to open
-    Ok(StorageView { download_dir: dir.to_string_lossy().into(), cache_mb, keep_days, tg_bytes, local_bytes })
+    Ok(StorageView {
+        download_dir: dir.to_string_lossy().into(),
+        cache_mb,
+        keep_days,
+        tg_bytes,
+        local_bytes,
+    })
 }
 #[tauri::command]
-fn storage_set(core: C, download_dir: Option<String>, cache_mb: Option<u64>, keep_days: Option<u32>) -> Res<()> {
+fn storage_set(
+    core: C,
+    download_dir: Option<String>,
+    cache_mb: Option<u64>,
+    keep_days: Option<u32>,
+) -> Res<()> {
     {
         let mut c = core.config.lock().unwrap();
         if let Some(d) = download_dir {
@@ -437,7 +665,11 @@ fn storage_set(core: C, download_dir: Option<String>, cache_mb: Option<u64>, kee
         }
         c.cache_mb = cache_mb.or(c.cache_mb);
         c.keep_days = keep_days.or(c.keep_days);
-        write_private(&core.data_dir.join("config.json"), &serde_json::to_string_pretty(&*c).unwrap()).map_err(|e| e.to_string())?;
+        write_private(
+            &core.data_dir.join("config.json"),
+            &serde_json::to_string_pretty(&*c).unwrap(),
+        )
+        .map_err(|e| e.to_string())?;
     }
     let core = core.inner().clone();
     tauri::async_runtime::spawn(async move { core.clean_storage(false).await });
@@ -452,18 +684,32 @@ struct BrowserView {
 /// The chosen browser plus the known ones found in /Applications.
 #[tauri::command]
 fn browser(core: C) -> BrowserView {
-    let installed = ["Microsoft Edge", "Google Chrome", "Safari", "Firefox", "Brave Browser", "Arc"]
-        .into_iter()
-        .filter(|n| std::path::Path::new(&format!("/Applications/{n}.app")).exists())
-        .map(String::from)
-        .collect();
-    BrowserView { current: core.config.lock().unwrap().browser.clone(), installed }
+    let installed = [
+        "Microsoft Edge",
+        "Google Chrome",
+        "Safari",
+        "Firefox",
+        "Brave Browser",
+        "Arc",
+    ]
+    .into_iter()
+    .filter(|n| std::path::Path::new(&format!("/Applications/{n}.app")).exists())
+    .map(String::from)
+    .collect();
+    BrowserView {
+        current: core.config.lock().unwrap().browser.clone(),
+        installed,
+    }
 }
 #[tauri::command]
 fn browser_set(core: C, name: String) -> Res<()> {
     let mut c = core.config.lock().unwrap();
     c.browser = name;
-    write_private(&core.data_dir.join("config.json"), &serde_json::to_string_pretty(&*c).unwrap()).map_err(|e| e.to_string())
+    write_private(
+        &core.data_dir.join("config.json"),
+        &serde_json::to_string_pretty(&*c).unwrap(),
+    )
+    .map_err(|e| e.to_string())
 }
 #[tauri::command]
 fn open_url(core: C, url: String) {
@@ -480,7 +726,14 @@ fn ai_config(core: C) -> ai::AiView {
 }
 /// `key: None` keeps the stored key; `Some("")` clears it.
 #[tauri::command]
-fn ai_config_set(core: C, format: String, endpoint: String, model: String, guide: String, key: Option<String>) -> Res<()> {
+fn ai_config_set(
+    core: C,
+    format: String,
+    endpoint: String,
+    model: String,
+    guide: String,
+    key: Option<String>,
+) -> Res<()> {
     let mut c = core.config.lock().unwrap();
     let a = &mut c.ai;
     a.format = format;
@@ -490,21 +743,69 @@ fn ai_config_set(core: C, format: String, endpoint: String, model: String, guide
     if let Some(k) = key {
         a.key = k.trim().into();
     }
-    write_private(&core.data_dir.join("config.json"), &serde_json::to_string_pretty(&*c).unwrap()).map_err(|e| e.to_string())
+    write_private(
+        &core.data_dir.join("config.json"),
+        &serde_json::to_string_pretty(&*c).unwrap(),
+    )
+    .map_err(|e| e.to_string())
 }
 #[tauri::command]
-async fn ai_run(core: C<'_>, task: String, texts: Vec<String>, me: String, to: String) -> Res<Value> {
+async fn ai_run(
+    core: C<'_>,
+    task: String,
+    texts: Vec<String>,
+    me: String,
+    to: String,
+) -> Res<Value> {
     let cfg = core.config.lock().unwrap().ai.clone();
     ai::run(&cfg, &task, &texts, &me, &to).await
 }
 
 fn write_private(path: &std::path::Path, data: &str) -> std::io::Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
-    let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(path)?;
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
     std::io::Write::write_all(&mut f, data.as_bytes())
 }
 
 // ── accounts ────────────────────────────────────────────────────────────────
+#[tauri::command]
+async fn zalo_login_start(core: C<'_>, account_id: Option<String>) -> Res<String> {
+    let id = account_id.unwrap_or_else(|| format!("zalo-{}", now_ms()));
+    if !id.starts_with("zalo-") {
+        return Err("ID Zalo không hợp lệ".into());
+    }
+    web::close(&core, &id);
+    core.set_health(&id, "reconnecting", "Đang chờ đăng nhập Zalo", 0);
+    core.emit(Event::Auth {
+        account_id: id.clone(),
+        step: "qr".into(),
+        info: String::new(),
+        error: String::new(),
+    });
+    zalo::Zalo::start(core.inner(), &id, true)?;
+    Ok(id)
+}
+#[tauri::command]
+async fn zalo_contacts(core: C<'_>, account_id: String) -> Res<Value> {
+    core.zalo
+        .request(&account_id, "contacts", serde_json::json!({}))
+        .await
+}
+#[tauri::command]
+async fn zalo_open_chat(core: C<'_>, account_id: String, chat_id: String) -> Res<Chat> {
+    let value = core
+        .zalo
+        .request(&account_id, "chat", serde_json::json!({"chatId":chat_id}))
+        .await?;
+    let chat: Chat = serde_json::from_value(value).map_err(|e| e.to_string())?;
+    core.put_chat(chat.clone());
+    Ok(chat)
+}
 #[tauri::command]
 fn tg_login_start(core: C, account_id: Option<String>) -> Res<String> {
     let core = core.inner();
@@ -557,6 +858,17 @@ async fn gchat_login(core: C<'_>) -> Res<Account> {
 async fn login_cancel(core: C<'_>, account_id: Option<String>) -> Res<()> {
     core.gchat.cancel_login();
     if let Some(id) = account_id {
+        if id.starts_with("zalo-") {
+            if core.zalo.cancel_login(&id) {
+                let saved = core.store().accounts()?.iter().any(|a| a.id == id);
+                if saved {
+                    zalo::Zalo::start(core.inner(), &id, false)?;
+                } else {
+                    let _ = std::fs::remove_dir_all(core.data_dir.join("zalo").join(&id));
+                }
+            }
+            return Ok(());
+        }
         let saved = core.store().accounts()?.iter().any(|a| a.id == id);
         if !saved {
             core.tg.close(&id, false).await;
@@ -567,7 +879,12 @@ async fn login_cancel(core: C<'_>, account_id: Option<String>) -> Res<()> {
 }
 #[tauri::command]
 fn account_update(core: C, id: String, name: Option<String>, color: Option<String>) -> Res<()> {
-    let mut a = core.store().accounts()?.into_iter().find(|a| a.id == id).ok_or("Không thấy account")?;
+    let mut a = core
+        .store()
+        .accounts()?
+        .into_iter()
+        .find(|a| a.id == id)
+        .ok_or("Không thấy account")?;
     if let Some(n) = name {
         a.name = n;
     }
@@ -585,6 +902,12 @@ async fn account_remove(core: C<'_>, id: String) -> Res<()> {
             core.tg.close(&id, true).await;
             let _ = std::fs::remove_dir_all(core.data_dir.join("tg").join(&id));
         }
+        "zalo" => {
+            core.zalo.stop(&id);
+            core.zalo.profiles.remove(&id);
+            web::close(&core, &id);
+            let _ = std::fs::remove_dir_all(core.data_dir.join("zalo").join(&id));
+        }
         "gchat" => core.gchat.stop(&core, &id),
         _ => web::close(&core, &id),
     }
@@ -596,29 +919,142 @@ async fn account_remove(core: C<'_>, id: String) -> Res<()> {
 
 // ── chats & messages ────────────────────────────────────────────────────────
 #[tauri::command]
-async fn messages(core: C<'_>, account_id: String, chat_id: String, before: i64, limit: i32) -> Res<Vec<Msg>> {
+async fn messages(
+    core: C<'_>,
+    account_id: String,
+    chat_id: String,
+    before: i64,
+    limit: i32,
+) -> Res<Vec<Msg>> {
     let core = core.inner().clone();
-    let live = if core.platform(&account_id) == "telegram" {
-        core.tg.history(&core, &account_id, &chat_id, before, limit).await
+    let live = if core.platform(&account_id) == "zalo" {
+        core.zalo
+            .history(&core, &account_id, &chat_id, before, limit)
+            .await
+    } else if core.platform(&account_id) == "telegram" {
+        core.tg
+            .history(&core, &account_id, &chat_id, before, limit)
+            .await
     } else {
-        core.gchat.history(&core, &account_id, &chat_id, before, limit).await
+        core.gchat
+            .history(&core, &account_id, &chat_id, before, limit)
+            .await
     };
     // offline: fall back to whatever the cache has
     live.or_else(|e| {
-        let cached = core.store().msgs(&account_id, &chat_id, before, limit as i64)?;
-        if cached.is_empty() { Err(e) } else { Ok(cached) }
+        let cached = core
+            .store()
+            .msgs(&account_id, &chat_id, before, limit as i64)?;
+        if cached.is_empty() {
+            Err(e)
+        } else {
+            Ok(cached)
+        }
     })
 }
 /// Main timeline pagination has no relationship to any opened thread's cursor.
 #[tauri::command]
-async fn primary_messages(core: C<'_>, account_id: String, chat_id: String, before: i64, limit: i32) -> Res<gchat::PrimaryPage> {
+async fn primary_messages(
+    core: C<'_>,
+    account_id: String,
+    chat_id: String,
+    before: i64,
+    limit: i32,
+) -> Res<gchat::PrimaryPage> {
     let core = core.inner().clone();
-    let mut cached = core.store().primary_msgs(&account_id, &chat_id, before, limit as i64)?;
+    let mut cached = core
+        .store()
+        .primary_msgs(&account_id, &chat_id, before, limit as i64)?;
     if !cached.is_empty() {
         gchat::hydrate_cached_media(&core.cache_dir, &mut cached);
-        return Ok(gchat::PrimaryPage { before: cached[0].sort, messages: cached, has_more: true });
+        return Ok(gchat::PrimaryPage {
+            before: cached[0].sort,
+            messages: cached,
+            has_more: true,
+        });
     }
-    core.gchat.primary_history(&core, &account_id, &chat_id, before).await
+    core.gchat
+        .primary_history(
+            &core,
+            &account_id,
+            &chat_id,
+            before,
+            limit.clamp(1, 100) as usize,
+        )
+        .await
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadListPage {
+    threads: Vec<store::ThreadSummary>,
+    has_more: bool,
+}
+
+/// A threaded space's thread list, its own flow: cached threads by latest reply, never
+/// derived from the timeline's page (whose newest 100 rows can all be one busy thread).
+/// When the cache runs short and `remote` allows, three older pages are walked first.
+#[tauri::command]
+async fn thread_list(
+    core: C<'_>,
+    account_id: String,
+    chat_id: String,
+    before: i64,
+    limit: i64,
+    remote: bool,
+) -> Res<ThreadListPage> {
+    let core = core.inner().clone();
+    let read = |core: Arc<Core>, account_id: String, chat_id: String| async move {
+        tauri::async_runtime::spawn_blocking(move || {
+            core.store()
+                .thread_summaries(&account_id, &chat_id, before, limit)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    };
+    let started = std::time::Instant::now();
+    let mut threads = read(core.clone(), account_id.clone(), chat_id.clone()).await?;
+    let full = threads.len() as i64 >= limit;
+    let mut has_more = full || core.platform(&account_id) == "gchat";
+    if !full && remote && core.platform(&account_id) == "gchat" {
+        let oldest = core
+            .store()
+            .oldest_sort(&account_id, &chat_id)?
+            .unwrap_or(0);
+        has_more = match core
+            .gchat
+            .scan_older(&core, &account_id, &chat_id, oldest, 3)
+            .await
+        {
+            Ok(more) => more,
+            Err(e) => {
+                eprintln!("[threads] older scan failed chat={chat_id}: {e}");
+                false
+            }
+        };
+        threads = read(core.clone(), account_id.clone(), chat_id.clone()).await?;
+        has_more |= threads.len() as i64 >= limit;
+    }
+    eprintln!(
+        "[threads] list chat={chat_id} threads={} remote={remote} elapsedMs={}",
+        threads.len(),
+        started.elapsed().as_millis()
+    );
+    Ok(ThreadListPage { threads, has_more })
+}
+
+/// Reply total of one thread, asked of Google only for threads on screen.
+#[tauri::command]
+async fn thread_count(
+    core: C<'_>,
+    account_id: String,
+    chat_id: String,
+    thread_id: String,
+) -> Res<gchat::ThreadCount> {
+    let core = core.inner().clone();
+    core.gchat
+        .thread_count(&core, &account_id, &chat_id, &thread_id)
+        .await
 }
 
 /// macOS's own emoji picker (full set, search, recents); it types into the focused field.
@@ -641,11 +1077,21 @@ impl Core {
     pub fn log_line(&self, file: &str, msg: &str) {
         eprintln!("[{file}] {msg}");
         let path = self.cache_dir.join(file);
-        if std::fs::metadata(&path).map(|m| m.len() > 1 << 20).unwrap_or(false) {
+        if std::fs::metadata(&path)
+            .map(|m| m.len() > 1 << 20)
+            .unwrap_or(false)
+        {
             let _ = std::fs::remove_file(&path);
         }
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
-            let _ = std::io::Write::write_all(&mut f, format!("{} {msg}\n", chrono::Local::now().format("%m-%d %H:%M:%S")).as_bytes());
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            let _ = std::io::Write::write_all(
+                &mut f,
+                format!("{} {msg}\n", chrono::Local::now().format("%m-%d %H:%M:%S")).as_bytes(),
+            );
         }
     }
 }
@@ -664,18 +1110,32 @@ async fn stage_files(app: tauri::AppHandle, paths: Vec<String>) -> Result<Vec<St
     // a worker before metadata/asset access so media is never silently discarded.
     #[cfg(target_os = "android")]
     let paths = if paths.iter().any(|path| path.starts_with("content://")) {
-        app.state::<files_android::AndroidFiles>().import(paths).await?
-    } else { paths };
-    tauri::async_runtime::spawn_blocking(move || paths
-        .into_iter()
-        .filter_map(|path| {
-            let md = std::fs::metadata(&path).ok().filter(|m| m.is_file())?;
-            let _ = app.asset_protocol_scope().allow_file(&path);
-            let name = std::path::Path::new(&path).file_name()?.to_string_lossy().into();
-            Some(Staged { name, size: md.len(), path })
-        })
-        .collect())
-        .await.map_err(|error| error.to_string())
+        app.state::<files_android::AndroidFiles>()
+            .import(paths)
+            .await?
+    } else {
+        paths
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        paths
+            .into_iter()
+            .filter_map(|path| {
+                let md = std::fs::metadata(&path).ok().filter(|m| m.is_file())?;
+                let _ = app.asset_protocol_scope().allow_file(&path);
+                let name = std::path::Path::new(&path)
+                    .file_name()?
+                    .to_string_lossy()
+                    .into();
+                Some(Staged {
+                    name,
+                    size: md.len(),
+                    path,
+                })
+            })
+            .collect()
+    })
+    .await
+    .map_err(|error| error.to_string())
 }
 /// Files copied in Finder: the webview's paste event only sees their names, the paths
 /// live on the native pasteboard (as file reference URLs, resolved here).
@@ -685,7 +1145,9 @@ fn clipboard_files() -> Vec<String> {
     {
         use objc2_app_kit::{NSPasteboard, NSPasteboardTypeFileURL};
         use objc2_foundation::NSURL;
-        let Some(items) = NSPasteboard::generalPasteboard().pasteboardItems() else { return vec![] };
+        let Some(items) = NSPasteboard::generalPasteboard().pasteboardItems() else {
+            return vec![];
+        };
         items
             .iter()
             .filter_map(|i| {
@@ -738,23 +1200,44 @@ fn inbox(core: C<'_>, limit: i64) -> Res<Vec<Msg>> {
     Ok(v)
 }
 #[tauri::command]
-async fn cached_messages(core: C<'_>, account_id: String, chat_id: String, limit: i64, primary: Option<bool>) -> Res<(Vec<Msg>, Vec<Msg>)> {
+async fn cached_messages(
+    core: C<'_>,
+    account_id: String,
+    chat_id: String,
+    limit: i64,
+    primary: Option<bool>,
+) -> Res<(Vec<Msg>, Vec<Msg>)> {
     let core = core.inner().clone();
     tauri::async_runtime::spawn_blocking(move || -> Res<(Vec<Msg>, Vec<Msg>)> {
         let started = std::time::Instant::now();
-        let (mut page, mut roots) = core.store().cached_msgs(&account_id, &chat_id, limit, primary.unwrap_or(false))?;
+        let (mut page, mut roots) =
+            core.store()
+                .cached_msgs(&account_id, &chat_id, limit, primary.unwrap_or(false))?;
         gchat::hydrate_cached_media(&core.cache_dir, &mut page);
+        zalo::hydrate(&core.cache_dir, &mut page);
+        core.zalo.profiles.messages(&core.cache_dir, &mut page);
         gchat::hydrate_cached_media(&core.cache_dir, &mut roots);
-        eprintln!("[history] cached chat={chat_id} messages={} roots={} elapsedMs={}", page.len(), roots.len(), started.elapsed().as_millis());
+        eprintln!(
+            "[history] cached chat={chat_id} messages={} roots={} elapsedMs={}",
+            page.len(),
+            roots.len(),
+            started.elapsed().as_millis()
+        );
         Ok((stale_refs(page), stale_refs(roots)))
-    }).await.map_err(|e| e.to_string())?
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// TDLib file ids only live for one session: a cached message rendered with last run's ids
 /// downloads whatever file carries that id now (someone's avatar in a photo's slot). Keep the
 /// inline blur and local paths; the fresh ids arrive with the reload that follows.
 fn stale_refs(mut msgs: Vec<Msg>) -> Vec<Msg> {
-    let drop = |s: &mut String| if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) { s.clear() };
+    let drop = |s: &mut String| {
+        if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) {
+            s.clear()
+        }
+    };
     for m in &mut msgs {
         drop(&mut m.sender_photo);
         if let Some(media) = &mut m.media {
@@ -765,24 +1248,59 @@ fn stale_refs(mut msgs: Vec<Msg>) -> Vec<Msg> {
     msgs
 }
 #[tauri::command]
-async fn thread(core: C<'_>, account_id: String, chat_id: String, thread_id: String, page_token: Option<String>, limit: Option<i32>) -> Res<gchat::ThreadPage> {
+async fn thread(
+    core: C<'_>,
+    account_id: String,
+    chat_id: String,
+    thread_id: String,
+    page_token: Option<String>,
+    limit: Option<i32>,
+) -> Res<gchat::ThreadPage> {
     let core = core.inner().clone();
     let token = page_token.unwrap_or_default();
     let limit = limit.unwrap_or(20).clamp(1, 20);
-    core.gchat.thread(&core, &account_id, &chat_id, &thread_id, &token, limit).await.or_else(|e| {
-        // A continuation token belongs to the live query; never replay the cached tail as an older page.
-        if !token.is_empty() { return Err(e); }
-        let cached = core.store().thread_page(&account_id, &chat_id, &thread_id, limit as i64, false)?;
-        if cached.is_empty() { Err(e) } else { Ok(gchat::ThreadPage { messages: cached, next_page_token: String::new() }) }
-    })
+    core.gchat
+        .thread(&core, &account_id, &chat_id, &thread_id, &token, limit)
+        .await
+        .or_else(|e| {
+            // A continuation token belongs to the live query; never replay the cached tail as an older page.
+            if !token.is_empty() {
+                return Err(e);
+            }
+            let cached =
+                core.store()
+                    .thread_page(&account_id, &chat_id, &thread_id, limit as i64, false)?;
+            if cached.is_empty() {
+                Err(e)
+            } else {
+                Ok(gchat::ThreadPage {
+                    messages: cached,
+                    next_page_token: String::new(),
+                })
+            }
+        })
 }
 #[tauri::command]
-async fn thread_root(core: C<'_>, account_id: String, chat_id: String, thread_id: String) -> Res<Vec<Msg>> {
+async fn thread_root(
+    core: C<'_>,
+    account_id: String,
+    chat_id: String,
+    thread_id: String,
+) -> Res<Vec<Msg>> {
     let core = core.inner().clone();
-    core.gchat.thread_root(&core, &account_id, &chat_id, &thread_id).await.or_else(|e| {
-        let cached = core.store().thread_page(&account_id, &chat_id, &thread_id, 1, true)?;
-        if cached.is_empty() { Err(e) } else { Ok(cached) }
-    })
+    core.gchat
+        .thread_root(&core, &account_id, &chat_id, &thread_id)
+        .await
+        .or_else(|e| {
+            let cached = core
+                .store()
+                .thread_page(&account_id, &chat_id, &thread_id, 1, true)?;
+            if cached.is_empty() {
+                Err(e)
+            } else {
+                Ok(cached)
+            }
+        })
 }
 #[tauri::command]
 async fn pinned(core: C<'_>, account_id: String, chat_id: String) -> Res<Vec<Msg>> {
@@ -797,6 +1315,16 @@ async fn members(core: C<'_>, account_id: String, chat_id: String) -> Res<Vec<Me
     let core = core.inner().clone();
     if core.platform(&account_id) == "telegram" {
         core.tg.members(&account_id, &chat_id).await
+    } else if core.platform(&account_id) == "zalo" {
+        let v = core
+            .zalo
+            .request(
+                &account_id,
+                "members",
+                serde_json::json!({"chatId":chat_id}),
+            )
+            .await?;
+        serde_json::from_value(v).map_err(|e| e.to_string())
     } else {
         core.gchat.members(&core, &account_id, &chat_id).await
     }
@@ -819,23 +1347,66 @@ async fn send(
 ) -> Res<Msg> {
     let core = core.inner().clone();
     let plain = plain.unwrap_or(false);
-    if core.platform(&account_id) == "telegram" {
-        core.tg.send(&core, &account_id, &chat_id, text, reply_to, thread_id, file, voice, plain, as_file.unwrap_or(false)).await
+    if core.platform(&account_id) == "zalo" {
+        if voice.is_some() {
+            return Err("Gửi ghi âm Zalo chưa hỗ trợ".into());
+        }
+        core.zalo
+            .send(&core, &account_id, &chat_id, text, reply_to, file)
+            .await
+    } else if core.platform(&account_id) == "telegram" {
+        core.tg
+            .send(
+                &core,
+                &account_id,
+                &chat_id,
+                text,
+                reply_to,
+                thread_id,
+                file,
+                voice,
+                plain,
+                as_file.unwrap_or(false),
+            )
+            .await
     } else {
         // Google Chat formats on its side: break the markers with zero-width spaces
         let text = if plain { tg::soft_markup(&text) } else { text };
-        core.gchat.send(&core, &account_id, &chat_id, text, reply_to, thread_id, file).await
+        core.gchat
+            .send(
+                &core,
+                &account_id,
+                &chat_id,
+                text,
+                reply_to,
+                thread_id,
+                file,
+            )
+            .await
     }
 }
 #[tauri::command]
-async fn edit(core: C<'_>, account_id: String, chat_id: String, msg_id: String, text: String, plain: Option<bool>) -> Res<()> {
+async fn edit(
+    core: C<'_>,
+    account_id: String,
+    chat_id: String,
+    msg_id: String,
+    text: String,
+    plain: Option<bool>,
+) -> Res<()> {
     let core = core.inner().clone();
     let plain = plain.unwrap_or(false);
     if core.platform(&account_id) == "telegram" {
-        core.tg.edit(&account_id, &chat_id, &msg_id, text, plain).await
+        core.tg
+            .edit(&account_id, &chat_id, &msg_id, text, plain)
+            .await
+    } else if core.platform(&account_id) == "zalo" {
+        Err("Zalo chưa hỗ trợ sửa tin".into())
     } else {
         let text = if plain { tg::soft_markup(&text) } else { text };
-        core.gchat.edit(&core, &account_id, &chat_id, &msg_id, text).await
+        core.gchat
+            .edit(&core, &account_id, &chat_id, &msg_id, text)
+            .await
     }
 }
 #[tauri::command]
@@ -843,38 +1414,99 @@ async fn delete_msg(core: C<'_>, account_id: String, chat_id: String, msg_id: St
     let core = core.inner().clone();
     if core.platform(&account_id) == "telegram" {
         core.tg.delete(&account_id, &chat_id, &msg_id).await
+    } else if core.platform(&account_id) == "zalo" {
+        let source = zalo::source(&core, &account_id, &chat_id, &msg_id)?;
+        core.zalo
+            .request(
+                &account_id,
+                "recall",
+                serde_json::json!({"chatId":chat_id,"source":source}),
+            )
+            .await?;
+        Ok(())
     } else {
-        core.gchat.delete(&core, &account_id, &chat_id, &msg_id).await
+        core.gchat
+            .delete(&core, &account_id, &chat_id, &msg_id)
+            .await
     }
 }
 /// Who reacted / read one message, for reaction tooltips and the "seen by" list.
 #[tauri::command]
-async fn msg_people(core: C<'_>, account_id: String, chat_id: String, msg_id: String) -> Res<model::MsgPeople> {
+async fn msg_people(
+    core: C<'_>,
+    account_id: String,
+    chat_id: String,
+    msg_id: String,
+) -> Res<model::MsgPeople> {
     let core = core.inner().clone();
     if core.platform(&account_id) == "telegram" {
         core.tg.people(&account_id, &chat_id, &msg_id).await
+    } else if core.platform(&account_id) == "zalo" {
+        Ok(model::MsgPeople::default())
     } else {
-        core.gchat.people(&core, &account_id, &chat_id, &msg_id).await
+        core.gchat
+            .people(&core, &account_id, &chat_id, &msg_id)
+            .await
     }
 }
 /// Telegram: the emoji this message accepts. None = any emoji (Google Chat).
 #[tauri::command]
-async fn reactions(core: C<'_>, account_id: String, chat_id: String, msg_id: String) -> Res<Option<Vec<String>>> {
+async fn reactions(
+    core: C<'_>,
+    account_id: String,
+    chat_id: String,
+    msg_id: String,
+) -> Res<Option<Vec<String>>> {
     if core.platform(&account_id) == "telegram" {
-        core.tg.reactions(&account_id, &chat_id, &msg_id).await.map(Some)
+        core.tg
+            .reactions(&account_id, &chat_id, &msg_id)
+            .await
+            .map(Some)
+    } else if core.platform(&account_id) == "zalo" {
+        Ok(Some(
+            ["❤️", "👍", "😂", "😮", "😢", "😡"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+        ))
     } else {
         Ok(None)
     }
 }
 #[tauri::command]
-async fn react(core: C<'_>, account_id: String, chat_id: String, msg_id: String, emoji: String, add: bool) -> Res<()> {
+async fn react(
+    core: C<'_>,
+    account_id: String,
+    chat_id: String,
+    msg_id: String,
+    emoji: String,
+    add: bool,
+) -> Res<()> {
     let core = core.inner().clone();
     if core.platform(&account_id) == "telegram" {
-        core.tg.react(&account_id, &chat_id, &msg_id, emoji, add).await
+        core.tg
+            .react(&account_id, &chat_id, &msg_id, emoji, add)
+            .await
+    } else if core.platform(&account_id) == "zalo" {
+        let source = zalo::source(&core, &account_id, &chat_id, &msg_id)?;
+        core.zalo
+            .request(
+                &account_id,
+                "react",
+                serde_json::json!({"chatId":chat_id,"source":source,"emoji":emoji,"add":add}),
+            )
+            .await?;
+        Ok(())
     } else {
-        core.gchat.react(&core, &account_id, &msg_id, &emoji, add).await?;
+        core.gchat
+            .react(&core, &account_id, &msg_id, &emoji, add)
+            .await?;
         // gchat has no reaction push; re-read the message so counts update right away
-        if let Ok(v) = core.gchat.history(&core, &account_id, &chat_id, 0, 20).await {
+        if let Ok(v) = core
+            .gchat
+            .history(&core, &account_id, &chat_id, 0, 20)
+            .await
+        {
             for mut m in v.into_iter().filter(|m| m.id == msg_id) {
                 // gchat summaries don't say whose reaction it is: don't let mine look like someone else's
                 if let Some(r) = m.reactions.iter_mut().find(|r| r.emoji == emoji) {
@@ -887,14 +1519,44 @@ async fn react(core: C<'_>, account_id: String, chat_id: String, msg_id: String,
     }
 }
 #[tauri::command]
-async fn pin(core: C<'_>, account_id: String, chat_id: String, msg_id: String, on: bool) -> Res<()> {
+async fn pin(
+    core: C<'_>,
+    account_id: String,
+    chat_id: String,
+    msg_id: String,
+    on: bool,
+) -> Res<()> {
     core.tg.pin(&account_id, &chat_id, &msg_id, on).await
 }
 #[tauri::command]
-async fn mark_read(core: C<'_>, account_id: String, chat_id: String, msg_ids: Vec<String>) -> Res<()> {
+async fn mark_read(
+    core: C<'_>,
+    account_id: String,
+    chat_id: String,
+    msg_ids: Vec<String>,
+) -> Res<()> {
     let core = core.inner().clone();
     if core.platform(&account_id) == "telegram" {
         core.tg.mark_read(&account_id, &chat_id, msg_ids).await
+    } else if core.platform(&account_id) == "zalo" {
+        let sources: Vec<Value> = msg_ids
+            .iter()
+            .filter_map(|m| zalo::source(&core, &account_id, &chat_id, m).ok())
+            .collect();
+        core.zalo
+            .request(
+                &account_id,
+                "read",
+                serde_json::json!({"chatId":chat_id,"sources":sources}),
+            )
+            .await?;
+        let chat = core.store().chat(&account_id, &chat_id)?;
+        if let Some(mut chat) = chat {
+            chat.unread = 0;
+            chat.mention = false;
+            core.put_chat(chat);
+        }
+        Ok(())
     } else {
         core.gchat.mark_read(&core, &account_id, &chat_id).await
     }
@@ -902,7 +1564,7 @@ async fn mark_read(core: C<'_>, account_id: String, chat_id: String, msg_ids: Ve
 #[tauri::command]
 async fn set_open(core: C<'_>, account_id: String, chat_id: String, open: bool) -> Res<()> {
     core.notifier.set_open(&account_id, &chat_id, open);
-    if open && matches!(core.platform(&account_id), "telegram" | "gchat") {
+    if open && matches!(core.platform(&account_id), "telegram" | "gchat" | "zalo") {
         web::hide_all(&core);
     }
     if core.platform(&account_id) == "telegram" {
@@ -919,23 +1581,54 @@ async fn set_muted(core: C<'_>, account_id: String, chat_id: String, muted: bool
     if core.platform(&account_id) == "telegram" {
         core.tg.set_muted(&account_id, &chat_id, muted).await
     } else {
-        let mut chat = core.store().chat(&account_id, &chat_id)?.ok_or("Không thấy chat")?;
-        chat.muted = muted;
-        core.put_chat(chat);
+        let chat = core.store().set_chat_muted(&account_id, &chat_id, muted)?;
+        core.notifier.track(&core.app, &chat, false);
+        core.emit(Event::Chat { chat });
         Ok(())
     }
 }
 #[tauri::command]
 fn web_add(core: C, platform: String) -> Res<Account> {
+    if platform == "zalo" {
+        return Err("Zalo dùng đăng nhập QR trong ChatMin".into());
+    }
     let account = web::add(&core, &platform)?;
     let (c, a) = (core.inner().clone(), account.clone());
-    core.app.run_on_main_thread(move || web::start_background(&c, &a)).map_err(|e| e.to_string())?;
+    core.app
+        .run_on_main_thread(move || web::start_background(&c, &a))
+        .map_err(|e| e.to_string())?;
     Ok(account)
 }
 #[tauri::command]
-fn web_show(core: C, account_id: String, chat_id: String, x: f64, y: f64, w: f64, h: f64, navigate: Option<bool>) -> Res<()> {
-    let a = core.store().accounts()?.into_iter().find(|a| a.id == account_id).ok_or("Không thấy account")?;
-    web::show(core.inner(), &a, &chat_id, x, y, w, h, navigate.unwrap_or(false))
+fn web_show(
+    core: C,
+    account_id: String,
+    chat_id: String,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    navigate: Option<bool>,
+) -> Res<()> {
+    let a = core
+        .store()
+        .accounts()?
+        .into_iter()
+        .find(|a| a.id == account_id)
+        .ok_or("Không thấy account")?;
+    if a.platform == "zalo" {
+        return Err("Zalo không dùng WebView".into());
+    }
+    web::show(
+        core.inner(),
+        &a,
+        &chat_id,
+        x,
+        y,
+        w,
+        h,
+        navigate.unwrap_or(false),
+    )
 }
 #[tauri::command]
 fn web_hide(core: C, account_id: String) {
@@ -950,20 +1643,54 @@ fn web_devtools(core: C, account_id: String) {
     web::devtools(&core, &account_id);
 }
 #[tauri::command]
-async fn stickers(core: C<'_>, account_id: String) -> Res<Vec<tg::StickerPack>> {
-    core.tg.stickers(&account_id).await
+async fn stickers(core: C<'_>, account_id: String) -> Res<Value> {
+    if core.platform(&account_id) == "zalo" {
+        core.zalo
+            .request(&account_id, "stickers", serde_json::json!({}))
+            .await
+    } else {
+        serde_json::to_value(core.tg.stickers(&account_id).await?).map_err(|e| e.to_string())
+    }
 }
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-async fn send_sticker(core: C<'_>, account_id: String, chat_id: String, thread_id: Option<String>, file_id: i32, width: i32, height: i32, emoji: String) -> Res<Msg> {
+async fn send_sticker(
+    core: C<'_>,
+    account_id: String,
+    chat_id: String,
+    thread_id: Option<String>,
+    file_id: i32,
+    width: i32,
+    height: i32,
+    emoji: String,
+) -> Res<Msg> {
     let core = core.inner().clone();
-    core.tg.send_sticker(&core, &account_id, &chat_id, thread_id, file_id, width, height, emoji).await
+    if core.platform(&account_id) == "zalo" {
+        return core
+            .zalo
+            .send_sticker(&core, &account_id, &chat_id, file_id)
+            .await;
+    }
+    core.tg
+        .send_sticker(
+            &core,
+            &account_id,
+            &chat_id,
+            thread_id,
+            file_id,
+            width,
+            height,
+            emoji,
+        )
+        .await
 }
 /// A recording from the webview → a file in the cache that `send` can upload.
 #[tauri::command]
 fn save_temp(core: C, name: String, data: String) -> Res<String> {
     use base64::Engine;
-    let bytes = base64::engine::general_purpose::STANDARD.decode(data).map_err(|e| e.to_string())?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .map_err(|e| e.to_string())?;
     let dir = core.cache_dir.join("outbox");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = unique_path(&dir, &save_name(&name, std::path::Path::new("")));
@@ -975,16 +1702,34 @@ async fn topics(core: C<'_>, account_id: String, chat_id: String) -> Res<Vec<Top
     core.tg.topics(&account_id, &chat_id).await
 }
 #[tauri::command]
-async fn topic_history(core: C<'_>, account_id: String, chat_id: String, topic: String, before: i64, limit: i32) -> Res<Vec<Msg>> {
+async fn topic_history(
+    core: C<'_>,
+    account_id: String,
+    chat_id: String,
+    topic: String,
+    before: i64,
+    limit: i32,
+) -> Res<Vec<Msg>> {
     let core = core.inner().clone();
-    core.tg.topic_history(&core, &account_id, &chat_id, &topic, before, limit).await
+    core.tg
+        .topic_history(&core, &account_id, &chat_id, &topic, before, limit)
+        .await
 }
 #[tauri::command]
-async fn forward(core: C<'_>, account_id: String, chat_id: String, from_chat_id: String, msg_id: String, topic: Option<String>) -> Res<()> {
+async fn forward(
+    core: C<'_>,
+    account_id: String,
+    chat_id: String,
+    from_chat_id: String,
+    msg_id: String,
+    topic: Option<String>,
+) -> Res<()> {
     if core.platform(&account_id) != "telegram" {
         return Err("Chỉ Telegram có chuyển tiếp gốc".into());
     }
-    core.tg.forward(&account_id, &chat_id, &from_chat_id, &msg_id, topic).await
+    core.tg
+        .forward(&account_id, &chat_id, &from_chat_id, &msg_id, topic)
+        .await
 }
 #[tauri::command]
 async fn delete_chat(core: C<'_>, account_id: String, chat_id: String, revoke: bool) -> Res<()> {
@@ -992,7 +1737,9 @@ async fn delete_chat(core: C<'_>, account_id: String, chat_id: String, revoke: b
     if core.platform(&account_id) != "telegram" {
         return Err("Google Chat không cho xoá cuộc trò chuyện qua API".into());
     }
-    core.tg.delete_chat(&core, &account_id, &chat_id, revoke).await
+    core.tg
+        .delete_chat(&core, &account_id, &chat_id, revoke)
+        .await
 }
 /// Copies a downloaded file out of ChatMin's folders: to `dest` (from a save dialog) or,
 /// when empty, into ~/Downloads without overwriting anything. Returns where it landed.
@@ -1002,8 +1749,13 @@ async fn delete_chat(core: C<'_>, account_id: String, chat_id: String, revoke: b
 #[tauri::command]
 fn open_local(core: C, path: String, reveal: bool) -> Res<()> {
     let real = std::fs::canonicalize(&path).map_err(|e| e.to_string())?;
-    let inside = |d: &PathBuf| std::fs::canonicalize(d).map(|d| real.starts_with(d)).unwrap_or(false);
-    let known = inside(&core.data_dir) || inside(&core.cache_dir) || core.store().knows_local_path(&path);
+    let inside = |d: &PathBuf| {
+        std::fs::canonicalize(d)
+            .map(|d| real.starts_with(d))
+            .unwrap_or(false)
+    };
+    let known =
+        inside(&core.data_dir) || inside(&core.cache_dir) || core.store().knows_local_path(&path);
     if !known {
         return Err("File không thuộc ChatMin".into());
     }
@@ -1017,7 +1769,11 @@ fn open_local(core: C, path: String, reveal: bool) -> Res<()> {
 fn save_file(core: C, src: String, name: String, dest: Option<String>) -> Res<String> {
     let src = std::fs::canonicalize(&src).map_err(|e| e.to_string())?;
     // only files the app itself downloaded: the webview must not copy arbitrary paths
-    let inside = |d: &PathBuf| std::fs::canonicalize(d).map(|d| src.starts_with(d)).unwrap_or(false);
+    let inside = |d: &PathBuf| {
+        std::fs::canonicalize(d)
+            .map(|d| src.starts_with(d))
+            .unwrap_or(false)
+    };
     if !inside(&core.data_dir) && !inside(&core.cache_dir) {
         return Err("File nằm ngoài thư mục của ChatMin".into());
     }
@@ -1036,8 +1792,15 @@ fn save_file(core: C, src: String, name: String, dest: Option<String>) -> Res<St
 /// Display name → a safe file name, borrowing the source's extension when it has none
 /// ("GIF", "Video tròn").
 fn save_name(name: &str, src: &std::path::Path) -> String {
-    let base = std::path::Path::new(name).file_name().and_then(|n| n.to_str()).unwrap_or("file").replace(['/', ':'], "-");
-    match (std::path::Path::new(&base).extension(), src.extension().and_then(|e| e.to_str())) {
+    let base = std::path::Path::new(name)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file")
+        .replace(['/', ':'], "-");
+    match (
+        std::path::Path::new(&base).extension(),
+        src.extension().and_then(|e| e.to_str()),
+    ) {
         (None, Some(ext)) => format!("{base}.{ext}"),
         _ => base,
     }
@@ -1046,7 +1809,11 @@ fn save_name(name: &str, src: &std::path::Path) -> String {
 fn unique_path(dir: &std::path::Path, name: &str) -> PathBuf {
     let p = std::path::Path::new(name);
     let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
-    let ext = p.extension().and_then(|e| e.to_str()).map(|e| format!(".{e}")).unwrap_or_default();
+    let ext = p
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| format!(".{e}"))
+        .unwrap_or_default();
     std::iter::once(dir.join(name))
         .chain((1..).map(|i| dir.join(format!("{stem} ({i}){ext}"))))
         .find(|c| !c.exists())
@@ -1054,22 +1821,54 @@ fn unique_path(dir: &std::path::Path, name: &str) -> PathBuf {
 }
 
 #[tauri::command]
-async fn download(app: tauri::AppHandle, core: C<'_>, account_id: String, file_ref: String, name: String) -> Res<String> {
+async fn download(
+    app: tauri::AppHandle,
+    core: C<'_>,
+    account_id: String,
+    file_ref: String,
+    name: String,
+    refresh: Option<bool>,
+) -> Res<String> {
     let core = core.inner().clone();
     let path = if core.platform(&account_id) == "telegram" {
         core.tg.download(&account_id, &file_ref).await?
+    } else if core.platform(&account_id) == "zalo" {
+        zalo::download(
+            &core,
+            &account_id,
+            &file_ref,
+            &name,
+            refresh.unwrap_or(false),
+        )
+        .await?
     } else {
-        core.gchat.download(&core, &account_id, &file_ref, &name).await?
+        core.gchat
+            .download(&core, &account_id, &file_ref, &name)
+            .await?
     };
     // a file I sent stays at its original path (Desktop, Downloads…), outside the asset scope
     let _ = app.asset_protocol_scope().allow_file(&path);
     Ok(path)
 }
 #[tauri::command]
-fn search(core: C, query: String, account_id: Option<String>, chat_id: Option<String>, limit: i64) -> Res<Vec<Msg>> {
-    let scope = account_id.as_deref().map(|a| (a, chat_id.as_deref().unwrap_or("")));
-    core.store().search(&query, scope, limit)
+async fn search(
+    core: C<'_>,
+    query: String,
+    account_id: Option<String>,
+    chat_id: Option<String>,
+    limit: i64,
+) -> Res<Vec<Msg>> {
+    let core = core.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let scope = account_id
+            .as_deref()
+            .map(|a| (a, chat_id.as_deref().unwrap_or("")));
+        core.store().search(&query, scope, limit.clamp(1, 200))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
+
 #[tauri::command]
 fn notify_test(app: tauri::AppHandle) {
     notify::test(&app);
@@ -1081,7 +1880,11 @@ fn notify_island(core: C<'_>, enabled: Option<bool>) -> Res<bool> {
     if let Some(enabled) = enabled {
         let mut next = config.clone();
         next.notification_island = Some(enabled);
-        write_private(&core.data_dir.join("config.json"), &serde_json::to_string_pretty(&next).unwrap()).map_err(|e| e.to_string())?;
+        write_private(
+            &core.data_dir.join("config.json"),
+            &serde_json::to_string_pretty(&next).unwrap(),
+        )
+        .map_err(|e| e.to_string())?;
         *config = next;
         core.notifier.set_island(&core.app, enabled);
     }
@@ -1090,15 +1893,25 @@ fn notify_island(core: C<'_>, enabled: Option<bool>) -> Res<bool> {
 
 #[tauri::command]
 fn notify_appearance(core: C<'_>, appearance: island_style::Appearance) -> Res<()> {
-    if !appearance.valid() { return Err("Màu thông báo không hợp lệ".into()); }
+    if !appearance.valid() {
+        return Err("Màu thông báo không hợp lệ".into());
+    }
     let mut config = core.config.lock().unwrap();
-    if config.notification_appearance == Some(appearance) { return Ok(()); }
+    if config.notification_appearance == Some(appearance) {
+        return Ok(());
+    }
     let mut next = config.clone();
     next.notification_appearance = Some(appearance);
-    write_private(&core.data_dir.join("config.json"), &serde_json::to_string_pretty(&next).unwrap()).map_err(|e| e.to_string())?;
+    write_private(
+        &core.data_dir.join("config.json"),
+        &serde_json::to_string_pretty(&next).unwrap(),
+    )
+    .map_err(|e| e.to_string())?;
     *config = next;
     #[cfg(target_os = "macos")]
-    core.app.run_on_main_thread(move || island::configure(appearance)).map_err(|e| e.to_string())?;
+    core.app
+        .run_on_main_thread(move || island::configure(appearance))
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -1121,17 +1934,42 @@ fn notify_prefs(core: C<'_>, prefs: HashMap<String, notify::Prefs>) {
 /// `tgstream://localhost/<account>/<file id>?<mime>`: Telegram videos play while they
 /// download. WebKit asks for byte ranges; each answer is one chunk (206), the player
 /// comes back for the next, and seeking just asks from another offset.
-async fn tg_stream(core: &Core, req: &tauri::http::Request<Vec<u8>>) -> Result<tauri::http::Response<Vec<u8>>, String> {
-    use tauri::http::header::{ACCEPT_RANGES, ACCESS_CONTROL_ALLOW_ORIGIN, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, RANGE};
+async fn tg_stream(
+    core: &Core,
+    req: &tauri::http::Request<Vec<u8>>,
+) -> Result<tauri::http::Response<Vec<u8>>, String> {
+    use tauri::http::header::{
+        ACCEPT_RANGES, ACCESS_CONTROL_ALLOW_ORIGIN, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE,
+        RANGE,
+    };
     const CHUNK: i64 = 2 << 20;
-    let (account, file) = req.uri().path().trim_start_matches('/').rsplit_once('/').ok_or("bad stream url")?;
+    let (account, file) = req
+        .uri()
+        .path()
+        .trim_start_matches('/')
+        .rsplit_once('/')
+        .ok_or("bad stream url")?;
     let file_id: i32 = file.parse().map_err(|_| "bad file id")?;
-    let mime = req.uri().query().filter(|q| !q.is_empty()).unwrap_or("video/mp4");
+    let mime = req
+        .uri()
+        .query()
+        .filter(|q| !q.is_empty())
+        .unwrap_or("video/mp4");
     // "bytes=START-" or "bytes=START-END" (END inclusive)
-    let range = req.headers().get(RANGE).and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("bytes=")).unwrap_or("0-");
+    let range = req
+        .headers()
+        .get(RANGE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("bytes="))
+        .unwrap_or("0-");
     let (a, b) = range.split_once('-').unwrap_or((range, ""));
     let start: i64 = a.trim().parse().unwrap_or(0);
-    let want = b.trim().parse::<i64>().map(|end| end - start + 1).unwrap_or(CHUNK).clamp(1, CHUNK);
+    let want = b
+        .trim()
+        .parse::<i64>()
+        .map(|end| end - start + 1)
+        .unwrap_or(CHUNK)
+        .clamp(1, CHUNK);
     let (bytes, total) = core.tg.stream_part(account, file_id, start, want).await?;
     let end = start + bytes.len() as i64 - 1;
     tauri::http::Response::builder()
@@ -1149,26 +1987,45 @@ async fn tg_stream(core: &Core, req: &tauri::http::Request<Vec<u8>>) -> Result<t
 pub fn run() {
     let builder = tauri::Builder::default()
         .register_asynchronous_uri_scheme_protocol("tgstream", |ctx, req, responder| {
-            let core = ctx.app_handle().try_state::<Arc<Core>>().map(|c| c.inner().clone());
+            let core = ctx
+                .app_handle()
+                .try_state::<Arc<Core>>()
+                .map(|c| c.inner().clone());
             tauri::async_runtime::spawn(async move {
                 let res = match core {
-                    Some(core) => tg_stream(&core, &req).await.inspect_err(|e| eprintln!("[tgstream] {} {:?}: {e}", req.uri(), req.headers().get("range"))),
+                    Some(core) => tg_stream(&core, &req).await.inspect_err(|e| {
+                        eprintln!(
+                            "[tgstream] {} {:?}: {e}",
+                            req.uri(),
+                            req.headers().get("range")
+                        )
+                    }),
                     None => Err("starting".into()),
                 };
-                responder.respond(res.unwrap_or_else(|e| tauri::http::Response::builder().status(500).body(e.into_bytes()).unwrap()));
+                responder.respond(res.unwrap_or_else(|e| {
+                    tauri::http::Response::builder()
+                        .status(500)
+                        .body(e.into_bytes())
+                        .unwrap()
+                }));
             });
         })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init());
     #[cfg(target_os = "android")]
-    let builder = builder.plugin(google_android::init()).plugin(files_android::init());
+    let builder = builder
+        .plugin(google_android::init())
+        .plugin(files_android::init());
     // remember window size/position across launches, like the other _min apps
     // (not visibility: quitting with the window hidden must not launch hidden)
     #[cfg(desktop)]
     let builder = builder.plugin(
         tauri_plugin_window_state::Builder::default()
-            .with_state_flags(tauri_plugin_window_state::StateFlags::all() & !tauri_plugin_window_state::StateFlags::VISIBLE)
+            .with_state_flags(
+                tauri_plugin_window_state::StateFlags::all()
+                    & !tauri_plugin_window_state::StateFlags::VISIBLE,
+            )
             .build(),
     );
     builder
@@ -1193,13 +2050,24 @@ pub fn run() {
             #[cfg(unix)]
             {
                 let path = cache_dir.join("app.log");
-                if std::fs::metadata(&path).map(|m| m.len() > 4 << 20).unwrap_or(false) {
+                if std::fs::metadata(&path)
+                    .map(|m| m.len() > 4 << 20)
+                    .unwrap_or(false)
+                {
                     let _ = std::fs::remove_file(&path);
                 }
-                if let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+                if let Ok(f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&path)
+                {
                     use std::os::fd::AsRawFd;
                     unsafe { libc::dup2(f.as_raw_fd(), 2) };
-                    eprintln!("── ChatMin {} started {}", env!("CARGO_PKG_VERSION"), chrono::Local::now().format("%m-%d %H:%M:%S"));
+                    eprintln!(
+                        "── ChatMin {} started {}",
+                        env!("CARGO_PKG_VERSION"),
+                        chrono::Local::now().format("%m-%d %H:%M:%S")
+                    );
                 }
             }
             let config: Config = std::fs::read_to_string(data_dir.join("config.json"))
@@ -1215,11 +2083,46 @@ pub fn run() {
                 health: Mutex::new(HashMap::new()),
                 tg: Tg::default(),
                 gchat: GChat::default(),
+                zalo: Default::default(),
                 notifier: Default::default(),
                 web_open: Default::default(),
             });
             app.manage(core.clone());
-            core.notifier.set_island(&core.app, core.config.lock().unwrap().notification_island.unwrap_or(true));
+            // WKWebView caps rendering updates near 60 Hz by default, so on a 120 Hz
+            // display scrolling moves only every other frame. Opt out via the WebKit
+            // feature flag (private API; measured 60.6 → 120.3 rAF/s on macOS 26).
+            #[cfg(target_os = "macos")]
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.with_webview(|webview| unsafe {
+                    use objc2::rc::Retained;
+                    use objc2::runtime::AnyObject;
+                    use objc2::{class, msg_send};
+                    use objc2_foundation::{NSArray, NSString};
+                    let wk = &*(webview.inner() as *mut AnyObject);
+                    let config: Retained<AnyObject> = msg_send![wk, configuration];
+                    let config: &AnyObject = &config;
+                    let prefs: Retained<AnyObject> = msg_send![config, preferences];
+                    let prefs: &AnyObject = &prefs;
+                    let features: Retained<NSArray<AnyObject>> =
+                        msg_send![class!(WKPreferences), _features];
+                    for feature in features.iter() {
+                        let feature: &AnyObject = &feature;
+                        let key: Retained<NSString> = msg_send![feature, key];
+                        if key.to_string() == "PreferPageRenderingUpdatesNear60FPSEnabled" {
+                            let _: () = msg_send![prefs, _setEnabled: false, forFeature: feature];
+                            eprintln!("[webview] rendering updates no longer capped near 60 Hz");
+                        }
+                    }
+                });
+            }
+            core.notifier.set_island(
+                &core.app,
+                core.config
+                    .lock()
+                    .unwrap()
+                    .notification_island
+                    .unwrap_or(true),
+            );
             #[cfg(target_os = "macos")]
             if let Some(appearance) = core.config.lock().unwrap().notification_appearance {
                 island::configure(appearance);
@@ -1244,10 +2147,28 @@ pub fn run() {
             notify::on_click(app.handle());
             let accounts = core.store().accounts()?;
             for a in accounts {
-                core.health.lock().unwrap().insert(a.id.clone(), Health { health: "reconnecting".into(), text: "Đang kết nối".into(), until: 0 });
+                core.health.lock().unwrap().insert(
+                    a.id.clone(),
+                    Health {
+                        health: "reconnecting".into(),
+                        text: "Đang kết nối".into(),
+                        until: 0,
+                    },
+                );
                 match a.platform.as_str() {
                     "telegram" => {
                         core.tg.open(&core, &a.id, false);
+                    }
+                    "zalo" => {
+                        if let Err(e) = zalo::Zalo::start(&core, &a.id, false) {
+                            eprintln!("[zalo] worker start failed: {e}");
+                            core.set_health(
+                                &a.id,
+                                "offline",
+                                "Chưa khởi động được Zalo. Hãy đăng nhập lại.",
+                                0,
+                            );
+                        }
                     }
                     "gchat" => GChat::start(core.clone(), a, false),
                     _ => {
@@ -1311,6 +2232,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_state,
+            ui_state,
+            ui_state_set,
             config_set,
             ai_config,
             ai_config_set,
@@ -1338,12 +2261,17 @@ pub fn run() {
             tg_qr,
             tg_resend,
             gchat_login,
+            zalo_login_start,
+            zalo_contacts,
+            zalo_open_chat,
             login_cancel,
             account_update,
             account_remove,
             messages,
             cached_messages,
             primary_messages,
+            thread_list,
+            thread_count,
             emoji_palette,
             thread,
             thread_root,
@@ -1393,6 +2321,7 @@ pub fn run() {
             // running destructors (plugins, window-state included, already saved by now).
             tauri::RunEvent::Exit => {
                 if let Some(core) = app.try_state::<Arc<Core>>() {
+                    core.zalo.shutdown();
                     tauri::async_runtime::block_on(core.tg.shutdown());
                 }
                 extern "C" {

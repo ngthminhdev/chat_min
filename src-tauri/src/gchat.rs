@@ -81,8 +81,12 @@ impl GChat {
     /// Loopback OAuth: open the consent page, wait for Google to redirect back with a code.
     #[cfg(not(target_os = "android"))]
     pub async fn login(&self, core: &Arc<Core>) -> Result<Account, String> {
-        let (client_id, client_secret) = core.gchat_client().ok_or("Chưa cấu hình OAuth client Google")?;
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.map_err(|e| e.to_string())?;
+        let (client_id, client_secret) = core
+            .gchat_client()
+            .ok_or("Chưa cấu hình OAuth client Google")?;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .map_err(|e| e.to_string())?;
         let redirect = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
         let state = format!("{:x}", now_ms() ^ 0x5eed_c0de);
         let url = reqwest::Url::parse_with_params(
@@ -108,13 +112,21 @@ impl GChat {
                 let req = String::from_utf8_lossy(&buf[..n]).to_string();
                 let path = req.split_whitespace().nth(1).unwrap_or("/").to_string();
                 let q = reqwest::Url::parse(&format!("http://x{path}")).unwrap();
-                let get = |k: &str| q.query_pairs().find(|(n, _)| n == k).map(|(_, v)| v.to_string());
+                let get = |k: &str| {
+                    q.query_pairs()
+                        .find(|(n, _)| n == k)
+                        .map(|(_, v)| v.to_string())
+                };
                 if get("code").is_none() && get("error").is_none() {
                     let _ = sock.write_all(b"HTTP/1.1 204 No Content\r\n\r\n").await;
                     continue;
                 }
                 let ok = get("code").is_some() && get("state").as_deref() == Some(state.as_str());
-                let page = if ok { "Đăng nhập xong. Quay lại ChatMin." } else { "Đăng nhập không thành công. Quay lại ChatMin." };
+                let page = if ok {
+                    "Đăng nhập xong. Quay lại ChatMin."
+                } else {
+                    "Đăng nhập không thành công. Quay lại ChatMin."
+                };
                 let html = format!(
                     "<!doctype html><meta charset=utf-8><title>ChatMin</title><body style=\"font:15px -apple-system;background:#1c2433;color:#e8ecf5;display:grid;place-items:center;height:90vh\">{page}</body>"
                 );
@@ -123,7 +135,9 @@ impl GChat {
                     .await;
                 return match (get("code"), get("error")) {
                     (Some(code), _) if ok => Ok(code),
-                    (_, Some(e)) if e == "access_denied" => Err("Google đã từ chối quyền truy cập".to_string()),
+                    (_, Some(e)) if e == "access_denied" => {
+                        Err("Google đã từ chối quyền truy cập".to_string())
+                    }
                     (_, Some(e)) => Err(format!("Google trả lỗi: {e}")),
                     _ => Err("Phản hồi OAuth không hợp lệ".to_string()),
                 };
@@ -154,7 +168,10 @@ impl GChat {
         if let Some(e) = tok["error_description"].as_str().or(tok["error"].as_str()) {
             return Err(e.to_string());
         }
-        let refresh = tok["refresh_token"].as_str().ok_or("Google không trả refresh token")?.to_string();
+        let refresh = tok["refresh_token"]
+            .as_str()
+            .ok_or("Google không trả refresh token")?
+            .to_string();
         let claims = jwt_claims(tok["id_token"].as_str().unwrap_or(""));
         let sub = claims["sub"].as_str().ok_or("Thiếu id_token")?.to_string();
         let email = claims["email"].as_str().unwrap_or("").to_string();
@@ -208,7 +225,9 @@ impl GChat {
                 result = &mut authorization => result,
             },
         };
-        let token = result.map_err(crate::google_android::login_error)?.access_token;
+        let token = result
+            .map_err(crate::google_android::login_error)?
+            .access_token;
         let identity = {
             let identity = self.android_identity(&token);
             tokio::pin!(identity);
@@ -218,7 +237,9 @@ impl GChat {
                 result = &mut identity => result,
             }
         };
-        if matches!(identity, Err(ApiErr::Expired)) { google.invalidate(&token).await; }
+        if matches!(identity, Err(ApiErr::Expired)) {
+            google.invalidate(&token).await;
+        }
         let account = identity.map_err(String::from)?;
         self.login_cancellation.commit(attempt, || {
             core.add_account(account.clone())?;
@@ -236,16 +257,29 @@ impl GChat {
 
     #[cfg(target_os = "android")]
     async fn android_identity(&self, token: &str) -> R<Account> {
-        let response = self.http.get("https://www.googleapis.com/oauth2/v3/userinfo")
-            .bearer_auth(token).timeout(Duration::from_secs(30)).send().await
+        let response = self
+            .http
+            .get("https://www.googleapis.com/oauth2/v3/userinfo")
+            .bearer_auth(token)
+            .timeout(Duration::from_secs(30))
+            .send()
+            .await
             .map_err(|_| ApiErr::Offline)?;
-        if matches!(response.status(), StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
+        if matches!(
+            response.status(),
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN
+        ) {
             return Err(ApiErr::Expired);
         }
         if !response.status().is_success() {
-            return Err(ApiErr::Other("Google chưa cho phép đọc thông tin tài khoản".into()));
+            return Err(ApiErr::Other(
+                "Google chưa cho phép đọc thông tin tài khoản".into(),
+            ));
         }
-        let info: Value = response.json().await.map_err(|_| ApiErr::Other("Thông tin tài khoản Google không hợp lệ".into()))?;
+        let info: Value = response
+            .json()
+            .await
+            .map_err(|_| ApiErr::Other("Thông tin tài khoản Google không hợp lệ".into()))?;
         crate::google_android::account_from_userinfo(&info).map_err(ApiErr::Other)
     }
 
@@ -280,7 +314,13 @@ impl GChat {
                 let run = std::panic::AssertUnwindSafe(core.gchat.run(&core, &account.id, first));
                 let outcome = futures::FutureExt::catch_unwind(run).await;
                 first = false;
-                let stopped = core.gchat.accs.lock().unwrap().get(&account.id).map_or(true, |a| a.stopped);
+                let stopped = core
+                    .gchat
+                    .accs
+                    .lock()
+                    .unwrap()
+                    .get(&account.id)
+                    .map_or(true, |a| a.stopped);
                 if stopped {
                     break;
                 }
@@ -316,7 +356,12 @@ impl GChat {
     async fn run(&self, core: &Arc<Core>, account_id: &str, first_sync: bool) {
         let sync = |step: usize, state: &str, log: &str| {
             if first_sync {
-                core.emit(Event::Sync { account_id: account_id.into(), step, state: state.into(), log: log.into() })
+                core.emit(Event::Sync {
+                    account_id: account_id.into(),
+                    step,
+                    state: state.into(),
+                    log: log.into(),
+                })
             }
         };
         sync(0, "ok", "[auth] token accepted");
@@ -326,7 +371,13 @@ impl GChat {
         let mut fails = 0u32;
         let mut first = true;
         loop {
-            let (stopped, focus) = self.accs.lock().unwrap().get(account_id).map(|a| (a.stopped, a.focus.clone())).unwrap_or((true, None));
+            let (stopped, focus) = self
+                .accs
+                .lock()
+                .unwrap()
+                .get(account_id)
+                .map(|a| (a.stopped, a.focus.clone()))
+                .unwrap_or((true, None));
             if stopped {
                 return;
             }
@@ -337,7 +388,10 @@ impl GChat {
                 let scan = self.poll_spaces(core, account_id, first);
                 let open = async {
                     match &focus {
-                        Some(space) if !first && tick % 2 == 0 => self.fetch_new(core, account_id, space, true).await.map(|_| ()),
+                        Some(space) if !first && tick % 2 == 0 => self
+                            .fetch_new(core, account_id, space, true)
+                            .await
+                            .map(|_| ()),
                         _ => Ok(()),
                     }
                 };
@@ -391,7 +445,12 @@ impl GChat {
                             core.set_health(account_id, "expired", "Phiên hết hạn", 0);
                             return;
                         }
-                        ApiErr::Rate => core.set_health(account_id, "rate", "Rate limit", now_ms() + backoff as i64 * 1000),
+                        ApiErr::Rate => core.set_health(
+                            account_id,
+                            "rate",
+                            "Rate limit",
+                            now_ms() + backoff as i64 * 1000,
+                        ),
                         ApiErr::Other(m) => core.set_health(account_id, "offline", &m, 0),
                     }
                     tokio::time::sleep(Duration::from_secs(backoff)).await;
@@ -407,7 +466,15 @@ impl GChat {
         let mut spaces: Vec<Value> = vec![];
         let mut page = String::new();
         loop {
-            let v = self.api(core, account_id, Method::GET, &format!("{API}/spaces?pageSize=1000&pageToken={page}"), None).await?;
+            let v = self
+                .api(
+                    core,
+                    account_id,
+                    Method::GET,
+                    &format!("{API}/spaces?pageSize=1000&pageToken={page}"),
+                    None,
+                )
+                .await?;
             spaces.extend(v["spaces"].as_array().cloned().unwrap_or_default());
             match v["nextPageToken"].as_str() {
                 Some(t) if !t.is_empty() => page = t.to_string(),
@@ -417,20 +484,36 @@ impl GChat {
         let n = spaces.len();
         // newest first, so the first sync warms the busiest spaces
         spaces.sort_by_key(|s| -rfc3339_ms(s["lastActiveTime"].as_str().unwrap_or("")));
-        let alive: HashSet<String> = spaces.iter().filter_map(|s| s["name"].as_str().map(String::from)).collect();
+        let alive: HashSet<String> = spaces
+            .iter()
+            .filter_map(|s| s["name"].as_str().map(String::from))
+            .collect();
         let mut moved: Vec<(String, String, bool)> = vec![];
         for (i, s) in spaces.iter().enumerate() {
             let name = s["name"].as_str().unwrap_or_default().to_string();
             let active = s["lastActiveTime"].as_str().unwrap_or_default().to_string();
-            let seen = self.accs.lock().unwrap().get(account_id).and_then(|a| a.seen.get(&name).cloned());
+            let seen = self
+                .accs
+                .lock()
+                .unwrap()
+                .get(account_id)
+                .and_then(|a| a.seen.get(&name).cloned());
             let existing = core.store().chat(account_id, &name).ok().flatten();
             core.put_chat(space_chat(account_id, s, existing.as_ref()));
-            let untitled = existing.as_ref().is_some_and(|c| c.kind != "space" && c.title.is_empty());
+            let untitled = existing
+                .as_ref()
+                .is_some_and(|c| c.kind != "space" && c.title.is_empty());
             // on the first scan after launch, compare with the newest message we hold — not
             // chat.last_ts, which follows lastActiveTime even when nothing was fetched — so a
             // space that moved while the app was closed is caught up, wherever it ranks
-            let newest = core.store().msgs(account_id, &name, 0, 1).ok().and_then(|v| v.into_iter().next()).map_or(0, |m| m.ts);
-            let caught_up = existing.is_some() && (rfc3339_ms(&active) <= newest || (newest == 0 && i >= 25));
+            let newest = core
+                .store()
+                .msgs(account_id, &name, 0, 1)
+                .ok()
+                .and_then(|v| v.into_iter().next())
+                .map_or(0, |m| m.ts);
+            let caught_up =
+                existing.is_some() && (rfc3339_ms(&active) <= newest || (newest == 0 && i >= 25));
             if !untitled && (seen.as_deref() == Some(active.as_str()) || (first && caught_up)) {
                 // untouched since last time, or a cold never-opened space on first run: leave for later
                 self.mark_seen(account_id, &name, &active);
@@ -448,7 +531,11 @@ impl GChat {
                 if let Some(mut chat) = chat.filter(|c| c.kind != "space" && c.title.is_empty()) {
                     if let Ok(t) = self.dm_title(core, account_id, name).await {
                         // Google returns no name for deleted / outside-the-org users
-                        chat.title = if t.is_empty() { "Người dùng không xác định".into() } else { t };
+                        chat.title = if t.is_empty() {
+                            "Người dùng không xác định".into()
+                        } else {
+                            t
+                        };
                         core.put_chat(chat);
                     }
                 }
@@ -478,7 +565,14 @@ impl GChat {
     /// Reading on the phone or the web doesn't move lastActiveTime, so a space's unread
     /// count would stick here: re-read the read state of the spaces that still show unread.
     async fn sync_read(&self, core: &Arc<Core>, account_id: &str) -> R<()> {
-        let unread: Vec<String> = core.store().chats().unwrap_or_default().into_iter().filter(|c| c.account_id == account_id && c.unread > 0).map(|c| c.id).collect();
+        let unread: Vec<String> = core
+            .store()
+            .chats()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|c| c.account_id == account_id && c.unread > 0)
+            .map(|c| c.id)
+            .collect();
         for space in unread {
             if let Some(a) = self.accs.lock().unwrap().get_mut(account_id) {
                 a.read.remove(&space);
@@ -498,8 +592,18 @@ impl GChat {
     /// pages so a burst of more than one page isn't cut off: the space is marked seen after.
     /// Returns false when the backlog didn't fit: the caller leaves the space unseen so the
     /// next scan carries on from the newest message saved now.
-    async fn fetch_new(&self, core: &Arc<Core>, account_id: &str, space: &str, notify: bool) -> R<bool> {
-        let newest = core.store().msgs(account_id, space, 0, 1).ok().and_then(|v| v.into_iter().next());
+    async fn fetch_new(
+        &self,
+        core: &Arc<Core>,
+        account_id: &str,
+        space: &str,
+        notify: bool,
+    ) -> R<bool> {
+        let newest = core
+            .store()
+            .msgs(account_id, space, 0, 1)
+            .ok()
+            .and_then(|v| v.into_iter().next());
         let url = match &newest {
             Some(m) => format!(
                 "{API}/{space}/messages?pageSize=100&orderBy=createTime%20asc&showDeleted=true&filter={}",
@@ -513,8 +617,14 @@ impl GChat {
         // ponytail: 5 pages (500 messages) per scan; a bigger backlog continues next scan
         let mut complete = true;
         for i in 0..5 {
-            let page_url = if token.is_empty() { url.clone() } else { format!("{url}&pageToken={token}") };
-            let v = self.api(core, account_id, Method::GET, &page_url, None).await?;
+            let page_url = if token.is_empty() {
+                url.clone()
+            } else {
+                format!("{url}&pageToken={token}")
+            };
+            let v = self
+                .api(core, account_id, Method::GET, &page_url, None)
+                .await?;
             raw.extend(v["messages"].as_array().cloned().unwrap_or_default());
             match v["nextPageToken"].as_str() {
                 Some(t) if !t.is_empty() && newest.is_some() => {
@@ -537,10 +647,18 @@ impl GChat {
     }
 
     async fn fetch_tail(&self, core: &Arc<Core>, account_id: &str, space: &str, n: usize) -> R<()> {
-        let url = format!("{API}/{space}/messages?pageSize={n}&orderBy=createTime%20desc&showDeleted=true");
+        let url = format!(
+            "{API}/{space}/messages?pageSize={n}&orderBy=createTime%20desc&showDeleted=true"
+        );
         let v = self.api(core, account_id, Method::GET, &url, None).await?;
         let me = self.me(account_id);
-        let mut msgs: Vec<Msg> = v["messages"].as_array().cloned().unwrap_or_default().iter().map(|m| to_msg(account_id, &me, m)).collect();
+        let mut msgs: Vec<Msg> = v["messages"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .map(|m| to_msg(account_id, &me, m))
+            .collect();
         self.fill_photos(core, account_id, &mut msgs, true).await;
         for msg in msgs {
             let old = core.store().msg(account_id, space, &msg.id).ok().flatten();
@@ -553,13 +671,29 @@ impl GChat {
 
     /// Recomputes preview, unread and mention from the cache and the server read state.
     async fn refresh_chat(&self, core: &Arc<Core>, account_id: &str, space: &str) -> R<()> {
-        let Some(mut chat) = core.store().chat(account_id, space).ok().flatten() else { return Ok(()) };
-        let known = self.accs.lock().unwrap().get(account_id).and_then(|a| a.read.get(space).copied());
+        let Some(mut chat) = core.store().chat(account_id, space).ok().flatten() else {
+            return Ok(());
+        };
+        let known = self
+            .accs
+            .lock()
+            .unwrap()
+            .get(account_id)
+            .and_then(|a| a.read.get(space).copied());
         let read = match known {
             Some(r) => r,
             None => {
                 // without the readstate scope (or on a 403) treat what we already have as read
-                let r = match self.api(core, account_id, Method::GET, &format!("{API}/users/me/{space}/spaceReadState"), None).await {
+                let r = match self
+                    .api(
+                        core,
+                        account_id,
+                        Method::GET,
+                        &format!("{API}/users/me/{space}/spaceReadState"),
+                        None,
+                    )
+                    .await
+                {
                     Ok(v) => rfc3339_ms(v["lastReadTime"].as_str().unwrap_or("")),
                     Err(ApiErr::Other(_)) => chat.last_ts,
                     Err(e) => return Err(e),
@@ -570,17 +704,34 @@ impl GChat {
                 r
             }
         };
-        let recent = core.store().msgs(account_id, space, 0, 200).unwrap_or_default();
-        let unread: Vec<&Msg> = recent.iter().filter(|m| !m.outgoing && !m.deleted && m.ts > read).collect();
+        let recent = core
+            .store()
+            .msgs(account_id, space, 0, 200)
+            .unwrap_or_default();
+        let unread: Vec<&Msg> = recent
+            .iter()
+            .filter(|m| !m.outgoing && !m.deleted && m.ts > read)
+            .collect();
         chat.unread = unread.len() as i32;
         chat.mention = unread.iter().any(|m| m.mentions_me);
         if let Some(last) = recent.iter().rev().find(|m| !m.deleted) {
             chat.preview = crate::tg::plain(&last.text, last.media.as_ref());
-            chat.preview_from = if last.outgoing { "Bạn".into() } else { last.sender_name.split_whitespace().next().unwrap_or("").into() };
+            chat.preview_from = if last.outgoing {
+                "Bạn".into()
+            } else {
+                last.sender_name
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .into()
+            };
             chat.last_ts = chat.last_ts.max(last.ts);
             chat.order = chat.last_ts;
             if chat.kind == "dm" {
-                if let Some(other) = recent.iter().find(|m| !m.outgoing && !m.sender_name.is_empty()) {
+                if let Some(other) = recent
+                    .iter()
+                    .find(|m| !m.outgoing && !m.sender_name.is_empty())
+                {
                     if chat.title.is_empty() {
                         chat.title = other.sender_name.clone();
                     }
@@ -597,20 +748,62 @@ impl GChat {
     /// DMs and unnamed group chats have no displayName: name them after the other members
     /// (membership display names are often empty under user auth, so ask the People API).
     async fn dm_title(&self, core: &Arc<Core>, account_id: &str, space: &str) -> R<String> {
-        let v = self.api(core, account_id, Method::GET, &format!("{API}/{space}/members?pageSize=20"), None).await?;
+        let v = self
+            .api(
+                core,
+                account_id,
+                Method::GET,
+                &format!("{API}/{space}/members?pageSize=20"),
+                None,
+            )
+            .await?;
         let me = self.me(account_id);
         let others: Vec<(String, String)> = v["memberships"]
             .as_array()
             .into_iter()
             .flatten()
-            .filter(|m| m["member"]["name"].as_str() != Some(me.as_str()) && m["member"]["type"].as_str() != Some("BOT"))
-            .map(|m| (m["member"]["name"].as_str().unwrap_or("").to_string(), m["member"]["displayName"].as_str().unwrap_or("").to_string()))
+            .filter(|m| {
+                m["member"]["name"].as_str() != Some(me.as_str())
+                    && m["member"]["type"].as_str() != Some("BOT")
+            })
+            .map(|m| {
+                (
+                    m["member"]["name"].as_str().unwrap_or("").to_string(),
+                    m["member"]["displayName"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string(),
+                )
+            })
             .collect();
-        let mut names: Vec<String> = others.iter().filter(|(_, n)| !n.is_empty()).map(|(_, n)| n.clone()).collect();
-        let unnamed: Vec<&str> = others.iter().filter(|(id, n)| n.is_empty() && id.starts_with("users/")).map(|(id, _)| &id[6..]).collect();
+        let mut names: Vec<String> = others
+            .iter()
+            .filter(|(_, n)| !n.is_empty())
+            .map(|(_, n)| n.clone())
+            .collect();
+        let unnamed: Vec<&str> = others
+            .iter()
+            .filter(|(id, n)| n.is_empty() && id.starts_with("users/"))
+            .map(|(id, _)| &id[6..])
+            .collect();
         if !unnamed.is_empty() {
-            let q: String = unnamed.iter().take(10).map(|id| format!("&resourceNames=people/{id}")).collect();
-            if let Ok(p) = self.api(core, account_id, Method::GET, &format!("https://people.googleapis.com/v1/people:batchGet?personFields=names{q}"), None).await {
+            let q: String = unnamed
+                .iter()
+                .take(10)
+                .map(|id| format!("&resourceNames=people/{id}"))
+                .collect();
+            if let Ok(p) = self
+                .api(
+                    core,
+                    account_id,
+                    Method::GET,
+                    &format!(
+                        "https://people.googleapis.com/v1/people:batchGet?personFields=names{q}"
+                    ),
+                    None,
+                )
+                .await
+            {
                 for r in p["responses"].as_array().into_iter().flatten() {
                     if let Some(n) = r["person"]["names"][0]["displayName"].as_str() {
                         names.push(n.to_string());
@@ -630,14 +823,21 @@ impl GChat {
     async fn fill_photos(&self, core: &Arc<Core>, account_id: &str, msgs: &mut [Msg], net: bool) {
         let (off, missing): (bool, Vec<String>) = {
             let accs = self.accs.lock().unwrap();
-            let Some(a) = accs.get(account_id) else { return };
-            let mut ids: Vec<String> = msgs.iter().map(|m| m.sender_id.clone()).filter(|id| id.starts_with("users/") && !a.photos.contains_key(id)).collect();
+            let Some(a) = accs.get(account_id) else {
+                return;
+            };
+            let mut ids: Vec<String> = msgs
+                .iter()
+                .map(|m| m.sender_id.clone())
+                .filter(|id| id.starts_with("users/") && !a.photos.contains_key(id))
+                .collect();
             ids.sort();
             ids.dedup();
             (a.people_off, ids)
         };
         if net && !off && !missing.is_empty() {
-            let mut url = "https://people.googleapis.com/v1/people:batchGet?personFields=photos".to_string();
+            let mut url =
+                "https://people.googleapis.com/v1/people:batchGet?personFields=photos".to_string();
             for id in missing.iter().take(200) {
                 url.push_str(&format!("&resourceNames=people/{}", &id[6..]));
             }
@@ -649,8 +849,16 @@ impl GChat {
                             a.photos.entry(id.clone()).or_default();
                         }
                         for r in v["responses"].as_array().into_iter().flatten() {
-                            let id = r["requestedResourceName"].as_str().unwrap_or("").replacen("people/", "users/", 1);
-                            let photo = r["person"]["photos"].as_array().into_iter().flatten().find(|p| p["default"].as_bool() != Some(true)).and_then(|p| p["url"].as_str());
+                            let id = r["requestedResourceName"]
+                                .as_str()
+                                .unwrap_or("")
+                                .replacen("people/", "users/", 1);
+                            let photo = r["person"]["photos"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .find(|p| p["default"].as_bool() != Some(true))
+                                .and_then(|p| p["url"].as_str());
                             if let Some(url) = photo {
                                 a.photos.insert(id, url.to_string());
                             }
@@ -675,18 +883,37 @@ impl GChat {
     }
 
     // ── reads ───────────────────────────────────────────────────────────────
-    pub async fn history(&self, core: &Arc<Core>, account_id: &str, space: &str, before: i64, limit: i32) -> Result<Vec<Msg>, String> {
-        let mut url = format!("{API}/{space}/messages?pageSize={limit}&orderBy=createTime%20desc&showDeleted=true");
+    pub async fn history(
+        &self,
+        core: &Arc<Core>,
+        account_id: &str,
+        space: &str,
+        before: i64,
+        limit: i32,
+    ) -> Result<Vec<Msg>, String> {
+        let mut url = format!(
+            "{API}/{space}/messages?pageSize={limit}&orderBy=createTime%20desc&showDeleted=true"
+        );
         if before > 0 {
-            url.push_str(&format!("&filter={}", enc(&format!("createTime < \"{}\"", ms_rfc3339(before)))));
+            url.push_str(&format!(
+                "&filter={}",
+                enc(&format!("createTime < \"{}\"", ms_rfc3339(before)))
+            ));
         }
         let v = self.api(core, account_id, Method::GET, &url, None).await?;
         let me = self.me(account_id);
-        let mut msgs: Vec<Msg> = v["messages"].as_array().cloned().unwrap_or_default().iter().map(|m| to_msg(account_id, &me, m)).collect();
+        let mut msgs: Vec<Msg> = v["messages"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .map(|m| to_msg(account_id, &me, m))
+            .collect();
         msgs.retain(|m| !m.deleted); // hidden, like Google's client (see Core::put_msg)
         msgs.reverse();
         hydrate_cached_media(&core.cache_dir, &mut msgs);
-        self.fill_quotes(core, account_id, space, &mut msgs, false).await;
+        self.fill_quotes(core, account_id, space, &mut msgs, false)
+            .await;
         self.fill_photos(core, account_id, &mut msgs, false).await;
         core.store_mut().put_msgs(&msgs)?;
         self.enrich_later(core, account_id, space, msgs.clone(), before == 0);
@@ -695,50 +922,177 @@ impl GChat {
 
     /// Scan bounded remote pages for main messages. A reply-only page advances the
     /// main cursor but must never mean that primary history has ended.
-    pub async fn primary_history(&self, core: &Arc<Core>, account_id: &str, space: &str, before: i64) -> Result<PrimaryPage, String> {
-        let me = self.me(account_id);
+    pub async fn primary_history(
+        &self,
+        core: &Arc<Core>,
+        account_id: &str,
+        space: &str,
+        before: i64,
+        limit: usize,
+    ) -> Result<PrimaryPage, String> {
         let mut cursor = before;
         let mut messages = Vec::new();
         let mut has_more = true;
         let mut token = String::new();
         for _ in 0..5 {
-            let mut url = format!("{API}/{space}/messages?pageSize=100&orderBy=createTime%20desc&showDeleted=true");
-            if before > 0 {
-                url.push_str(&format!("&filter={}", enc(&format!("createTime < \"{}\"", ms_rfc3339(before)))));
+            let (page, oldest, next) = self
+                .history_page(core, account_id, space, before, &token)
+                .await?;
+            if let Some(oldest) = oldest {
+                cursor = oldest;
             }
-            if !token.is_empty() { url.push_str(&format!("&pageToken={}", enc(&token))); }
-            let v = self.api(core, account_id, Method::GET, &url, None).await?;
-            let mut page: Vec<Msg> = v["messages"].as_array().cloned().unwrap_or_default().iter().map(|m| to_msg(account_id, &me, m)).collect();
-            if let Some(oldest) = page.iter().map(|m| m.sort).min() { cursor = oldest; }
-            token = v["nextPageToken"].as_str().unwrap_or("").to_string();
+            token = next;
             has_more = !token.is_empty();
-            page.retain(|m| !m.deleted);
-            core.store_mut().put_msgs(&page)?;
             messages.extend(page.into_iter().filter(|m| !m.thread_reply));
-            if !messages.is_empty() || !has_more { break; }
+            if messages.len() >= limit || !has_more {
+                break;
+            }
         }
         messages.sort_by_key(|m| m.sort);
         hydrate_cached_media(&core.cache_dir, &mut messages);
-        self.fill_quotes(core, account_id, space, &mut messages, false).await;
-        self.fill_photos(core, account_id, &mut messages, false).await;
+        self.fill_quotes(core, account_id, space, &mut messages, false)
+            .await;
+        self.fill_photos(core, account_id, &mut messages, false)
+            .await;
         self.enrich_later(core, account_id, space, messages.clone(), false);
-        Ok(PrimaryPage { messages, before: cursor, has_more })
+        Ok(PrimaryPage {
+            messages,
+            before: cursor,
+            has_more,
+        })
+    }
+
+    /// One page of 100 older than `before` (0 = newest), stored as it comes: replies too, so
+    /// the thread list and thread tabs read them from the cache later. Returns the page
+    /// without deleted rows, the oldest sort it covered and the continuation token.
+    async fn history_page(
+        &self,
+        core: &Arc<Core>,
+        account_id: &str,
+        space: &str,
+        before: i64,
+        token: &str,
+    ) -> Result<(Vec<Msg>, Option<i64>, String), String> {
+        let mut url = format!(
+            "{API}/{space}/messages?pageSize=100&orderBy=createTime%20desc&showDeleted=true"
+        );
+        if before > 0 {
+            url.push_str(&format!(
+                "&filter={}",
+                enc(&format!("createTime < \"{}\"", ms_rfc3339(before)))
+            ));
+        }
+        if !token.is_empty() {
+            url.push_str(&format!("&pageToken={}", enc(token)));
+        }
+        let v = self.api(core, account_id, Method::GET, &url, None).await?;
+        let me = self.me(account_id);
+        let mut page: Vec<Msg> = v["messages"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|m| to_msg(account_id, &me, m))
+            .collect();
+        let oldest = page.iter().map(|m| m.sort).min();
+        page.retain(|m| !m.deleted);
+        core.store_mut().put_msgs(&page)?;
+        Ok((
+            page,
+            oldest,
+            v["nextPageToken"].as_str().unwrap_or("").into(),
+        ))
+    }
+
+    /// Bounded walk below `before` that only fills the cache (thread list ran out of it).
+    /// Returns whether Google has more.
+    pub async fn scan_older(
+        &self,
+        core: &Arc<Core>,
+        account_id: &str,
+        space: &str,
+        before: i64,
+        pages: usize,
+    ) -> Result<bool, String> {
+        let mut token = String::new();
+        for _ in 0..pages {
+            let (_, _, next) = self
+                .history_page(core, account_id, space, before, &token)
+                .await?;
+            if next.is_empty() {
+                return Ok(false);
+            }
+            token = next;
+        }
+        Ok(true)
+    }
+
+    /// Google's reply total for one thread. Asks for `threadReply` alone, 1000 per page, so a
+    /// 300-reply thread is one small response; past 5000 it stops and says so.
+    pub async fn thread_count(
+        &self,
+        core: &Arc<Core>,
+        account_id: &str,
+        space: &str,
+        thread: &str,
+    ) -> Result<ThreadCount, String> {
+        let (mut count, mut token) = (0, String::new());
+        for _ in 0..5 {
+            let v = self
+                .api(
+                    core,
+                    account_id,
+                    Method::GET,
+                    &thread_count_url(space, thread, &token),
+                    None,
+                )
+                .await?;
+            count += v["messages"].as_array().map_or(0, |a| {
+                a.iter()
+                    .filter(|m| m["threadReply"].as_bool() == Some(true))
+                    .count()
+            });
+            token = v["nextPageToken"].as_str().unwrap_or("").into();
+            if token.is_empty() {
+                return Ok(ThreadCount { count, exact: true });
+            }
+        }
+        Ok(ThreadCount {
+            count,
+            exact: false,
+        })
     }
 
     /// Quotes of messages outside the cache, avatars and the read state each cost another
     /// request: the page goes back first, these land afterwards as message updates.
-    fn enrich_later(&self, core: &Arc<Core>, account_id: &str, space: &str, msgs: Vec<Msg>, refresh: bool) {
+    fn enrich_later(
+        &self,
+        core: &Arc<Core>,
+        account_id: &str,
+        space: &str,
+        msgs: Vec<Msg>,
+        refresh: bool,
+    ) {
         let (core, account_id, space) = (core.clone(), account_id.to_string(), space.to_string());
         tauri::async_runtime::spawn(async move {
             let g = &core.gchat;
             let mut full = msgs.clone();
-            g.fill_quotes(&core, &account_id, &space, &mut full, true).await;
+            g.fill_quotes(&core, &account_id, &space, &mut full, true)
+                .await;
             g.fill_photos(&core, &account_id, &mut full, true).await;
-            let changed: Vec<Msg> = full.into_iter().zip(&msgs).filter(|(a, b)| a != *b).map(|(a, _)| a).collect();
+            let changed: Vec<Msg> = full
+                .into_iter()
+                .zip(&msgs)
+                .filter(|(a, b)| a != *b)
+                .map(|(a, _)| a)
+                .collect();
             if !changed.is_empty() {
                 let _ = core.store_mut().put_msgs(&changed);
                 for msg in changed {
-                    core.emit(Event::Message { msg, is_new: false, inbox: false });
+                    core.emit(Event::Message {
+                        msg,
+                        is_new: false,
+                        inbox: false,
+                    });
                 }
             }
             if refresh {
@@ -747,30 +1101,79 @@ impl GChat {
         });
     }
 
-    pub async fn thread(&self, core: &Arc<Core>, account_id: &str, space: &str, thread: &str, page_token: &str, limit: i32) -> Result<ThreadPage, String> {
-        self.read_thread(core, account_id, space, thread, page_token, limit, false).await
+    pub async fn thread(
+        &self,
+        core: &Arc<Core>,
+        account_id: &str,
+        space: &str,
+        thread: &str,
+        page_token: &str,
+        limit: i32,
+    ) -> Result<ThreadPage, String> {
+        self.read_thread(core, account_id, space, thread, page_token, limit, false)
+            .await
     }
 
-    pub async fn thread_root(&self, core: &Arc<Core>, account_id: &str, space: &str, thread: &str) -> Result<Vec<Msg>, String> {
-        Ok(self.read_thread(core, account_id, space, thread, "", 1, true).await?.messages)
+    pub async fn thread_root(
+        &self,
+        core: &Arc<Core>,
+        account_id: &str,
+        space: &str,
+        thread: &str,
+    ) -> Result<Vec<Msg>, String> {
+        Ok(self
+            .read_thread(core, account_id, space, thread, "", 1, true)
+            .await?
+            .messages)
     }
 
-    async fn read_thread(&self, core: &Arc<Core>, account_id: &str, space: &str, thread: &str, page_token: &str, limit: i32, root: bool) -> Result<ThreadPage, String> {
-        let v = self.api(core, account_id, Method::GET, &thread_url(space, thread, page_token, limit, root), None).await?;
+    async fn read_thread(
+        &self,
+        core: &Arc<Core>,
+        account_id: &str,
+        space: &str,
+        thread: &str,
+        page_token: &str,
+        limit: i32,
+        root: bool,
+    ) -> Result<ThreadPage, String> {
+        let v = self
+            .api(
+                core,
+                account_id,
+                Method::GET,
+                &thread_url(space, thread, page_token, limit, root),
+                None,
+            )
+            .await?;
         let mut page = parse_thread_page(account_id, &self.me(account_id), &v);
         hydrate_cached_media(&core.cache_dir, &mut page.messages);
-        self.fill_quotes(core, account_id, space, &mut page.messages, false).await;
-        self.fill_photos(core, account_id, &mut page.messages, false).await;
+        self.fill_quotes(core, account_id, space, &mut page.messages, false)
+            .await;
+        self.fill_photos(core, account_id, &mut page.messages, false)
+            .await;
         core.store_mut().put_msgs(&page.messages)?;
         self.enrich_later(core, account_id, space, page.messages.clone(), false);
         Ok(page)
     }
 
-    async fn fill_quotes(&self, core: &Arc<Core>, account_id: &str, space: &str, msgs: &mut [Msg], net: bool) {
-        let mut originals: HashMap<String, Msg> = msgs.iter().map(|m| (m.id.clone(), m.clone())).collect();
+    async fn fill_quotes(
+        &self,
+        core: &Arc<Core>,
+        account_id: &str,
+        space: &str,
+        msgs: &mut [Msg],
+        net: bool,
+    ) {
+        let mut originals: HashMap<String, Msg> =
+            msgs.iter().map(|m| (m.id.clone(), m.clone())).collect();
         let mut missing = HashSet::new();
-        for m in msgs.iter().filter(|m| !m.reply_to.is_empty() && (m.reply_name.is_empty() || m.reply_text.is_empty())) {
-            if originals.contains_key(&m.reply_to) { continue; }
+        for m in msgs.iter().filter(|m| {
+            !m.reply_to.is_empty() && (m.reply_name.is_empty() || m.reply_text.is_empty())
+        }) {
+            if originals.contains_key(&m.reply_to) {
+                continue;
+            }
             if let Ok(Some(q)) = core.store().msg(account_id, space, &m.reply_to) {
                 originals.insert(q.id.clone(), q);
             } else if m.reply_to.starts_with(&format!("{space}/messages/")) {
@@ -778,11 +1181,18 @@ impl GChat {
             }
         }
         // Bound extra requests for old quotes and don't fail the conversation if a quoted message was deleted.
-        let missing: Vec<_> = if net { missing.into_iter().take(8).collect() } else { vec![] };
+        let missing: Vec<_> = if net {
+            missing.into_iter().take(8).collect()
+        } else {
+            vec![]
+        };
         for chunk in missing.chunks(4) {
             let results = futures::future::join_all(chunk.iter().map(|id| async move {
-                self.api(core, account_id, Method::GET, &format!("{API}/{id}"), None).await.ok()
-            })).await;
+                self.api(core, account_id, Method::GET, &format!("{API}/{id}"), None)
+                    .await
+                    .ok()
+            }))
+            .await;
             for v in results.into_iter().flatten() {
                 let q = to_msg(account_id, &self.me(account_id), &v);
                 let _ = core.store().put_msg(&q);
@@ -791,14 +1201,39 @@ impl GChat {
         }
         for m in msgs.iter_mut() {
             if let Some(q) = originals.get(&m.reply_to) {
-                if m.reply_name.is_empty() { m.reply_name = if q.outgoing { "Bạn".into() } else { q.sender_name.clone() }; }
-                if m.reply_text.is_empty() { m.reply_text = if q.text.is_empty() { q.media.as_ref().map(|a| a.name.clone()).unwrap_or_default() } else { q.text.clone() }; }
+                if m.reply_name.is_empty() {
+                    m.reply_name = if q.outgoing {
+                        "Bạn".into()
+                    } else {
+                        q.sender_name.clone()
+                    };
+                }
+                if m.reply_text.is_empty() {
+                    m.reply_text = if q.text.is_empty() {
+                        q.media.as_ref().map(|a| a.name.clone()).unwrap_or_default()
+                    } else {
+                        q.text.clone()
+                    };
+                }
             }
         }
     }
 
-    pub async fn members(&self, core: &Arc<Core>, account_id: &str, space: &str) -> Result<Vec<Member>, String> {
-        let v = self.api(core, account_id, Method::GET, &format!("{API}/{space}/members?pageSize=100"), None).await?;
+    pub async fn members(
+        &self,
+        core: &Arc<Core>,
+        account_id: &str,
+        space: &str,
+    ) -> Result<Vec<Member>, String> {
+        let v = self
+            .api(
+                core,
+                account_id,
+                Method::GET,
+                &format!("{API}/{space}/members?pageSize=100"),
+                None,
+            )
+            .await?;
         let me = self.me(account_id);
         // user-auth membership lists often omit display names; fill from senders we have seen
         let names: HashMap<String, String> = core
@@ -820,14 +1255,35 @@ impl GChat {
                     .filter(|s| !s.is_empty())
                     .map(String::from)
                     .or_else(|| names.get(&id).cloned())
-                    .unwrap_or_else(|| if id == me { "Bạn".into() } else { "Thành viên".into() });
-                let role = if m["role"].as_str() == Some("ROLE_MANAGER") { "Manager" } else { "" };
-                Member { id, name, status: String::new(), role: role.into() }
+                    .unwrap_or_else(|| {
+                        if id == me {
+                            "Bạn".into()
+                        } else {
+                            "Thành viên".into()
+                        }
+                    });
+                let role = if m["role"].as_str() == Some("ROLE_MANAGER") {
+                    "Manager"
+                } else {
+                    ""
+                };
+                Member {
+                    id,
+                    name,
+                    status: String::new(),
+                    role: role.into(),
+                }
             })
             .collect())
     }
 
-    pub async fn download(&self, core: &Arc<Core>, account_id: &str, resource: &str, name: &str) -> Result<String, String> {
+    pub async fn download(
+        &self,
+        core: &Arc<Core>,
+        account_id: &str,
+        resource: &str,
+        name: &str,
+    ) -> Result<String, String> {
         let dir = core.cache_dir.join("gchat");
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let path = download_path(&core.cache_dir, resource, name);
@@ -856,7 +1312,11 @@ impl GChat {
             got += chunk.len() as i64;
             if total > 300_000 && got * 100 / total != last {
                 last = got * 100 / total;
-                core.emit(Event::FileProgress { account_id: account_id.into(), file_ref: resource.into(), pct: last });
+                core.emit(Event::FileProgress {
+                    account_id: account_id.into(),
+                    file_ref: resource.into(),
+                    pct: last,
+                });
             }
         }
         drop(out);
@@ -876,27 +1336,52 @@ impl GChat {
         file: Option<String>,
     ) -> Result<Msg, String> {
         let quoted = match reply_to.filter(|r| !r.is_empty()) {
-            Some(r) => Some(core.store().msg(account_id, space, &r)?.ok_or("Tin được trả lời chưa có trong cache. Mở lại hội thoại và thử lại.")?),
+            Some(r) => Some(
+                core.store()
+                    .msg(account_id, space, &r)?
+                    .ok_or("Tin được trả lời chưa có trong cache. Mở lại hội thoại và thử lại.")?,
+            ),
             None => None,
         };
-        let (url, mut body) = create_message_request(space, &text, thread.as_deref(), quoted.as_ref());
+        let (url, mut body) =
+            create_message_request(space, &text, thread.as_deref(), quoted.as_ref());
         if let Some(path) = file {
             body["attachment"] = json!([{ "attachmentDataRef": self.upload(core, account_id, space, &path).await? }]);
         }
-        let v = self.api(core, account_id, Method::POST, &url, Some(body)).await?;
+        let v = self
+            .api(core, account_id, Method::POST, &url, Some(body))
+            .await?;
         let mut msg = to_msg(account_id, &self.me(account_id), &v);
         if let Some(q) = quoted {
             msg.reply_to = q.id;
-            msg.reply_name = if q.outgoing { "Bạn".into() } else { q.sender_name };
-            msg.reply_text = if q.text.is_empty() { q.media.map(|m| m.name).unwrap_or_default() } else { q.text };
+            msg.reply_name = if q.outgoing {
+                "Bạn".into()
+            } else {
+                q.sender_name
+            };
+            msg.reply_text = if q.text.is_empty() {
+                q.media.map(|m| m.name).unwrap_or_default()
+            } else {
+                q.text
+            };
         }
         core.store().put_msg(&msg)?;
         Ok(msg)
     }
 
-    async fn upload(&self, core: &Arc<Core>, account_id: &str, space: &str, path: &str) -> Result<Value, String> {
+    async fn upload(
+        &self,
+        core: &Arc<Core>,
+        account_id: &str,
+        space: &str,
+        path: &str,
+    ) -> Result<Value, String> {
         let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
-        let name = std::path::Path::new(path).file_name().unwrap_or_default().to_string_lossy().to_string();
+        let name = std::path::Path::new(path)
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
         let boundary = format!("chatmin{:x}", now_ms());
         let mut body = format!(
             "--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{}\r\n--{boundary}\r\nContent-Type: {}\r\n\r\n",
@@ -908,16 +1393,26 @@ impl GChat {
         body.extend_from_slice(format!("\r\n--{boundary}--").as_bytes());
         let token = self.token(core, account_id).await?;
         // sent in 256 KB pieces so the pending message can show how far the upload is
-        let (total, key, acc, c) = (body.len() as i64, path.to_string(), account_id.to_string(), core.clone());
+        let (total, key, acc, c) = (
+            body.len() as i64,
+            path.to_string(),
+            account_id.to_string(),
+            core.clone(),
+        );
         let chunks: Vec<Vec<u8>> = body.chunks(256 * 1024).map(<[u8]>::to_vec).collect();
         let mut sent = 0i64;
-        let stream = futures::StreamExt::map(futures::stream::iter(chunks), move |chunk: Vec<u8>| {
-            sent += chunk.len() as i64;
-            if total > 300_000 {
-                c.emit(Event::FileProgress { account_id: acc.clone(), file_ref: key.clone(), pct: sent * 100 / total });
-            }
-            Ok::<_, std::io::Error>(chunk)
-        });
+        let stream =
+            futures::StreamExt::map(futures::stream::iter(chunks), move |chunk: Vec<u8>| {
+                sent += chunk.len() as i64;
+                if total > 300_000 {
+                    c.emit(Event::FileProgress {
+                        account_id: acc.clone(),
+                        file_ref: key.clone(),
+                        pct: sent * 100 / total,
+                    });
+                }
+                Ok::<_, std::io::Error>(chunk)
+            });
         let resp = self
             .http
             .post(format!("https://chat.googleapis.com/upload/v1/{space}/attachments:upload?uploadType=multipart"))
@@ -935,20 +1430,61 @@ impl GChat {
         Ok(v["attachmentDataRef"].clone())
     }
 
-    pub async fn edit(&self, core: &Arc<Core>, account_id: &str, space: &str, name: &str, text: String) -> Result<(), String> {
-        let v = self.api(core, account_id, Method::PATCH, &format!("{API}/{name}?updateMask=text"), Some(json!({ "text": text }))).await?;
+    pub async fn edit(
+        &self,
+        core: &Arc<Core>,
+        account_id: &str,
+        space: &str,
+        name: &str,
+        text: String,
+    ) -> Result<(), String> {
+        let v = self
+            .api(
+                core,
+                account_id,
+                Method::PATCH,
+                &format!("{API}/{name}?updateMask=text"),
+                Some(json!({ "text": text })),
+            )
+            .await?;
         core.put_msg(to_msg(account_id, &self.me(account_id), &v), false);
         let _ = space;
         Ok(())
     }
 
-    pub async fn delete(&self, core: &Arc<Core>, account_id: &str, space: &str, name: &str) -> Result<(), String> {
-        match self.api(core, account_id, Method::DELETE, &format!("{API}/{name}"), None).await {
+    pub async fn delete(
+        &self,
+        core: &Arc<Core>,
+        account_id: &str,
+        space: &str,
+        name: &str,
+    ) -> Result<(), String> {
+        match self
+            .api(
+                core,
+                account_id,
+                Method::DELETE,
+                &format!("{API}/{name}"),
+                None,
+            )
+            .await
+        {
             Ok(_) => {}
             // deleted elsewhere already (Google answers PERMISSION_DENIED / NOT_FOUND for a gone
             // message): what's left is our stale copy
-            Err(ApiErr::Other(m)) if m.starts_with("PERMISSION_DENIED") || m.starts_with("NOT_FOUND") => {
-                let gone = match self.api(core, account_id, Method::GET, &format!("{API}/{name}"), None).await {
+            Err(ApiErr::Other(m))
+                if m.starts_with("PERMISSION_DENIED") || m.starts_with("NOT_FOUND") =>
+            {
+                let gone = match self
+                    .api(
+                        core,
+                        account_id,
+                        Method::GET,
+                        &format!("{API}/{name}"),
+                        None,
+                    )
+                    .await
+                {
                     Ok(v) => !v["deletionMetadata"].is_null(),
                     Err(ApiErr::Other(e)) => e.starts_with("NOT_FOUND"),
                     Err(e) => return Err(e.into()),
@@ -963,9 +1499,24 @@ impl GChat {
         Ok(())
     }
 
-    pub async fn react(&self, core: &Arc<Core>, account_id: &str, name: &str, emoji: &str, add: bool) -> Result<(), String> {
+    pub async fn react(
+        &self,
+        core: &Arc<Core>,
+        account_id: &str,
+        name: &str,
+        emoji: &str,
+        add: bool,
+    ) -> Result<(), String> {
         if add {
-            let res = self.api(core, account_id, Method::POST, &format!("{API}/{name}/reactions"), Some(json!({ "emoji": { "unicode": emoji } }))).await;
+            let res = self
+                .api(
+                    core,
+                    account_id,
+                    Method::POST,
+                    &format!("{API}/{name}/reactions"),
+                    Some(json!({ "emoji": { "unicode": emoji } })),
+                )
+                .await;
             match res {
                 Err(ApiErr::Other(m)) if m.contains("ALREADY_EXISTS") || m.contains("already") => {}
                 r => {
@@ -973,11 +1524,29 @@ impl GChat {
                 }
             }
         } else {
-            let filter = enc(&format!("emoji.unicode = \"{emoji}\" AND user.name = \"{}\"", self.me(account_id)));
-            let v = self.api(core, account_id, Method::GET, &format!("{API}/{name}/reactions?filter={filter}"), None).await?;
+            let filter = enc(&format!(
+                "emoji.unicode = \"{emoji}\" AND user.name = \"{}\"",
+                self.me(account_id)
+            ));
+            let v = self
+                .api(
+                    core,
+                    account_id,
+                    Method::GET,
+                    &format!("{API}/{name}/reactions?filter={filter}"),
+                    None,
+                )
+                .await?;
             for r in v["reactions"].as_array().into_iter().flatten() {
                 if let Some(rn) = r["name"].as_str() {
-                    self.api(core, account_id, Method::DELETE, &format!("{API}/{rn}"), None).await?;
+                    self.api(
+                        core,
+                        account_id,
+                        Method::DELETE,
+                        &format!("{API}/{rn}"),
+                        None,
+                    )
+                    .await?;
                 }
             }
         }
@@ -985,12 +1554,31 @@ impl GChat {
     }
 
     /// Who reacted. Google Chat has no read receipts for other people, so `viewers` stays empty.
-    pub async fn people(&self, core: &Arc<Core>, account_id: &str, space: &str, name: &str) -> Result<MsgPeople, String> {
-        let v = self.api(core, account_id, Method::GET, &format!("{API}/{name}/reactions?pageSize=100"), None).await?;
+    pub async fn people(
+        &self,
+        core: &Arc<Core>,
+        account_id: &str,
+        space: &str,
+        name: &str,
+    ) -> Result<MsgPeople, String> {
+        let v = self
+            .api(
+                core,
+                account_id,
+                Method::GET,
+                &format!("{API}/{name}/reactions?pageSize=100"),
+                None,
+            )
+            .await?;
         let me = self.me(account_id);
         // reaction users carry no displayName under user auth: fill from senders we have seen
-        let names: HashMap<String, String> =
-            core.store().msgs(account_id, space, 0, 500).unwrap_or_default().into_iter().map(|m| (m.sender_id, m.sender_name)).collect();
+        let names: HashMap<String, String> = core
+            .store()
+            .msgs(account_id, space, 0, 500)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|m| (m.sender_id, m.sender_name))
+            .collect();
         let reactions = v["reactions"]
             .as_array()
             .into_iter()
@@ -1003,14 +1591,28 @@ impl GChat {
                     .filter(|s| !s.is_empty())
                     .map(String::from)
                     .or_else(|| names.get(id).cloned())
-                    .unwrap_or_else(|| if id == me { "Bạn".into() } else { "Thành viên".into() });
+                    .unwrap_or_else(|| {
+                        if id == me {
+                            "Bạn".into()
+                        } else {
+                            "Thành viên".into()
+                        }
+                    });
                 Some((emoji, name))
             })
             .collect();
-        Ok(MsgPeople { reactions, viewers: vec![] })
+        Ok(MsgPeople {
+            reactions,
+            viewers: vec![],
+        })
     }
 
-    pub async fn mark_read(&self, core: &Arc<Core>, account_id: &str, space: &str) -> Result<(), String> {
+    pub async fn mark_read(
+        &self,
+        core: &Arc<Core>,
+        account_id: &str,
+        space: &str,
+    ) -> Result<(), String> {
         let now = now_ms();
         self.api(
             core,
@@ -1034,7 +1636,12 @@ impl GChat {
 
     // ── http ────────────────────────────────────────────────────────────────
     fn me(&self, account_id: &str) -> String {
-        self.accs.lock().unwrap().get(account_id).map(|a| a.me.clone()).unwrap_or_default()
+        self.accs
+            .lock()
+            .unwrap()
+            .get(account_id)
+            .map(|a| a.me.clone())
+            .unwrap_or_default()
     }
 
     #[cfg(not(target_os = "android"))]
@@ -1044,12 +1651,20 @@ impl GChat {
             .lock()
             .unwrap()
             .get(account_id)
-            .map(|a| (a.access_token.clone(), a.expires_at, a.refresh_token.clone()))
+            .map(|a| {
+                (
+                    a.access_token.clone(),
+                    a.expires_at,
+                    a.refresh_token.clone(),
+                )
+            })
             .ok_or(ApiErr::Expired)?;
         if !tok.is_empty() && now_ms() < exp {
             return Ok(tok);
         }
-        let (client_id, client_secret) = core.gchat_client().ok_or(ApiErr::Other("Chưa cấu hình OAuth client Google".into()))?;
+        let (client_id, client_secret) = core
+            .gchat_client()
+            .ok_or(ApiErr::Other("Chưa cấu hình OAuth client Google".into()))?;
         let resp = self
             .http
             .post("https://oauth2.googleapis.com/token")
@@ -1068,7 +1683,10 @@ impl GChat {
         if status == StatusCode::BAD_REQUEST || status == StatusCode::UNAUTHORIZED {
             return Err(ApiErr::Expired);
         }
-        let tok = v["access_token"].as_str().ok_or_else(|| ApiErr::Other(v.to_string()))?.to_string();
+        let tok = v["access_token"]
+            .as_str()
+            .ok_or_else(|| ApiErr::Other(v.to_string()))?
+            .to_string();
         if let Some(a) = self.accs.lock().unwrap().get_mut(account_id) {
             a.access_token = tok.clone();
             a.expires_at = now_ms() + v["expires_in"].as_i64().unwrap_or(3600) * 1000 - 60_000;
@@ -1081,17 +1699,40 @@ impl GChat {
         use tauri::Manager;
         // A space scan requests many tokens concurrently; one renewal covers the scan.
         let _refresh = self.token_refresh.lock().await;
-        let (token, expires, stopped) = self.accs.lock().unwrap().get(account_id)
-            .map(|a| (a.access_token.clone(), a.expires_at, a.stopped)).ok_or(ApiErr::Expired)?;
-        if stopped { return Err(ApiErr::Expired); }
-        if !token.is_empty() && now_ms() < expires { return Ok(token); }
-        let account = core.store().accounts().map_err(|_| ApiErr::Expired)?
-            .into_iter().find(|a| a.id == account_id).ok_or(ApiErr::Expired)?;
+        let (token, expires, stopped) = self
+            .accs
+            .lock()
+            .unwrap()
+            .get(account_id)
+            .map(|a| (a.access_token.clone(), a.expires_at, a.stopped))
+            .ok_or(ApiErr::Expired)?;
+        if stopped {
+            return Err(ApiErr::Expired);
+        }
+        if !token.is_empty() && now_ms() < expires {
+            return Ok(token);
+        }
+        let account = core
+            .store()
+            .accounts()
+            .map_err(|_| ApiErr::Expired)?
+            .into_iter()
+            .find(|a| a.id == account_id)
+            .ok_or(ApiErr::Expired)?;
         let google = core.app.state::<crate::google_android::GoogleAuth>();
-        let result = google.authorize(false, Some(&account.handle), (!token.is_empty()).then_some(token.as_str())).await
+        let result = google
+            .authorize(
+                false,
+                Some(&account.handle),
+                (!token.is_empty()).then_some(token.as_str()),
+            )
+            .await
             .map_err(|error| {
-                if crate::google_android::is_authorization_required(&error) { ApiErr::Expired }
-                else { ApiErr::Other(error.to_string()) }
+                if crate::google_android::is_authorization_required(&error) {
+                    ApiErr::Expired
+                } else {
+                    ApiErr::Other(error.to_string())
+                }
             })?;
         // Never attach a token for a different Google account to cached chats.
         let identity = self.android_identity(&result.access_token).await;
@@ -1104,16 +1745,30 @@ impl GChat {
             return Err(ApiErr::Expired);
         }
         let mut accs = self.accs.lock().unwrap();
-        let acc = accs.get_mut(account_id).filter(|a| !a.stopped).ok_or(ApiErr::Expired)?;
+        let acc = accs
+            .get_mut(account_id)
+            .filter(|a| !a.stopped)
+            .ok_or(ApiErr::Expired)?;
         acc.access_token = result.access_token.clone();
         acc.expires_at = now_ms() + 45 * 60_000;
         Ok(result.access_token)
     }
 
-    async fn api(&self, core: &Arc<Core>, account_id: &str, method: Method, url: &str, body: Option<Value>) -> R<Value> {
+    async fn api(
+        &self,
+        core: &Arc<Core>,
+        account_id: &str,
+        method: Method,
+        url: &str,
+        body: Option<Value>,
+    ) -> R<Value> {
         for attempt in 0..2 {
             let token = self.token(core, account_id).await?;
-            let mut req = self.http.request(method.clone(), url).bearer_auth(&token).timeout(Duration::from_secs(30));
+            let mut req = self
+                .http
+                .request(method.clone(), url)
+                .bearer_auth(&token)
+                .timeout(Duration::from_secs(30));
             if let Some(b) = &body {
                 req = req.json(b);
             }
@@ -1131,13 +1786,23 @@ impl GChat {
             #[cfg(target_os = "android")]
             if status == StatusCode::UNAUTHORIZED {
                 use tauri::Manager;
-                core.app.state::<crate::google_android::GoogleAuth>().invalidate(&token).await;
+                core.app
+                    .state::<crate::google_android::GoogleAuth>()
+                    .invalidate(&token)
+                    .await;
             }
             let v: Value = resp.json().await.unwrap_or(Value::Null);
             return match status {
                 s if s.is_success() => {
                     // first good answer after start/outage: usable again, even mid-sync
-                    if core.health.lock().unwrap().get(account_id).map(|h| h.health != "ok").unwrap_or(true) {
+                    if core
+                        .health
+                        .lock()
+                        .unwrap()
+                        .get(account_id)
+                        .map(|h| h.health != "ok")
+                        .unwrap_or(true)
+                    {
                         core.set_health(account_id, "ok", "Đã đồng bộ", 0);
                     }
                     Ok(v)
@@ -1172,14 +1837,20 @@ fn space_chat(account_id: &str, s: &Value, existing: Option<&Chat>) -> Chat {
     } else if s["singleUserBotDm"].as_bool() == Some(true) && c.title.is_empty() {
         c.title = "Ứng dụng Chat (bot)".into();
     }
-    c.description = s["spaceDetails"]["description"].as_str().unwrap_or_default().into();
-    c.member_count = s["membershipCount"]["joinedDirectHumanUserCount"].as_i64().unwrap_or(0) as i32;
+    c.description = s["spaceDetails"]["description"]
+        .as_str()
+        .unwrap_or_default()
+        .into();
+    c.member_count = s["membershipCount"]["joinedDirectHumanUserCount"]
+        .as_i64()
+        .unwrap_or(0) as i32;
     c.last_ts = c.last_ts.max(active);
     c.order = c.last_ts;
     c.can_send = true;
     let threading = s["spaceThreadingState"].as_str();
     c.threaded = threading == Some("THREADED_MESSAGES")
-        || (threading != Some("UNTHREADED_MESSAGES") && (kind == "space" || (kind == "dm" && s["singleUserBotDm"].as_bool() != Some(true))));
+        || (threading != Some("UNTHREADED_MESSAGES")
+            && (kind == "space" || (kind == "dm" && s["singleUserBotDm"].as_bool() != Some(true))));
     let created = s["createTime"].as_str().unwrap_or("");
     if created.len() >= 7 {
         c.created = format!("{}/{}", &created[5..7], &created[..4]);
@@ -1206,17 +1877,48 @@ pub struct ThreadPage {
 fn thread_url(space: &str, thread: &str, page_token: &str, limit: i32, root: bool) -> String {
     let size = if root { 1 } else { limit.clamp(1, 20) };
     let order = if root { "asc" } else { "desc" };
-    let mut url = format!("{API}/{space}/messages?pageSize={size}&orderBy=createTime%20{order}&filter={}", enc(&format!("thread.name = \"{thread}\"")));
+    let mut url = format!(
+        "{API}/{space}/messages?pageSize={size}&orderBy=createTime%20{order}&filter={}",
+        enc(&format!("thread.name = \"{thread}\""))
+    );
     if !root && !page_token.is_empty() {
         url.push_str(&format!("&pageToken={}", enc(page_token)));
     }
     url
 }
 
+#[derive(serde::Serialize, Default)]
+pub struct ThreadCount {
+    pub count: usize,
+    /// false when the walk stopped at its page budget: `count` is then a floor
+    pub exact: bool,
+}
+
+fn thread_count_url(space: &str, thread: &str, page_token: &str) -> String {
+    let mut url = format!(
+        "{API}/{space}/messages?pageSize=1000&fields={}&filter={}",
+        enc("messages(threadReply),nextPageToken"),
+        enc(&format!("thread.name = \"{thread}\"")),
+    );
+    if !page_token.is_empty() {
+        url.push_str(&format!("&pageToken={}", enc(page_token)));
+    }
+    url
+}
+
 fn parse_thread_page(account_id: &str, me: &str, v: &Value) -> ThreadPage {
-    let mut messages: Vec<Msg> = v["messages"].as_array().into_iter().flatten().map(|m| to_msg(account_id, me, m)).filter(|m| !m.deleted).collect();
+    let mut messages: Vec<Msg> = v["messages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|m| to_msg(account_id, me, m))
+        .filter(|m| !m.deleted)
+        .collect();
     messages.sort_by_key(|m| m.sort);
-    ThreadPage { messages, next_page_token: v["nextPageToken"].as_str().unwrap_or("").into() }
+    ThreadPage {
+        messages,
+        next_page_token: v["nextPageToken"].as_str().unwrap_or("").into(),
+    }
 }
 
 fn to_msg(account_id: &str, me: &str, m: &Value) -> Msg {
@@ -1232,32 +1934,60 @@ fn to_msg(account_id: &str, me: &str, m: &Value) -> Msg {
     let mut mentions_me = false;
     // wrap @mentions so the frontend renders pills; walk annotations from the end so
     // earlier indices stay valid
-    let mut anns: Vec<&Value> = m["annotations"].as_array().into_iter().flatten().filter(|a| a["type"] == "USER_MENTION").collect();
+    let mut anns: Vec<&Value> = m["annotations"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|a| a["type"] == "USER_MENTION")
+        .collect();
     anns.sort_by_key(|a| -(a["startIndex"].as_i64().unwrap_or(0)));
     for a in anns {
         if a["userMention"]["user"]["name"].as_str() == Some(me) {
             mentions_me = true;
         }
-        let (s, l) = (a["startIndex"].as_i64().unwrap_or(0) as usize, a["length"].as_i64().unwrap_or(0) as usize);
+        let (s, l) = (
+            a["startIndex"].as_i64().unwrap_or(0) as usize,
+            a["length"].as_i64().unwrap_or(0) as usize,
+        );
         let chars: Vec<char> = text.chars().collect();
         if s + l <= chars.len() && chars.get(s) == Some(&'@') {
             let inner: String = chars[s + 1..s + l].iter().collect();
-            names.insert(a["userMention"]["user"]["name"].as_str().unwrap_or_default().into(), inner.clone());
-            text = format!("{}@{{{inner}}}{}", chars[..s].iter().collect::<String>(), chars[s + l..].iter().collect::<String>());
+            names.insert(
+                a["userMention"]["user"]["name"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .into(),
+                inner.clone(),
+            );
+            text = format!(
+                "{}@{{{inner}}}{}",
+                chars[..s].iter().collect::<String>(),
+                chars[s + l..].iter().collect::<String>()
+            );
         }
     }
     // formattedText keeps lists, bold, links… that `text` flattens — but it mangles ```
     // blocks (fence dropped, newlines removed, 4 spaces in front), so those come back from `text`
     if !formatted.is_empty() {
         let raw = m["text"].as_str().unwrap_or_default();
-        text = keep_line_breaks(&chat_markup(&restore_code_blocks(formatted, raw), &names), &text);
+        text = keep_line_breaks(
+            &chat_markup(&restore_code_blocks(formatted, raw), &names),
+            &text,
+        );
     }
     // a Meet huddle ("Call ended") carries no text: only a RICH_LINK annotation whose
     // status Google rewrites in place, so it must not read as an edit either
-    let huddle = m["annotations"].as_array().into_iter().flatten().find_map(|a| {
-        let d = &a["richLinkMetadata"]["meetSpaceLinkData"];
-        Some((d["huddleStatus"].as_str()?, a["richLinkMetadata"]["uri"].as_str().unwrap_or_default()))
-    });
+    let huddle = m["annotations"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find_map(|a| {
+            let d = &a["richLinkMetadata"]["meetSpaceLinkData"];
+            Some((
+                d["huddleStatus"].as_str()?,
+                a["richLinkMetadata"]["uri"].as_str().unwrap_or_default(),
+            ))
+        });
     if let Some((status, uri)) = huddle {
         text = match status {
             "STARTED" => format!("📞 Cuộc gọi đang diễn ra {uri}"),
@@ -1278,8 +2008,13 @@ fn to_msg(account_id: &str, me: &str, m: &Value) -> Msg {
             .into(),
             name: a["contentName"].as_str().unwrap_or("file").into(),
             mime: mime.into(),
-            file_ref: a["attachmentDataRef"]["resourceName"].as_str().unwrap_or_default().into(),
-            url: drive.map(|id| format!("https://drive.google.com/open?id={id}")).unwrap_or_default(),
+            file_ref: a["attachmentDataRef"]["resourceName"]
+                .as_str()
+                .unwrap_or_default()
+                .into(),
+            url: drive
+                .map(|id| format!("https://drive.google.com/open?id={id}"))
+                .unwrap_or_default(),
             ..Default::default()
         }
     });
@@ -1289,30 +2024,57 @@ fn to_msg(account_id: &str, me: &str, m: &Value) -> Msg {
         id: name.into(),
         sort: ts,
         outgoing: sender_id == me,
-        sender_name: m["sender"]["displayName"].as_str().unwrap_or_default().into(),
+        sender_name: m["sender"]["displayName"]
+            .as_str()
+            .unwrap_or_default()
+            .into(),
         sender_id,
         ts,
-        edited: !updated.is_empty() && updated != created && m["deletionMetadata"].is_null() && huddle.is_none(),
+        edited: !updated.is_empty()
+            && updated != created
+            && m["deletionMetadata"].is_null()
+            && huddle.is_none(),
         deleted: !m["deletionMetadata"].is_null(),
         kind: if media.is_some() { "media" } else { "text" }.into(),
         text,
         media,
-        reply_to: m["quotedMessageMetadata"]["name"].as_str().unwrap_or_default().into(),
-        reply_name: m["quotedMessageMetadata"]["quotedMessageSnapshot"]["sender"]["displayName"].as_str().unwrap_or_default().into(),
-        reply_text: m["quotedMessageMetadata"]["quotedMessageSnapshot"]["text"].as_str().unwrap_or_default().into(),
+        reply_to: m["quotedMessageMetadata"]["name"]
+            .as_str()
+            .unwrap_or_default()
+            .into(),
+        reply_name: m["quotedMessageMetadata"]["quotedMessageSnapshot"]["sender"]["displayName"]
+            .as_str()
+            .unwrap_or_default()
+            .into(),
+        reply_text: m["quotedMessageMetadata"]["quotedMessageSnapshot"]["text"]
+            .as_str()
+            .unwrap_or_default()
+            .into(),
         reactions: m["emojiReactionSummaries"]
             .as_array()
             .into_iter()
             .flatten()
             .filter_map(|r| {
-                Some(Reaction { emoji: r["emoji"]["unicode"].as_str()?.into(), count: r["reactionCount"].as_i64().unwrap_or(1) as i32, mine: false })
+                Some(Reaction {
+                    emoji: r["emoji"]["unicode"].as_str()?.into(),
+                    count: r["reactionCount"].as_i64().unwrap_or(1) as i32,
+                    mine: false,
+                })
             })
             .collect(),
         thread_id: m["thread"]["name"].as_str().unwrap_or_default().into(),
         thread_reply: m["threadReply"].as_bool().unwrap_or(false),
-        status: if m["sender"]["name"].as_str() == Some(me) { "sent".into() } else { String::new() },
+        status: if m["sender"]["name"].as_str() == Some(me) {
+            "sent".into()
+        } else {
+            String::new()
+        },
         mentions_me,
-        rev: if updated.is_empty() { created.into() } else { updated.into() },
+        rev: if updated.is_empty() {
+            created.into()
+        } else {
+            updated.into()
+        },
         ..Default::default()
     }
 }
@@ -1324,22 +2086,48 @@ fn keep_rules(text: &str) -> String {
     let rule = |l: &str| {
         let t = l.trim();
         let c = t.chars().next();
-        t.len() >= 3 && matches!(c, Some('-' | '*' | '_')) && t.chars().all(|x| Some(x) == c || x == ' ')
+        t.len() >= 3
+            && matches!(c, Some('-' | '*' | '_'))
+            && t.chars().all(|x| Some(x) == c || x == ' ')
     };
-    text.split('\n').map(|l| if rule(l) { format!("\u{200B}{l}") } else { l.to_string() }).collect::<Vec<_>>().join("\n")
+    text.split('\n')
+        .map(|l| {
+            if rule(l) {
+                format!("\u{200B}{l}")
+            } else {
+                l.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
-fn create_message_request(space: &str, text: &str, thread: Option<&str>, quoted: Option<&Msg>) -> (String, Value) {
+fn create_message_request(
+    space: &str,
+    text: &str,
+    thread: Option<&str>,
+    quoted: Option<&Msg>,
+) -> (String, Value) {
     let mut body = json!({ "text": keep_rules(text) });
     let thread = thread.filter(|t| !t.is_empty());
-    if let Some(t) = thread { body["thread"] = json!({ "name": t }); }
-    if let Some(q) = quoted { body["quotedMessageMetadata"] = json!({ "name": q.id, "lastUpdateTime": q.rev }); }
-    let option = if thread.is_some() { "?messageReplyOption=REPLY_MESSAGE_OR_FAIL" } else { "" };
+    if let Some(t) = thread {
+        body["thread"] = json!({ "name": t });
+    }
+    if let Some(q) = quoted {
+        body["quotedMessageMetadata"] = json!({ "name": q.id, "lastUpdateTime": q.rev });
+    }
+    let option = if thread.is_some() {
+        "?messageReplyOption=REPLY_MESSAGE_OR_FAIL"
+    } else {
+        ""
+    };
     (format!("{API}/{space}/messages{option}"), body)
 }
 
 fn token_path(core: &Core, account_id: &str) -> std::path::PathBuf {
-    core.data_dir.join("secrets").join(format!("{account_id}.json"))
+    core.data_dir
+        .join("secrets")
+        .join(format!("{account_id}.json"))
 }
 
 #[cfg(not(target_os = "android"))]
@@ -1347,13 +2135,22 @@ fn save_token(core: &Core, account_id: &str, refresh: &str) -> std::io::Result<(
     use std::os::unix::fs::OpenOptionsExt;
     let path = token_path(core, account_id);
     std::fs::create_dir_all(path.parent().unwrap())?;
-    let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(path)?;
-    std::io::Write::write_all(&mut f, json!({ "refresh_token": refresh }).to_string().as_bytes())
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    std::io::Write::write_all(
+        &mut f,
+        json!({ "refresh_token": refresh }).to_string().as_bytes(),
+    )
 }
 
 #[cfg(not(target_os = "android"))]
 fn load_token(core: &Core, account_id: &str) -> Option<String> {
-    let v: Value = serde_json::from_str(&std::fs::read_to_string(token_path(core, account_id)).ok()?).ok()?;
+    let v: Value =
+        serde_json::from_str(&std::fs::read_to_string(token_path(core, account_id)).ok()?).ok()?;
     v["refresh_token"].as_str().map(String::from)
 }
 
@@ -1368,22 +2165,47 @@ fn jwt_claims(jwt: &str) -> Value {
 }
 
 fn enc(s: &str) -> String {
-    reqwest::Url::parse_with_params("http://x/", &[("q", s)]).unwrap().query().unwrap()[2..].to_string()
+    reqwest::Url::parse_with_params("http://x/", &[("q", s)])
+        .unwrap()
+        .query()
+        .unwrap()[2..]
+        .to_string()
 }
 
 fn download_path(cache_dir: &std::path::Path, resource: &str, name: &str) -> std::path::PathBuf {
-    let safe: String = name.chars().map(|c| if c.is_alphanumeric() || ".-_".contains(c) { c } else { '_' }).collect();
-    cache_dir.join("gchat").join(format!("{:x}-{safe}", hash(resource)))
+    let safe: String = name
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || ".-_".contains(c) {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    cache_dir
+        .join("gchat")
+        .join(format!("{:x}-{safe}", hash(resource)))
 }
 
 /// Restore local image geometry before sending history to the webview. Reading the
 /// file header does not decode image pixels and runs outside the native UI thread.
 pub(crate) fn hydrate_cached_media(cache_dir: &std::path::Path, msgs: &mut [Msg]) {
     for msg in msgs {
-        if !msg.account_id.starts_with("gc-") { continue; }
-        let Some(media) = msg.media.as_mut().filter(|m| m.kind == "image") else { continue };
-        let path = if media.local_path.is_empty() { download_path(cache_dir, &media.file_ref, &media.name) } else { std::path::PathBuf::from(&media.local_path) };
-        if !path.is_file() { continue; }
+        if !msg.account_id.starts_with("gc-") {
+            continue;
+        }
+        let Some(media) = msg.media.as_mut().filter(|m| m.kind == "image") else {
+            continue;
+        };
+        let path = if media.local_path.is_empty() {
+            download_path(cache_dir, &media.file_ref, &media.name)
+        } else {
+            std::path::PathBuf::from(&media.local_path)
+        };
+        if !path.is_file() {
+            continue;
+        }
         media.local_path = path.to_string_lossy().into();
         if media.width <= 0 || media.height <= 0 {
             if let Some((width, height)) = cached_image_dimensions(&path) {
@@ -1395,25 +2217,44 @@ pub(crate) fn hydrate_cached_media(cache_dir: &std::path::Path, msgs: &mut [Msg]
 }
 
 #[cfg(target_os = "macos")]
-fn cached_image_dimensions(path: &std::path::Path) -> Option<(i32,i32)> {
-    use objc2_core_foundation::{CFBoolean, CFDictionary, CFNumber, CFRetained, CFString, CFType, CFURL};
-    use objc2_image_io::{CGImageSource, kCGImageSourceShouldCache};
+fn cached_image_dimensions(path: &std::path::Path) -> Option<(i32, i32)> {
+    use objc2_core_foundation::{
+        CFBoolean, CFDictionary, CFNumber, CFRetained, CFString, CFType, CFURL,
+    };
+    use objc2_image_io::{kCGImageSourceShouldCache, CGImageSource};
     let url = CFURL::from_file_path(path)?;
     let no = CFBoolean::new(false);
     unsafe {
-        let options = CFDictionary::<CFString,CFType>::from_slices(&[kCGImageSourceShouldCache], &[no.as_ref()]);
+        let options = CFDictionary::<CFString, CFType>::from_slices(
+            &[kCGImageSourceShouldCache],
+            &[no.as_ref()],
+        );
         let source = CGImageSource::with_url(&url, Some(options.as_opaque()))?;
         let properties = source.properties_at_index(0, Some(options.as_opaque()))?;
         // ImageIO property dictionaries have CFString keys and CoreFoundation values.
-        let properties = CFRetained::cast_unchecked::<CFDictionary<CFString,CFType>>(properties);
-        let number = |key: &str| properties.get(&CFString::from_str(key))?.downcast::<CFNumber>().ok()?.as_i32();
-        let (width,height) = (number("PixelWidth")?, number("PixelHeight")?);
-        if width <= 0 || height <= 0 { return None; }
-        Some(if matches!(number("Orientation"), Some(5..=8)) { (height,width) } else { (width,height) })
+        let properties = CFRetained::cast_unchecked::<CFDictionary<CFString, CFType>>(properties);
+        let number = |key: &str| {
+            properties
+                .get(&CFString::from_str(key))?
+                .downcast::<CFNumber>()
+                .ok()?
+                .as_i32()
+        };
+        let (width, height) = (number("PixelWidth")?, number("PixelHeight")?);
+        if width <= 0 || height <= 0 {
+            return None;
+        }
+        Some(if matches!(number("Orientation"), Some(5..=8)) {
+            (height, width)
+        } else {
+            (width, height)
+        })
     }
 }
 #[cfg(not(target_os = "macos"))]
-fn cached_image_dimensions(_path: &std::path::Path) -> Option<(i32,i32)> { None }
+fn cached_image_dimensions(_path: &std::path::Path) -> Option<(i32, i32)> {
+    None
+}
 
 fn hash(s: &str) -> u64 {
     use std::hash::{Hash, Hasher};
@@ -1423,7 +2264,13 @@ fn hash(s: &str) -> u64 {
 }
 
 fn mime_of(name: &str) -> &'static str {
-    match name.rsplit('.').next().unwrap_or("").to_lowercase().as_str() {
+    match name
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_lowercase()
+        .as_str()
+    {
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
         "gif" => "image/gif",
@@ -1444,8 +2291,14 @@ pub fn rfc3339_ms(s: &str) -> i64 {
     }
     let n = |r: std::ops::Range<usize>| s.get(r).and_then(|x| x.parse::<i64>().ok()).unwrap_or(0);
     let (y, mo, d, h, mi, se) = (n(0..4), n(5..7), n(8..10), n(11..13), n(14..16), n(17..19));
-    let frac: String = s[19..].chars().skip_while(|c| *c == '.').take_while(|c| c.is_ascii_digit()).collect();
-    let ms = format!("{:0<3}", frac.chars().take(3).collect::<String>()).parse::<i64>().unwrap_or(0);
+    let frac: String = s[19..]
+        .chars()
+        .skip_while(|c| *c == '.')
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    let ms = format!("{:0<3}", frac.chars().take(3).collect::<String>())
+        .parse::<i64>()
+        .unwrap_or(0);
     // days from civil (Howard Hinnant)
     let y2 = if mo <= 2 { y - 1 } else { y };
     let era = y2.div_euclid(400);
@@ -1468,7 +2321,12 @@ pub fn ms_rfc3339(ms: i64) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
-    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{milli:03}Z", rem / 3600, rem % 3600 / 60, rem % 60)
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{milli:03}Z",
+        rem / 3600,
+        rem % 3600 / 60,
+        rem % 60
+    )
 }
 
 /// Google Chat's `formattedText` → ChatMin markup. Chat's own syntax (*bold*, _italic_,
@@ -1491,10 +2349,20 @@ fn chat_markup(ft: &str, names: &HashMap<String, String>) -> String {
         } else if tok == "users/all" {
             Some("@{all}".to_string())
         } else if tok.starts_with("users/") {
-            Some(format!("@{{{}}}", names.get(tok).map(String::as_str).unwrap_or("?")))
+            Some(format!(
+                "@{{{}}}",
+                names.get(tok).map(String::as_str).unwrap_or("?")
+            ))
         } else if let Some(user) = attr(tok, "chat-user", "data-user") {
             // the newer web composer's tags: <chat-user data-user="users/1"></chat-user>
-            Some(if user == "users/all" { "@{all}".into() } else { format!("@{{{}}}", names.get(user).map(String::as_str).unwrap_or("?")) })
+            Some(if user == "users/all" {
+                "@{all}".into()
+            } else {
+                format!(
+                    "@{{{}}}",
+                    names.get(user).map(String::as_str).unwrap_or("?")
+                )
+            })
         } else if let Some(name) = attr(tok, "chat-emoji", "data-emoji-name") {
             Some(name.to_string()) // custom emoji: its :name:, the image isn't in the API
         } else if tok == "/chat-user" || tok == "/chat-emoji" {
@@ -1535,7 +2403,11 @@ fn restore_code_blocks(formatted: &str, text: &str) -> String {
         return formatted.to_string();
     }
     // `text` without newlines, with each flat char's byte offset in `text`
-    let (flat, at): (String, Vec<usize>) = text.char_indices().filter(|(_, c)| *c != '\n').map(|(i, c)| (c, i)).unzip();
+    let (flat, at): (String, Vec<usize>) = text
+        .char_indices()
+        .filter(|(_, c)| *c != '\n')
+        .map(|(i, c)| (c, i))
+        .unzip();
     let mut out = String::new();
     for (n, line) in formatted.split('\n').enumerate() {
         if n > 0 {
@@ -1565,9 +2437,56 @@ fn restore_code_blocks(formatted: &str, text: &str) -> String {
 /// The rich composer's formattedText is Markdown with line breaks of its own: every line a
 /// paragraph ("\n\n") and long lines hard-wrapped at 80 columns. `text` has the lines as
 /// typed, so between each pair of chars both share, `markup` takes `text`'s line-break
-/// count; its bold/italic markers stay put. Text that doesn't line up (links or mentions
+/// count and indentation; its bold/italic markers stay put. Text that doesn't line up (links or mentions
 /// written differently) keeps `markup` as it is.
 fn keep_line_breaks(markup: &str, text: &str) -> String {
+    // Compare links as atoms: Google can put either their label or URL in `text`.
+    // Otherwise a single link makes the whole message fail alignment.
+    if markup.contains('\u{e000}') || text.contains('\u{e000}') {
+        return align_line_breaks(markup, text);
+    }
+    let (mut rich, mut raw) = (String::new(), String::new());
+    let (mut rest, mut original) = (markup, text);
+    let mut links = Vec::new();
+    while let Some(start) = rest.find('[') {
+        rich.push_str(&rest[..start]);
+        rest = &rest[start..];
+        let Some(mid) = rest.find("](") else { break };
+        let Some(end) = rest[mid + 2..].find(')').map(|n| mid + 2 + n) else {
+            break;
+        };
+        let (label, url) = (&rest[1..mid], &rest[mid + 2..end]);
+        if !url.starts_with("https://") && !url.starts_with("http://") {
+            rich.push('[');
+            rest = &rest[1..];
+            continue;
+        }
+        let found = [label, url]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| original.find(s).map(|at| (at, s.len())))
+            .min_by_key(|&(at, _)| at);
+        let Some((at, len)) = found else {
+            return align_line_breaks(markup, text);
+        };
+        let token = format!("\u{e000}{}\u{e001}", links.len());
+        raw.push_str(&original[..at]);
+        raw.push_str(&token);
+        original = &original[at + len..];
+        rich.push_str(&token);
+        links.push((token, rest[..=end].to_string()));
+        rest = &rest[end + 1..];
+    }
+    rich.push_str(rest);
+    raw.push_str(original);
+    let mut out = align_line_breaks(&rich, &raw);
+    for (token, link) in links {
+        out = out.replace(&token, &link);
+    }
+    out
+}
+
+fn align_line_breaks(markup: &str, text: &str) -> String {
     const MARK: [char; 4] = ['*', '_', '~', '`'];
     let gap_char = |c: &char| c.is_whitespace() || MARK.contains(c);
     let bare = |s: &str| s.chars().filter(|c| !gap_char(c)).collect::<String>();
@@ -1575,7 +2494,14 @@ fn keep_line_breaks(markup: &str, text: &str) -> String {
         return markup.to_string();
     }
     let t: Vec<char> = text.chars().collect();
-    let breaks = |from: usize, to: usize| t[from..to].iter().filter(|&&c| c == '\n').count();
+    let spacing = |gap: &str, from: usize, to: usize| {
+        let original: String = t[from..to]
+            .iter()
+            .copied()
+            .filter(|c| c.is_whitespace())
+            .collect();
+        with_breaks(gap, &original)
+    };
     let (mut i, mut out, mut gap) = (0, String::new(), String::new());
     for c in markup.chars() {
         let mut j = i;
@@ -1589,22 +2515,28 @@ fn keep_line_breaks(markup: &str, text: &str) -> String {
         if t.get(j) != Some(&c) {
             return markup.to_string();
         }
-        out += &with_breaks(&gap, breaks(i, j));
+        out += &spacing(&gap, i, j);
         out.push(c);
         gap.clear();
         i = j + 1;
     }
-    out += with_breaks(&gap, breaks(i, t.len())).trim_end_matches(' ');
+    out += spacing(&gap, i, t.len()).trim_end_matches(' ');
     out
 }
 
-/// `gap` (whitespace and markers between two chars) with `n` line breaks instead of its own:
-/// the first run holding a newline gets them all, the others become a space or nothing.
-fn with_breaks(gap: &str, n: usize) -> String {
-    if gap.matches('\n').count() == n {
+/// Preserve markup markers while replacing Google's whitespace with what was typed.
+fn with_breaks(gap: &str, spacing: &str) -> String {
+    if gap
+        .chars()
+        .filter(|c| c.is_whitespace())
+        .collect::<String>()
+        == spacing
+    {
         return gap.to_string();
     }
-    let (mut out, mut placed) = (String::new(), false);
+    let (mut out, mut remaining) = (String::new(), spacing);
+    let prefer_newline = spacing.contains('\n') && gap.contains('\n');
+    let mut placed = false;
     let mut chars = gap.chars().peekable();
     while let Some(c) = chars.next() {
         if !c.is_whitespace() {
@@ -1615,24 +2547,32 @@ fn with_breaks(gap: &str, n: usize) -> String {
         while let Some(w) = chars.next_if(|w| w.is_whitespace()) {
             run.push(w);
         }
-        if !run.contains('\n') {
-            out += &run;
-        } else if n == 0 {
-            out.push(' ');
-        } else if !placed {
-            out += &"\n".repeat(n);
+        if placed {
+            continue;
+        }
+        if prefer_newline && !run.contains('\n') {
+            // A trailing space can belong inside a bold span before its closer.
+            if let Some(rest) = remaining.strip_prefix(&run) {
+                out.push_str(&run);
+                remaining = rest;
+            }
+        } else {
+            out.push_str(remaining);
+            remaining = "";
             placed = true;
         }
     }
-    if !placed && n > 0 {
-        out += &"\n".repeat(n);
-    }
+    out.push_str(remaining);
     out
 }
 
 /// `chat-user data-user="users/1"` → "users/1" for tag "chat-user", attribute "data-user"
 fn attr<'a>(tok: &'a str, tag: &str, name: &str) -> Option<&'a str> {
-    let rest = tok.strip_prefix(tag)?.trim_start().strip_prefix(name)?.strip_prefix("=\"")?;
+    let rest = tok
+        .strip_prefix(tag)?
+        .trim_start()
+        .strip_prefix(name)?
+        .strip_prefix("=\"")?;
     rest.split('"').next()
 }
 
@@ -1652,9 +2592,13 @@ fn unescape(s: &str) -> String {
                 "quot" => Some('"'),
                 "apos" => Some('\''),
                 "nbsp" => Some(' '),
-                e => e.strip_prefix("#x").or_else(|| e.strip_prefix("#X")).map(|h| u32::from_str_radix(h, 16))
+                e => e
+                    .strip_prefix("#x")
+                    .or_else(|| e.strip_prefix("#X"))
+                    .map(|h| u32::from_str_radix(h, 16))
                     .or_else(|| e.strip_prefix('#').map(|d| d.parse::<u32>()))
-                    .and_then(|n| n.ok()).and_then(char::from_u32),
+                    .and_then(|n| n.ok())
+                    .and_then(char::from_u32),
             };
             if let Some(ch) = ch.filter(|_| chars.clone().nth(ent.chars().count()) == Some(';')) {
                 out.push(ch);
@@ -1677,6 +2621,58 @@ fn unescape(s: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn styled_boundaries_keep_spacing_without_artificial_wraps() {
+        assert_eq!(
+            keep_line_breaks("*one*\n\n*two*", "one\n  two"),
+            "*one*\n  *two*"
+        );
+        assert_eq!(keep_line_breaks("*hel*\n*lo*", "hello"), "*hel**lo*");
+        assert_eq!(
+            keep_line_breaks("*one* *two*", "one   two"),
+            "*one*   *two*"
+        );
+    }
+
+    #[test]
+    fn linked_messages_keep_typed_lines() {
+        assert_eq!(
+            keep_line_breaks("see [doc](https://x.y)\n\nok", "see https://x.y\nok"),
+            "see [doc](https://x.y)\nok"
+        );
+        assert_eq!(
+            keep_line_breaks(
+                "**see** [doc](https://x.y)\nwrapped\n\nnext",
+                "see doc wrapped\nnext"
+            ),
+            "**see** [doc](https://x.y) wrapped\nnext"
+        );
+        assert_eq!(
+            keep_line_breaks(
+                "[doc](https://x.y) [doc](https://x.y)\n\nend",
+                "doc doc\nend"
+            ),
+            "[doc](https://x.y) [doc](https://x.y)\nend"
+        );
+    }
+
+    #[test]
+    fn json_keeps_original_indentation_and_line_breaks() {
+        let raw = "{\n  \"hits\": {\n    \"total\": 309,\n    \"_source\": {\n      \"userId\": \"66668_test\"\n    }\n  }\n}";
+        let formatted = raw.lines().map(str::trim).collect::<Vec<_>>().join("\n\n");
+        assert_eq!(keep_line_breaks(&formatted, raw), raw);
+        let msg = to_msg(
+            "gc",
+            "users/me",
+            &json!({
+                "name": "spaces/A/messages/json", "sender": {"name": "users/2"},
+                "text": raw, "formattedText": formatted,
+            }),
+        );
+        assert_eq!(msg.text, raw);
+        assert_eq!(keep_line_breaks("one two", "one\t  two"), "one\t  two");
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn cached_google_images_have_geometry_and_path_before_the_first_render() {
@@ -1684,30 +2680,55 @@ mod tests {
         let path = download_path(&dir, "spaces/test/media/picture", "ảnh chụp.png");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, include_bytes!("../icons/128x128@2x.png")).unwrap();
-        let mut msgs = vec![Msg { account_id: "gc-test".into(), media: Some(Media {
-            kind: "image".into(), name: "ảnh chụp.png".into(), file_ref: "spaces/test/media/picture".into(), ..Default::default()
-        }), ..Default::default() }];
+        let mut msgs = vec![Msg {
+            account_id: "gc-test".into(),
+            media: Some(Media {
+                kind: "image".into(),
+                name: "ảnh chụp.png".into(),
+                file_ref: "spaces/test/media/picture".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }];
         hydrate_cached_media(&dir, &mut msgs);
         let media = msgs[0].media.as_ref().unwrap();
-        assert_eq!((media.width, media.height), (256,256));
+        assert_eq!((media.width, media.height), (256, 256));
         assert_eq!(std::path::Path::new(&media.local_path), path);
         msgs[0].media.as_mut().unwrap().width = 120;
         msgs[0].media.as_mut().unwrap().height = 240;
         hydrate_cached_media(&dir, &mut msgs);
         let media = msgs[0].media.as_ref().unwrap();
-        assert_eq!((media.width, media.height), (120,240), "known provider dimensions remain authoritative");
+        assert_eq!(
+            (media.width, media.height),
+            (120, 240),
+            "known provider dimensions remain authoritative"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn thread_queries_are_bounded_and_paged_from_the_newest_end() {
-        let url = reqwest::Url::parse(&thread_url("spaces/test", "spaces/test/threads/t", "next+&token", 200, false)).unwrap();
+        let url = reqwest::Url::parse(&thread_url(
+            "spaces/test",
+            "spaces/test/threads/t",
+            "next+&token",
+            200,
+            false,
+        ))
+        .unwrap();
         let q: HashMap<_, _> = url.query_pairs().into_owned().collect();
         assert_eq!(q["pageSize"], "20");
         assert_eq!(q["orderBy"], "createTime desc");
         assert_eq!(q["pageToken"], "next+&token");
         assert_eq!(q["filter"], "thread.name = \"spaces/test/threads/t\"");
-        let root = reqwest::Url::parse(&thread_url("spaces/test", "spaces/test/threads/t", "", 20, true)).unwrap();
+        let root = reqwest::Url::parse(&thread_url(
+            "spaces/test",
+            "spaces/test/threads/t",
+            "",
+            20,
+            true,
+        ))
+        .unwrap();
         let q: HashMap<_, _> = root.query_pairs().into_owned().collect();
         assert_eq!(q["pageSize"], "1");
         assert_eq!(q["orderBy"], "createTime asc");
@@ -1715,14 +2736,46 @@ mod tests {
     }
 
     #[test]
+    fn thread_count_asks_for_the_reply_flag_alone() {
+        let url = reqwest::Url::parse(&thread_count_url(
+            "spaces/test",
+            "spaces/test/threads/t",
+            "next+&token",
+        ))
+        .unwrap();
+        let q: HashMap<_, _> = url.query_pairs().into_owned().collect();
+        assert_eq!(q["pageSize"], "1000");
+        assert_eq!(q["fields"], "messages(threadReply),nextPageToken");
+        assert_eq!(q["filter"], "thread.name = \"spaces/test/threads/t\"");
+        assert_eq!(q["pageToken"], "next+&token");
+        assert!(
+            !thread_count_url("spaces/test", "spaces/test/threads/t", "").contains("pageToken")
+        );
+    }
+
+    #[test]
     fn thread_response_keeps_pagination_even_for_a_deleted_only_page() {
-        let page = parse_thread_page("a", "me", &json!({"messages":[
+        let page = parse_thread_page(
+            "a",
+            "me",
+            &json!({"messages":[
             {"name":"spaces/s/messages/new", "createTime":"2026-10-26T04:00:02Z"},
             {"name":"spaces/s/messages/old", "createTime":"2026-10-26T04:00:01Z"}
-        ], "nextPageToken":"more"}));
-        assert_eq!(page.messages.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["spaces/s/messages/old", "spaces/s/messages/new"]);
+        ], "nextPageToken":"more"}),
+        );
+        assert_eq!(
+            page.messages
+                .iter()
+                .map(|m| m.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["spaces/s/messages/old", "spaces/s/messages/new"]
+        );
         assert_eq!(page.next_page_token, "more");
-        let deleted = parse_thread_page("a", "me", &json!({"messages":[{"name":"gone", "deletionMetadata":{"deletionType":"CREATOR"}}],"nextPageToken":"keep-going"}));
+        let deleted = parse_thread_page(
+            "a",
+            "me",
+            &json!({"messages":[{"name":"gone", "deletionMetadata":{"deletionType":"CREATOR"}}],"nextPageToken":"keep-going"}),
+        );
         assert!(deleted.messages.is_empty());
         assert_eq!(deleted.next_page_token, "keep-going");
     }
@@ -1738,16 +2791,25 @@ mod tests {
     fn code_blocks_come_back_from_text() {
         let text = "see:\n{\n  \"a\": 1,\n  \"b\": [2]\n}\nthanks";
         let formatted = "see:\n    {  \"a\": 1,  \"b\": \\[2\\]}\nthanks";
-        assert_eq!(restore_code_blocks(formatted, text), "see:\n```\n{\n  \"a\": 1,\n  \"b\": [2]\n}\n```\nthanks");
+        assert_eq!(
+            restore_code_blocks(formatted, text),
+            "see:\n```\n{\n  \"a\": 1,\n  \"b\": [2]\n}\n```\nthanks"
+        );
         // one indented line is not a block; unmatched runs and plain text pass through
-        assert_eq!(restore_code_blocks("    x = 1\nok", "x = 1\nok"), "    x = 1\nok");
+        assert_eq!(
+            restore_code_blocks("    x = 1\nok", "x = 1\nok"),
+            "    x = 1\nok"
+        );
         assert_eq!(restore_code_blocks("    gone", "other"), "    gone");
         assert_eq!(restore_code_blocks("*bold* é", "bold é"), "*bold* é");
     }
 
     #[test]
     fn html_entities_decode() {
-        assert_eq!(unescape("a&#9;b &amp; c&lt;d&gt; &#x1F600; &quot;q&quot; AT&T &amp no;"), "a\tb & c<d> 😀 \"q\" AT&T &amp no;");
+        assert_eq!(
+            unescape("a&#9;b &amp; c&lt;d&gt; &#x1F600; &quot;q&quot; AT&T &amp no;"),
+            "a\tb & c<d> 😀 \"q\" AT&T &amp no;"
+        );
     }
 
     #[test]
@@ -1761,8 +2823,14 @@ mod tests {
             chat_markup("Hi <chat-user data-user=\"users/7\"></chat-user> or <chat-user data-user=\"users/9\"></chat-user> <chat-emoji data-emoji-name=\":ok:\"></chat-emoji>", &names),
             "Hi @{Minh} or @{?} :ok:"
         );
-        assert_eq!(chat_markup("a < b and <mailto:a@b.c|mail> <unclosed", &names), "a < b and mail <unclosed");
-        assert_eq!(chat_markup("4\\. /var/www/wallet-services-v7\\_3 C:\\\\tmp \\n", &names), "4. /var/www/wallet-services-v7_3 C:\\tmp \\n");
+        assert_eq!(
+            chat_markup("a < b and <mailto:a@b.c|mail> <unclosed", &names),
+            "a < b and mail <unclosed"
+        );
+        assert_eq!(
+            chat_markup("4\\. /var/www/wallet-services-v7\\_3 C:\\\\tmp \\n", &names),
+            "4. /var/www/wallet-services-v7_3 C:\\tmp \\n"
+        );
     }
 
     #[test]
@@ -1776,22 +2844,31 @@ mod tests {
 
     #[test]
     fn thread_reply_keeps_its_destination_and_never_falls_back() {
-        let (url, body) = create_message_request("spaces/A", "reply", Some("spaces/A/threads/T"), None);
+        let (url, body) =
+            create_message_request("spaces/A", "reply", Some("spaces/A/threads/T"), None);
         assert!(url.ends_with("messageReplyOption=REPLY_MESSAGE_OR_FAIL"));
         assert_eq!(body["thread"]["name"], "spaces/A/threads/T");
     }
 
     #[test]
     fn dm_supports_inline_threading_when_google_advertises_it() {
-        let chat = space_chat("gc", &json!({"name":"spaces/DM", "spaceType":"DIRECT_MESSAGE", "spaceThreadingState":"THREADED_MESSAGES"}), None);
+        let chat = space_chat(
+            "gc",
+            &json!({"name":"spaces/DM", "spaceType":"DIRECT_MESSAGE", "spaceThreadingState":"THREADED_MESSAGES"}),
+            None,
+        );
         assert!(chat.threaded);
     }
 
     #[test]
     fn quote_snapshot_keeps_sender_and_text() {
-        let msg = to_msg("gc", "users/me", &json!({"name":"spaces/A/messages/R", "quotedMessageMetadata": {
-            "name":"spaces/A/messages/Q", "quotedMessageSnapshot":{"sender":{"name":"users/2","displayName":"Lan"},"text":"original message"}
-        }}));
+        let msg = to_msg(
+            "gc",
+            "users/me",
+            &json!({"name":"spaces/A/messages/R", "quotedMessageMetadata": {
+                "name":"spaces/A/messages/Q", "quotedMessageSnapshot":{"sender":{"name":"users/2","displayName":"Lan"},"text":"original message"}
+            }}),
+        );
         assert_eq!(msg.reply_name, "Lan");
         assert_eq!(msg.reply_text, "original message");
     }
@@ -1840,8 +2917,14 @@ mod tests {
     #[test]
     fn unescapes_after_a_lone_less_than() {
         let names = HashMap::new();
-        assert_eq!(super::chat_markup("cat \\> out.csv \\<\\<'EOF'\nuser\\_id", &names), "cat > out.csv <<'EOF'\nuser_id");
-        assert_eq!(super::chat_markup("a < b and <https://x.y|site>", &names), "a < b and [site](https://x.y)");
+        assert_eq!(
+            super::chat_markup("cat \\> out.csv \\<\\<'EOF'\nuser\\_id", &names),
+            "cat > out.csv <<'EOF'\nuser_id"
+        );
+        assert_eq!(
+            super::chat_markup("a < b and <https://x.y|site>", &names),
+            "a < b and [site](https://x.y)"
+        );
     }
 
     /// A real announcement: formattedText makes every line a paragraph and wraps at 80 columns.
@@ -1857,8 +2940,14 @@ mod tests {
             "**🚩[GO-LIVE] VIBE!**\n\n**Starting 26 October, **VIBE will manage your everyday HR needs and submit requests! 🎉\n\nPlease use **VIBE** for:\n**⛱️Leave:** ease.\n🌿**Leafy** — AI.\n\n**Need Support? **\nIf you have issues, we’re happy to help!\n💚 **Make it VIBE!**",
         );
         // the classic format's lines already match: nothing moves
-        assert_eq!(keep_line_breaks("*a*\n* *one*\nb", "a\n* one\nb"), "*a*\n* *one*\nb");
-        assert_eq!(keep_line_breaks("see [doc](https://x.y)\n\nok", "see https://x.y\nok"), "see [doc](https://x.y)\n\nok");
+        assert_eq!(
+            keep_line_breaks("*a*\n* *one*\nb", "a\n* one\nb"),
+            "*a*\n* *one*\nb"
+        );
+        assert_eq!(
+            keep_line_breaks("see [doc](https://x.y)\n\nok", "see https://x.y\nok"),
+            "see [doc](https://x.y)\nok"
+        );
     }
 
     /// A real message once panicked here ("byte index … inside 'ạ'") and killed the poller.
@@ -1866,7 +2955,9 @@ mod tests {
     fn code_block_ending_in_multibyte_char() {
         let text = "issue:\nCược 100k\nTrừ 250k ạ";
         let formatted = "issue:\n    Cược 100kTrừ 250k ạ\n";
-        assert_eq!(super::restore_code_blocks(formatted, text), "issue:\n```\nCược 100k\nTrừ 250k ạ\n```\n");
+        assert_eq!(
+            super::restore_code_blocks(formatted, text),
+            "issue:\n```\nCược 100k\nTrừ 250k ạ\n```\n"
+        );
     }
 }
-

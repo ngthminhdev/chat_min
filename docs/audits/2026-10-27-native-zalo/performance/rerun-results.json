@@ -1,0 +1,719 @@
+{
+  "scope": "Pre-release re-run, 2026-10-27, same machine/scripts as the original reports, run sequentially with no parallel build. UI: run-ui.mjs <provider> 1000 shell <provider>. Cache: cache-benchmark.py (mode=ro). Connector: connector-benchmark.mjs. Native import: debug CLI, synthetic temporary DBs.",
+  "ui": {
+    "zalo": {
+      "frameGaps": {
+        "p95": 18,
+        "max": 20,
+        "over25": 0,
+        "count": 92
+      },
+      "switching": {
+        "median": 7,
+        "p95": 8,
+        "samples": [
+          {
+            "cpu": 6,
+            "total": 99
+          },
+          {
+            "cpu": 7,
+            "total": 97
+          },
+          {
+            "cpu": 8,
+            "total": 101
+          },
+          {
+            "cpu": 6,
+            "total": 100
+          },
+          {
+            "cpu": 7,
+            "total": 99
+          },
+          {
+            "cpu": 7,
+            "total": 99
+          },
+          {
+            "cpu": 7,
+            "total": 99
+          },
+          {
+            "cpu": 6,
+            "total": 100
+          },
+          {
+            "cpu": 7,
+            "total": 99
+          },
+          {
+            "cpu": 7,
+            "total": 100
+          }
+        ]
+      },
+      "refresh": {
+        "median": 1,
+        "p95": 1,
+        "samples": [
+          {
+            "cpu": 1,
+            "total": 33
+          },
+          {
+            "cpu": 1,
+            "total": 32
+          },
+          {
+            "cpu": 1,
+            "total": 33
+          },
+          {
+            "cpu": 1,
+            "total": 34
+          },
+          {
+            "cpu": 0,
+            "total": 34
+          },
+          {
+            "cpu": 1,
+            "total": 34
+          },
+          {
+            "cpu": 1,
+            "total": 35
+          },
+          {
+            "cpu": 0,
+            "total": 33
+          },
+          {
+            "cpu": 1,
+            "total": 34
+          },
+          {
+            "cpu": 1,
+            "total": 33
+          }
+        ]
+      },
+      "rows": 9
+    },
+    "telegram": {
+      "frameGaps": {
+        "p95": 18,
+        "max": 21,
+        "over25": 0,
+        "count": 92
+      },
+      "switching": {
+        "median": 7,
+        "p95": 7,
+        "samples": [
+          {
+            "cpu": 7,
+            "total": 100
+          },
+          {
+            "cpu": 7,
+            "total": 100
+          },
+          {
+            "cpu": 7,
+            "total": 101
+          },
+          {
+            "cpu": 7,
+            "total": 100
+          },
+          {
+            "cpu": 6,
+            "total": 100
+          },
+          {
+            "cpu": 7,
+            "total": 99
+          },
+          {
+            "cpu": 7,
+            "total": 97
+          },
+          {
+            "cpu": 7,
+            "total": 100
+          },
+          {
+            "cpu": 6,
+            "total": 100
+          },
+          {
+            "cpu": 7,
+            "total": 100
+          }
+        ]
+      },
+      "refresh": {
+        "median": 0,
+        "p95": 1,
+        "samples": [
+          {
+            "cpu": 0,
+            "total": 33
+          },
+          {
+            "cpu": 1,
+            "total": 34
+          },
+          {
+            "cpu": 0,
+            "total": 32
+          },
+          {
+            "cpu": 0,
+            "total": 33
+          },
+          {
+            "cpu": 1,
+            "total": 34
+          },
+          {
+            "cpu": 1,
+            "total": 34
+          },
+          {
+            "cpu": 0,
+            "total": 32
+          },
+          {
+            "cpu": 1,
+            "total": 33
+          },
+          {
+            "cpu": 0,
+            "total": 33
+          },
+          {
+            "cpu": 0,
+            "total": 33
+          }
+        ]
+      },
+      "rows": 9
+    },
+    "gchat": {
+      "frameGaps": {
+        "p95": 18,
+        "max": 24,
+        "over25": 0,
+        "count": 92
+      },
+      "switching": {
+        "median": 7,
+        "p95": 7,
+        "samples": [
+          {
+            "cpu": 7,
+            "total": 101
+          },
+          {
+            "cpu": 6,
+            "total": 100
+          },
+          {
+            "cpu": 7,
+            "total": 100
+          },
+          {
+            "cpu": 7,
+            "total": 99
+          },
+          {
+            "cpu": 7,
+            "total": 99
+          },
+          {
+            "cpu": 7,
+            "total": 100
+          },
+          {
+            "cpu": 7,
+            "total": 101
+          },
+          {
+            "cpu": 6,
+            "total": 101
+          },
+          {
+            "cpu": 6,
+            "total": 99
+          },
+          {
+            "cpu": 6,
+            "total": 99
+          }
+        ]
+      },
+      "refresh": {
+        "median": 1,
+        "p95": 1,
+        "samples": [
+          {
+            "cpu": 0,
+            "total": 33
+          },
+          {
+            "cpu": 1,
+            "total": 33
+          },
+          {
+            "cpu": 1,
+            "total": 34
+          },
+          {
+            "cpu": 0,
+            "total": 34
+          },
+          {
+            "cpu": 1,
+            "total": 34
+          },
+          {
+            "cpu": 1,
+            "total": 33
+          },
+          {
+            "cpu": 1,
+            "total": 32
+          },
+          {
+            "cpu": 1,
+            "total": 33
+          },
+          {
+            "cpu": 1,
+            "total": 35
+          },
+          {
+            "cpu": 1,
+            "total": 34
+          }
+        ]
+      },
+      "rows": 9
+    }
+  },
+  "cache": {
+    "scope": "Exact Store::msgs/primary_msgs/search SQL with Python json.loads; not Rust serde/IPC/UI/provider timings.",
+    "runtime": "3.15.0",
+    "sqlite": "3.54.1",
+    "cold_limit": "Reopened connections reset SQLite page/statement caches. OS filesystem cache not flushed; no disk-cold claim. Connection-open time excluded.",
+    "database_bytes": 49033216,
+    "wal_bytes": 6674432,
+    "page_size": 4096,
+    "sqlite_cache_size": -2000,
+    "providers": {
+      "telegram": {
+        "accounts": 1,
+        "cached_chats": 59,
+        "cached_messages": 10118,
+        "largest_chat_messages": 2133,
+        "latest_50": {
+          "rows": 50,
+          "first_existing_connection_ms": 1.0676,
+          "warm": {
+            "iterations": 200,
+            "median_ms": 0.1719,
+            "p95_ms": 0.1792,
+            "max_ms": 0.1985
+          },
+          "reopened_sqlite_cache_os_warm": {
+            "iterations": 30,
+            "median_ms": 0.2212,
+            "p95_ms": 0.2487,
+            "max_ms": 0.281
+          },
+          "query_plan": [
+            "SEARCH messages USING INDEX messages_sort (account_id=? AND chat_id=? AND sort<?)"
+          ]
+        },
+        "older_50": {
+          "rows": 50,
+          "first_existing_connection_ms": 1.7752,
+          "warm": {
+            "iterations": 200,
+            "median_ms": 0.1686,
+            "p95_ms": 0.1742,
+            "max_ms": 0.1864
+          },
+          "reopened_sqlite_cache_os_warm": {
+            "iterations": 30,
+            "median_ms": 0.2252,
+            "p95_ms": 0.2383,
+            "max_ms": 0.2909
+          },
+          "query_plan": [
+            "SEARCH messages USING INDEX messages_sort (account_id=? AND chat_id=? AND sort<?)"
+          ]
+        },
+        "search_fixed_prefix": {
+          "rows": 50,
+          "first_existing_connection_ms": 115.2723,
+          "warm": {
+            "iterations": 60,
+            "median_ms": 7.757,
+            "p95_ms": 8.3082,
+            "max_ms": 8.4986
+          },
+          "reopened_sqlite_cache_os_warm": {
+            "iterations": 30,
+            "median_ms": 8.1874,
+            "p95_ms": 9.9157,
+            "max_ms": 12.6189
+          },
+          "query_plan": [
+            "SCAN f VIRTUAL TABLE INDEX 0:M4",
+            "SEARCH m USING INDEX sqlite_autoindex_messages_1 (account_id=? AND chat_id=? AND id=?)",
+            "USE TEMP B-TREE FOR ORDER BY"
+          ]
+        }
+      },
+      "gchat": {
+        "accounts": 1,
+        "cached_chats": 109,
+        "cached_messages": 13576,
+        "largest_chat_messages": 4943,
+        "latest_50": {
+          "rows": 50,
+          "first_existing_connection_ms": 2.3074,
+          "warm": {
+            "iterations": 200,
+            "median_ms": 0.2122,
+            "p95_ms": 0.2213,
+            "max_ms": 0.237
+          },
+          "reopened_sqlite_cache_os_warm": {
+            "iterations": 30,
+            "median_ms": 0.28,
+            "p95_ms": 0.3665,
+            "max_ms": 0.4432
+          },
+          "query_plan": [
+            "SEARCH messages USING INDEX messages_sort (account_id=? AND chat_id=? AND sort<?)"
+          ]
+        },
+        "older_50": {
+          "rows": 50,
+          "first_existing_connection_ms": 3.0169,
+          "warm": {
+            "iterations": 200,
+            "median_ms": 0.1735,
+            "p95_ms": 0.182,
+            "max_ms": 0.2055
+          },
+          "reopened_sqlite_cache_os_warm": {
+            "iterations": 30,
+            "median_ms": 0.2351,
+            "p95_ms": 0.2468,
+            "max_ms": 0.3275
+          },
+          "query_plan": [
+            "SEARCH messages USING INDEX messages_sort (account_id=? AND chat_id=? AND sort<?)"
+          ]
+        },
+        "primary_latest_50": {
+          "rows": 50,
+          "first_existing_connection_ms": 18.9978,
+          "warm": {
+            "iterations": 200,
+            "median_ms": 1.405,
+            "p95_ms": 1.461,
+            "max_ms": 1.5942
+          },
+          "reopened_sqlite_cache_os_warm": {
+            "iterations": 30,
+            "median_ms": 1.679,
+            "p95_ms": 1.7286,
+            "max_ms": 1.9684
+          },
+          "query_plan": [
+            "SEARCH messages USING INDEX messages_sort (account_id=? AND chat_id=? AND sort<?)"
+          ]
+        },
+        "search_fixed_prefix": {
+          "rows": 50,
+          "first_existing_connection_ms": 36.2445,
+          "warm": {
+            "iterations": 60,
+            "median_ms": 11.852,
+            "p95_ms": 12.6842,
+            "max_ms": 13.8638
+          },
+          "reopened_sqlite_cache_os_warm": {
+            "iterations": 30,
+            "median_ms": 11.7635,
+            "p95_ms": 12.342,
+            "max_ms": 12.3931
+          },
+          "query_plan": [
+            "SCAN f VIRTUAL TABLE INDEX 0:M4",
+            "SEARCH m USING INDEX sqlite_autoindex_messages_1 (account_id=? AND chat_id=? AND id=?)",
+            "USE TEMP B-TREE FOR ORDER BY"
+          ]
+        }
+      },
+      "zalo": {
+        "accounts": 1,
+        "cached_chats": 33,
+        "cached_messages": 974,
+        "largest_chat_messages": 247,
+        "latest_50": {
+          "rows": 50,
+          "first_existing_connection_ms": 1.6699,
+          "warm": {
+            "iterations": 200,
+            "median_ms": 0.2694,
+            "p95_ms": 0.2906,
+            "max_ms": 0.3366
+          },
+          "reopened_sqlite_cache_os_warm": {
+            "iterations": 30,
+            "median_ms": 0.3318,
+            "p95_ms": 0.342,
+            "max_ms": 0.3904
+          },
+          "query_plan": [
+            "SEARCH messages USING INDEX messages_sort (account_id=? AND chat_id=? AND sort<?)"
+          ]
+        },
+        "older_50": {
+          "rows": 50,
+          "first_existing_connection_ms": 1.6925,
+          "warm": {
+            "iterations": 200,
+            "median_ms": 0.243,
+            "p95_ms": 0.2514,
+            "max_ms": 0.2762
+          },
+          "reopened_sqlite_cache_os_warm": {
+            "iterations": 30,
+            "median_ms": 0.3012,
+            "p95_ms": 0.3122,
+            "max_ms": 0.3377
+          },
+          "query_plan": [
+            "SEARCH messages USING INDEX messages_sort (account_id=? AND chat_id=? AND sort<?)"
+          ]
+        },
+        "search_fixed_prefix": {
+          "rows": 50,
+          "first_existing_connection_ms": 10.8333,
+          "warm": {
+            "iterations": 60,
+            "median_ms": 7.0572,
+            "p95_ms": 7.6305,
+            "max_ms": 7.7529
+          },
+          "reopened_sqlite_cache_os_warm": {
+            "iterations": 30,
+            "median_ms": 7.0758,
+            "p95_ms": 7.2523,
+            "max_ms": 7.2611
+          },
+          "query_plan": [
+            "SCAN f VIRTUAL TABLE INDEX 0:M4",
+            "SEARCH m USING INDEX sqlite_autoindex_messages_1 (account_id=? AND chat_id=? AND id=?)",
+            "USE TEMP B-TREE FOR ORDER BY"
+          ]
+        }
+      }
+    },
+    "global_search_fixed_prefix": {
+      "rows": 50,
+      "first_existing_connection_ms": 88.5394,
+      "warm": {
+        "iterations": 60,
+        "median_ms": 25.8951,
+        "p95_ms": 26.5561,
+        "max_ms": 27.039
+      },
+      "reopened_sqlite_cache_os_warm": {
+        "iterations": 30,
+        "median_ms": 25.7642,
+        "p95_ms": 26.3064,
+        "max_ms": 26.3597
+      },
+      "query_plan": [
+        "SCAN f VIRTUAL TABLE INDEX 0:M4",
+        "SEARCH m USING INDEX sqlite_autoindex_messages_1 (account_id=? AND chat_id=? AND id=?)",
+        "USE TEMP B-TREE FOR ORDER BY"
+      ]
+    }
+  },
+  "connector": {
+    "scope": "Offline production modules imported directly; synthetic rows and EventEmitter/fake APIs only. Excludes network/Rust ingestion/SQLite writes/IPC/UI.",
+    "node": "v22.20.0",
+    "rows": 10000,
+    "unique_senders": 250,
+    "normalize_10000": {
+      "iterations": 100,
+      "median_ms": 3.5032919999999876,
+      "p95_ms": 3.640999999999991,
+      "max_ms": 3.749666999999988
+    },
+    "old_messages_10000": {
+      "iterations": 100,
+      "median_ms": 5.590457999999899,
+      "p95_ms": 5.768459000000007,
+      "max_ms": 5.99633300000005
+    },
+    "history_batching": {
+      "input_messages": 10000,
+      "history_events": 100,
+      "output_messages": 10000,
+      "maximum_configured_batch": 100,
+      "profile_api_calls_seeded": 0
+    },
+    "profile_cold_10000_requests": {
+      "iterations": 30,
+      "median_ms": 1.2549999999998818,
+      "p95_ms": 2.163041999999905,
+      "max_ms": 2.196457999999893,
+      "requests": 10000,
+      "distinct_identities": 250,
+      "load_calls": 5,
+      "loaded_identities": 250,
+      "max_batch": 50,
+      "profile_update_events": 5,
+      "cached_profiles": 250,
+      "includes_timer_delay": true
+    },
+    "backlog_coalescing": {
+      "concurrent_readers": 20,
+      "fake_page_requests": 3,
+      "rows_each": 300,
+      "all_share_result": true,
+      "elapsed_ms": 0.5587499999999181
+    },
+    "group_history_coalescing": {
+      "concurrent_requests": 20,
+      "fake_provider_calls": 1,
+      "messages_each": 50,
+      "elapsed_ms": 0.36066699999992125
+    }
+  },
+  "native_import": {
+    "scope": "Real debug Rust process -> Store::open/migrations -> JSONL/Serde -> import_zalo_records batches of 100 -> messages/thread index/FTS/chat metadata writes on synthetic temporary DB only.",
+    "input_messages": 10000,
+    "input_chats": 20,
+    "media_fraction": 0.25,
+    "native_process_includes": "Process startup/shutdown, SQLite open/migrations, input file reads, JSON decode, validation, 100 transactions, writes/index maintenance and final connection close. Generation/build excluded.",
+    "cold_limit": "Fresh synthetic SQLite DB per first import; OS cache not purged. Repeat imports reuse same DB. No disk-cold claim.",
+    "samples": [
+      {
+        "initial_ms": 2817.0659,
+        "repeat_ms": 495.6685,
+        "initial_report": {
+          "read": 10000,
+          "inserted": 10000,
+          "existing": 0
+        },
+        "repeat_report": {
+          "read": 10000,
+          "inserted": 0,
+          "existing": 10000
+        },
+        "counters_after_repeat": {
+          "messages": 10000,
+          "fts_rows": 10000,
+          "chats": 20,
+          "unread_sum": 0,
+          "media_messages": 2500
+        },
+        "database_bytes": 10895360
+      },
+      {
+        "initial_ms": 923.653,
+        "repeat_ms": 490.6282,
+        "initial_report": {
+          "read": 10000,
+          "inserted": 10000,
+          "existing": 0
+        },
+        "repeat_report": {
+          "read": 10000,
+          "inserted": 0,
+          "existing": 10000
+        },
+        "counters_after_repeat": {
+          "messages": 10000,
+          "fts_rows": 10000,
+          "chats": 20,
+          "unread_sum": 0,
+          "media_messages": 2500
+        },
+        "database_bytes": 10895360
+      },
+      {
+        "initial_ms": 927.3078,
+        "repeat_ms": 488.2756,
+        "initial_report": {
+          "read": 10000,
+          "inserted": 10000,
+          "existing": 0
+        },
+        "repeat_report": {
+          "read": 10000,
+          "inserted": 0,
+          "existing": 10000
+        },
+        "counters_after_repeat": {
+          "messages": 10000,
+          "fts_rows": 10000,
+          "chats": 20,
+          "unread_sum": 0,
+          "media_messages": 2500
+        },
+        "database_bytes": 10895360
+      }
+    ],
+    "input_bytes": 10340288,
+    "bounded_queries": {
+      "latest_50": {
+        "iterations": 200,
+        "median_ms": 0.1984,
+        "p95_ms": 0.209,
+        "max_ms": 0.2618,
+        "rows": 50,
+        "query_plan": [
+          "SEARCH messages USING INDEX messages_sort (account_id=? AND chat_id=? AND sort<?)"
+        ]
+      },
+      "older_50": {
+        "iterations": 200,
+        "median_ms": 0.1994,
+        "p95_ms": 0.2147,
+        "max_ms": 0.2675,
+        "rows": 50,
+        "query_plan": [
+          "SEARCH messages USING INDEX messages_sort (account_id=? AND chat_id=? AND sort<?)"
+        ]
+      }
+    },
+    "initial_import": {
+      "iterations": 3,
+      "median_ms": 927.3078,
+      "p95_ms": 2817.0659,
+      "max_ms": 2817.0659
+    },
+    "idempotent_repeat_import": {
+      "iterations": 3,
+      "median_ms": 490.6282,
+      "p95_ms": 495.6685,
+      "max_ms": 495.6685
+    },
+    "limitations": "Debug build, 3 process samples only, no release-build throughput claim; query phase uses Python SQLite/json.loads. No UI/IPC/provider/network or concurrent writer. Temp DBs and JSONL deleted after run."
+  }
+}

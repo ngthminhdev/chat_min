@@ -8,7 +8,7 @@ test("fmt escapes, then renders code, links and mentions", () => {
     '<p>a &lt;b&gt; <code>x&lt;y</code> <span class="mention">@Trí Võ</span> <a class="msg-link" href="https://g.io/1">PR</a> <a class="msg-link" href="https://x.io/a">https://x.io/a</a>.</p>',
   );
   assert.equal(fmt("@{tri} hi", ["tri"]), '<p><span class="mention me">@tri</span> hi</p>');
-  assert.equal(fmt("a\nb\n\nc"), "<p>a<br>b</p><p>c</p>");
+  assert.equal(fmt("a\nb\n\nc"), "<p>a<br>b<br><br>c</p>");
   // no linkifying inside code
   assert.equal(fmt("`https://x.io`"), "<p><code>https://x.io</code></p>");
 });
@@ -53,4 +53,13 @@ test("a zero-width space after a marker keeps it literal (plain-text sends, lite
   assert.equal(fmt(`*${z}abc*${z} and *bold*`), `<p>*${z}abc*${z} and <strong>bold</strong></p>`);
   assert.equal(fmt(`\`${z}x\`${z}`), `<p>\`${z}x\`${z}</p>`);
   assert.equal(plain(`*${z}abc*${z} *b*`), "*abc* b");
+});
+
+test('message bodies retain blank lines, including leading and trailing breaks', () => {
+  assert.equal(fmt('\nfirst\n\n\nlast\n'), '<p><br>first<br><br><br>last<br></p>');
+  assert.equal(fmt('a\r\nb\r\n\r\nc'), '<p>a<br>b<br><br>c</p>');
+});
+
+test('bold closing whitespace never consumes the next line', () => {
+  assert.equal(fmt('**hello\n**world'), '<p>**hello<br>**world</p>');
 });

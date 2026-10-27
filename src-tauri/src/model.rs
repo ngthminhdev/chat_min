@@ -169,39 +169,114 @@ pub struct Member {
     pub role: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SenderProfile {
+    pub id: String,
+    pub name: String,
+    pub photo: String,
+}
+
 /// Everything pushed to the frontend goes through one event name, tagged by `type`.
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum Event {
     #[serde(rename_all = "camelCase")]
-    Accounts { accounts: Vec<Account> },
+    Accounts {
+        accounts: Vec<Account>,
+    },
     #[serde(rename_all = "camelCase")]
-    Health { account_id: String, health: String, text: String, until: i64 },
+    Health {
+        account_id: String,
+        health: String,
+        text: String,
+        until: i64,
+    },
     #[serde(rename_all = "camelCase")]
-    Auth { account_id: String, step: String, info: String, error: String },
-    Chat { chat: Chat },
+    Auth {
+        account_id: String,
+        step: String,
+        info: String,
+        error: String,
+    },
+    Chat {
+        chat: Chat,
+    },
     #[serde(rename_all = "camelCase")]
-    ChatRemoved { account_id: String, chat_id: String },
+    Profiles {
+        account_id: String,
+        profiles: Vec<SenderProfile>,
+    },
+    #[serde(rename_all = "camelCase")]
+    ChatRemoved {
+        account_id: String,
+        chat_id: String,
+    },
     #[serde(rename_all = "camelCase")]
     /// `inbox`: a new message for the titlebar bell (mention, DM, reply in a thread I posted in)
-    Message { msg: Msg, is_new: bool, #[serde(default)] inbox: bool },
+    Message {
+        msg: Msg,
+        is_new: bool,
+        #[serde(default)]
+        inbox: bool,
+    },
+    History {
+        messages: Vec<Msg>,
+        chats: Vec<Chat>,
+    },
     #[serde(rename_all = "camelCase")]
-    MessageIdChanged { old_id: String, msg: Msg },
+    MessageIdChanged {
+        old_id: String,
+        msg: Msg,
+    },
     #[serde(rename_all = "camelCase")]
-    MessagesDeleted { account_id: String, chat_id: String, ids: Vec<String> },
+    MessagesDeleted {
+        account_id: String,
+        chat_id: String,
+        ids: Vec<String>,
+    },
     /// a notification was clicked: open this chat ("account|chat")
-    Open { key: String, msg: String, thread: String },
+    Open {
+        key: String,
+        msg: String,
+        thread: String,
+    },
     /// a big download in progress, in whole percent
     #[serde(rename_all = "camelCase")]
-    FileProgress { account_id: String, file_ref: String, pct: i64 },
+    FileProgress {
+        account_id: String,
+        file_ref: String,
+        pct: i64,
+    },
     #[serde(rename_all = "camelCase")]
-    ReadOutbox { account_id: String, chat_id: String, up_to: i64 },
+    ReadOutbox {
+        account_id: String,
+        chat_id: String,
+        up_to: i64,
+    },
     /// someone else reacted to my message
-    Reacted { msg: Msg, emoji: String },
+    Reacted {
+        msg: Msg,
+        emoji: String,
+    },
     #[serde(rename_all = "camelCase")]
-    Presence { account_id: String, user_id: String, online: bool },
+    Presence {
+        account_id: String,
+        user_id: String,
+        online: bool,
+    },
     #[serde(rename_all = "camelCase")]
-    Typing { account_id: String, chat_id: String, who: String, on: bool },
+    Typing {
+        account_id: String,
+        chat_id: String,
+        who: String,
+        on: bool,
+    },
     #[serde(rename_all = "camelCase")]
-    Sync { account_id: String, step: usize, state: String, log: String },
+    Sync {
+        account_id: String,
+        step: usize,
+        state: String,
+        log: String,
+    },
 }

@@ -10,31 +10,35 @@ const downloads = new Map<string, Promise<string>>();
 
 /** photo = local path | https URL | TDLib file id (digits). Returns an <img> src or "". */
 export function useAvatar(accountId: string, photo: string): string {
-  const direct = !photo ? "" : /^(https?|data):/.test(photo) ? photo : photo.startsWith("/") ? fileSrc(photo) : "";
-  const [src, setSrc] = useState(direct);
+  // Zalo URLs go through the bounded native cache once; never issue a duplicate browser fetch.
+  const cacheZalo = accountId.startsWith("zalo-") && photo.startsWith("https://");
+  const direct = cacheZalo || !photo ? "" : /^(https?|data):/.test(photo) ? photo : photo.startsWith("/") ? fileSrc(photo) : "";
+  const identity = `${accountId}|${photo}`;
+  const [resolved, setResolved] = useState({ identity, src: direct });
   useEffect(() => {
-    setSrc(direct);
-    if (direct || !/^\d+$/.test(photo)) return;
+    setResolved({ identity, src: direct });
+    if (!cacheZalo && (direct || !/^\d+$/.test(photo))) return;
     const k = `${accountId}|${photo}`;
-    if (!downloads.has(k)) downloads.set(k, api.download(accountId, photo, "avatar").catch(() => ""));
+    if (!downloads.has(k)) downloads.set(k, api.download(accountId, photo, "avatar").catch(() => { downloads.delete(k); return ""; }));
     let alive = true;
-    downloads.get(k)!.then((p) => alive && p && setSrc(fileSrc(p)));
+    downloads.get(k)!.then((p) => alive && p && setResolved({ identity, src: fileSrc(p) }));
     return () => {
       alive = false;
     };
   }, [accountId, photo]);
-  return src;
+  // A reused row must never paint the previous person while its effect catches up.
+  return resolved.identity === identity ? resolved.src : direct;
 }
 
 const HUES = ["blue", "purple", "green", "orange", "pink", "amber", "red", "slate"];
 const hue = (s: string) => HUES[[...s].reduce((h, c) => (h * 31 + c.codePointAt(0)!) >>> 0, 7) % HUES.length];
 
 function Face({ src, fallback, cls, title, tint, platform, online }: { src: string; fallback: React.ReactNode; cls: string; title?: string; tint: string; platform?: Platform; online?: boolean }) {
-  const [broken, setBroken] = useState(false);
-  useEffect(() => setBroken(false), [src]);
+  const [brokenSrc, setBrokenSrc] = useState<string | null>(null);
+  const broken = brokenSrc === src;
   return (
     <span className={`${cls}${src && !broken ? " has-img" : ""}${online ? " online" : ""}`} title={online ? `${title ?? ""} · đang online`.replace(/^ · /, "") : title} style={{ "--av": `var(--conn-${tint})` } as React.CSSProperties}>
-      {src && !broken ? <img src={src} alt="" draggable={false} onError={() => setBroken(true)} /> : fallback}
+      {src && !broken ? <img src={src} alt="" draggable={false} onError={() => setBrokenSrc(src)} /> : fallback}
       {platform && (
         <span className="avatar-badge" aria-hidden="true">
           <Glyph platform={platform} />

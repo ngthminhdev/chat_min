@@ -1,6 +1,43 @@
-# Test kết nối Zalo cá nhân
+# Kết nối Zalo cá nhân
 
-Probe độc lập bằng `zca-js@2.2.0`; chưa nối vào UI ChatMin.
+## Connector ChatMin — 27/10/2026
+
+Đã thêm connector nền `connectors/zalo/` và cầu nối Rust `src-tauri/src/zalo.rs`.
+Zalo dùng sidebar/timeline/composer/cache/tìm kiếm/thông báo chung với các provider
+native của ChatMin; không chạy trang Zalo Web. Messenger vẫn dùng WebView.
+
+Trong ChatMin desktop: mở tài khoản Zalo cũ → **Kết nối bằng QR**, hoặc thêm tài khoản
+Zalo mới. Quét QR bằng điện thoại rồi xác nhận. Danh bạ có trong **Hội thoại mới**
+ở dưới tài khoản Zalo; bạn bè không tự biến thành inbox. Nhóm và tin gần đây được
+đồng bộ nền. Chỉ sau xác thực thành công mới xóa các hàng Zalo Web cũ khỏi sidebar.
+
+Bản desktop đóng gói Node và worker cùng app. Chạy `npm run zalo:build` trước khi
+chạy binary Rust trực tiếp; `npm run tauri -- dev/build` đã có build hook tự động.
+Credential mới nằm trong `<appdata>/zalo/<account-id>/session.json`, quyền 0600,
+thư mục 0700. Xóa tài khoản trong app dừng worker và xóa credential cục bộ;
+thu hồi phiên phía Zalo vẫn thực hiện trong Zalo trên điện thoại.
+
+Hỗ trợ trong connector: text, ảnh/tệp, trích dẫn, thu hồi, reaction phổ biến,
+đánh dấu đọc, typing, thành viên và cache tin. Picker sticker và gửi sticker đã nối vào UI chung. Sửa tin và gửi ghi âm
+chưa bật. Lịch sử từ server là backlog chung, có giới hạn; cache cục bộ không bị
+xóa khi server không trả tin cũ. Không coi trang rỗng là bằng chứng toàn bộ hội thoại
+chưa từng có tin.
+
+Kiểm tra: `npm run test:zalo`, `npm test`,
+`cargo test --manifest-path src-tauri/Cargo.toml --lib`.
+Đã đăng nhập QR mới và nhận/gửi tin thật bằng thao tác của người dùng trong app.
+Đã nhập 936 tin từ cache Zalo Web cũ của chính tài khoản vào SQLite; nhập lại không
+sinh bản trùng và không ghi đè bản native. Script migration không mở thêm listener.
+Avatar được cache qua Rust, giới hạn đồng thời và dung lượng; metadata danh bạ được
+lưu riêng để hydrate các trang tin khi đọc, tránh quét toàn bộ message cache.
+
+Lịch sử nhóm dùng endpoint cloud và checkpoint riêng theo nhóm; server có thể trả
+rỗng. Lịch sử DM từ server vẫn là backlog chung, chưa có bằng chứng API lấy tùy ý
+đầy đủ theo từng người. Không cam kết khôi phục tất cả lịch sử từ điện thoại.
+
+## Probe độc lập trước đây
+
+Probe độc lập bằng `zca-js@2.2.0`; giữ lại để tham khảo kết quả trước khi tích hợp.
 Không gửi tin, không đánh dấu đã đọc, không tải danh bạ/lịch sử.
 Chỉ gọi thông tin tài khoản để xác nhận login và nghe sự kiện trong thời gian giới hạn.
 

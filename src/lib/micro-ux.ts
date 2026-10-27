@@ -19,6 +19,11 @@ export function threadReplyCountLabel(loaded: number, nextToken?: string): strin
   return `${fmtCount(loaded)}${more ? "+" : ""}`;
 }
 
+/** Google's total once asked (a floor past 5000 replies), until then what is loaded. */
+export function threadTotalLabel(total: { count: number; exact: boolean } | undefined, loaded: number, nextToken?: string): string {
+  return total ? `${fmtCount(total.count)}${total.exact ? "" : "+"}` : threadReplyCountLabel(loaded, nextToken);
+}
+
 /** Emoji + Vietnamese name + searchable aliases. First sixteen are quick reactions. */
 export const EMOJI = [
   ["👍", "Đồng ý", "like thumbs up"], ["❤️", "Yêu thích", "heart love trái tim"],
@@ -75,4 +80,32 @@ export function nextEmojiIndex(index: number, key: string, count: number, column
     case "End": return count - 1;
     default: return i;
   }
+}
+
+/** Six user slots; presentation selectors never become distinct reactions. */
+export function quickReactions(saved?: readonly string[]): string[] {
+  const result: string[] = [];
+  for (const emoji of [...(saved ?? []), ...EMOJI.slice(0, 6).map(x => x[0])]) {
+    if (emoji && !result.some(e => bare(e) === bare(emoji))) result.push(emoji);
+    if (result.length === 6) break;
+  }
+  return result;
+}
+export function replaceQuickReaction(saved: readonly string[], index: number, emoji: string): string[] {
+  const result = quickReactions(saved), old = result[index];
+  if (old === undefined) return result;
+  const duplicate = result.findIndex(e => bare(e) === bare(emoji));
+  if (duplicate >= 0) result[duplicate] = old;
+  result[index] = emoji;
+  return result;
+}
+export function reactionChoices(saved?: readonly string[], only?: readonly string[], expanded = false): (readonly [string, string, string])[] {
+  // Keep the exact provider spelling (e.g. ❤), using the catalog only for labels.
+  const all = only ? only.map(emoji => {
+    const label = EMOJI.find(x => bare(x[0]) === bare(emoji));
+    return [emoji, label?.[1] ?? emoji, label?.[2] ?? ''] as const;
+  }) : [...EMOJI];
+  if (expanded) return all;
+  const preferred = quickReactions(saved).flatMap(e => all.filter(x => bare(x[0]) === bare(e)));
+  return [...preferred, ...all.filter(x => !preferred.some(p => bare(p[0]) === bare(x[0])))].slice(0, 16);
 }

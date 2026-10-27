@@ -1,15 +1,16 @@
 import { create } from "zustand";
-import { persistedUiChanged } from "./lib/ui-persistence";
-import { api, onEvent, saveFile } from "./lib/bridge";
+import { createUiWriter, persistedUiChanged, restoreUi, uiSnapshot } from "./lib/ui-persistence";
+import { api, isTauri, onEvent, saveFile } from "./lib/bridge";
 import { plain } from "./lib/format";
+import { bare } from "./lib/micro-ux";
 import { windowAppearance, type BackgroundMode } from "./lib/appearance";
-import { reconcileMessage } from "./lib/message-identity";
+import { correlateAcknowledgement, reconcileMessage } from "./lib/message-identity";
 import { queueToast } from "./lib/toast-queue";
 import { isMobile } from "./lib/mobile";
 import { mobileConversationVisible } from "./lib/mobile-navigation";
 import { PLATFORMS, type Cap } from "./lib/platforms";
 import { themeBase } from "./lib/themes";
-import type { Account, Chat, CoreEvent, Folder, Health, Media, Msg, Topic } from "./lib/types";
+import type { Account, Chat, CoreEvent, Folder, Health, Media, Msg, ThreadSummary, Topic } from "./lib/types";
 import type { IconName } from "./ui/Icon";
 
 export type Route = "shell" | "inbox" | "settings" | "search" | "welcome" | "wizard";
@@ -27,6 +28,7 @@ export interface Prefs {
   backgroundMode: BackgroundMode; backgroundTransparency: number;
   /** AI: the language the user reads in, and the default one to write in */
   aiMe: string; aiTo: string;
+  quickReactions?: string[];
 }
 /** `reacted`: someone added this emoji to my message; `ts` is then when it was seen */
 export type InboxItem = Msg & { reacted?: string };
@@ -47,7 +49,7 @@ export const DEFAULT_NOTIFY: NotifyPrefs = { enabled: true, mentions: false, qui
 export interface MenuItem { icon: IconName; label: string; kbd?: string; danger?: boolean; run: () => void }
 /** Popovers anchor below `y` (an element's bottom) and flip above `top` when they don't fit. */
 export type Pop = { x: number; y: number; top: number } & (
-  | { kind: "emoji"; onPick: (emoji: string) => void; only?: string[] }
+  | { kind: "emoji"; onPick: (emoji: string) => void; only?: string[]; expanded?: boolean }
   /** `quick`: phone long-press sheet — a row of reactions above the items, `more` opens the full picker */
   | { kind: "menu"; items: MenuItem[]; title?: string; quick?: { pick: (emoji: string) => void; more: () => void } }
   | { kind: "color"; accountId?: string; value?: string; onPick?: (color: string) => void }
@@ -110,6 +112,10 @@ interface State {
   threadTabs: Record<string, ThreadTab>;
   /** Transient Google thread pagination; never persisted with workspace tabs. */
   threadPages: Record<string, { token: string; limit: number; truncated?: boolean }>;
+  /** Threaded spaces: the thread list by latest reply, a flow of its own (thread_list) */
+  threadList: Record<string, { items: ThreadSummary[]; state: "idle" | "loading" | "done" }>;
+  /** Google's reply totals ("chatKey#threadId"), asked only for threads on screen */
+  threadCounts: Record<string, { count: number; exact: boolean }>;
   /** forum chat → topic the user opened last; opening the chat lands there (like Telegram) */
   lastTopic: Record<string, string>;
   /** user folders: sidebar groups holding chats from any account */
@@ -139,6 +145,8 @@ interface State {
   jumpTo: string | null;
   /** bumped to bring the open conversation to its newest message (notification click) */
   toLatest: number;
+  /** bumped when I send: the timeline lands on my message, even scrolled up (incoming never) */
+  sent: number;
   /** chats hidden from the sidebar → lastTs when hidden; a newer message brings them back */
   hidden: Record<string, number>;
   /** manual chat order per sidebar section ("accountId:section") — a prefix; the rest sorts by activity */
@@ -169,7 +177,7 @@ interface State {
 }
 
 const PERSIST = "chatmin.ui";
-const saved: Partial<State> = (() => {
+const saved: Partial<State> & { _savedAt?: number } = (() => {
   try {
     return JSON.parse(localStorage.getItem(PERSIST) || "{}");
   } catch {
@@ -211,6 +219,8 @@ export const useApp = create<State>(() => ({
   convTab: {},
   threadTabs: saved.threadTabs ?? {},
   threadPages: {},
+  threadList: {},
+  threadCounts: {},
   lastTopic: saved.lastTopic ?? {},
   folders: saved.folders ?? [],
   favorites: saved.favorites ?? [],
@@ -237,6 +247,7 @@ export const useApp = create<State>(() => ({
   sync: {},
   jumpTo: null,
   toLatest: 0,
+  sent: 0,
   hidden: saved.hidden ?? {},
   viewer: null,
   progress: {},
@@ -254,20 +265,26 @@ export const useApp = create<State>(() => ({
 const get = useApp.getState;
 const set = useApp.setState;
 
-// persist the UI bits that should survive a restart (never message content)
+// Browser cache plus a native backup outside WKWebView storage. Never save messages.
 let persistT: ReturnType<typeof setTimeout> | undefined;
-useApp.subscribe((s, previous) => {
-  if (!persistedUiChanged(s, previous)) return;
+let durableReady = !isTauri;
+let lastUiSavedAt = saved._savedAt ?? 0;
+const saveNativeUi = createUiWriter((snapshot: Partial<State>) => api.uiStateSet(snapshot));
+function persistUi(s: State, immediate = false) {
+  lastUiSavedAt = Math.max(Date.now(), lastUiSavedAt + 1);
+  const snapshot = { ...uiSnapshot(s), _savedAt: lastUiSavedAt };
   clearTimeout(persistT);
-  persistT = setTimeout(() => {
-    const { tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, lastTopic, folders, favorites, accountOrder, trAuto, aiLang, plainSend, hidden, chatOrder, inboxSeen, inboxRead } = s;
-    try {
-      localStorage.setItem(
-        PERSIST,
-        JSON.stringify({ tabs, active, drafts, collapsed, leftCollapsed, rightCollapsed, prefs, notif, threadTabs, lastTopic, folders, favorites, accountOrder, trAuto, aiLang, plainSend, hidden, chatOrder, inboxSeen, inboxRead }),
-      );
-    } catch {}
-  }, 300);
+  const save = () => {
+    try { localStorage.setItem(PERSIST, JSON.stringify(snapshot)); } catch {}
+    if (isTauri && durableReady) void saveNativeUi(snapshot).catch(e => {
+      console.error('Native UI preferences save failed', e);
+      toast('Không lưu được cấu hình ứng dụng; thay đổi vẫn được giữ trong cửa sổ này', 'info');
+    });
+  };
+  if (immediate) save(); else persistT = setTimeout(save, 300);
+}
+useApp.subscribe((s, previous) => {
+  if (s.booted && persistedUiChanged(s, previous)) persistUi(s, s.favorites !== previous.favorites || s.prefs !== previous.prefs || s.notif !== previous.notif);
 });
 
 // ── selectors ───────────────────────────────────────────────────────────────
@@ -351,7 +368,13 @@ export function boot(): Promise<void> {
 if (import.meta.hot) import.meta.hot.dispose(() => { eventOff?.(); eventOff = null; });
 
 async function bootOnce() {
-  const st = await api.appState();
+  let durableRead = true;
+  const [st, durable] = await Promise.all([api.appState(), api.uiState().catch(e => {
+    durableRead = false; console.error("Native UI preferences read failed", e); return null;
+  })]);
+  const restored = restoreUi({ ...uiSnapshot(get()), _savedAt: lastUiSavedAt }, durable);
+  lastUiSavedAt = Math.max(lastUiSavedAt, Number((durable as { _savedAt?: number } | null)?._savedAt) || 0);
+  set(restored);
   const chats: Record<string, Chat> = {};
   const hidden = get().hidden;
   for (const c of st.chats) if (!(c.lastTs <= hidden[key(c.accountId, c.id)])) chats[key(c.accountId, c.id)] = c;
@@ -372,6 +395,8 @@ async function bootOnce() {
     route: st.accounts.length ? "shell" : "welcome",
     ...(isMobile ? { leftCollapsed: false, rightCollapsed: true } : {}),
   });
+  durableReady = durableRead;
+  persistUi(get(), true);
   eventOff ??= onEvent(applyEvent);
   if (active && !isMobile) void openChat(active);
 }
@@ -380,7 +405,23 @@ function upsert(list: Msg[], m: Msg): Msg[] {
   return reconcileMessage(list, m);
 }
 
+// Native echoes can beat the IPC send response. Keep the one optimistic bubble
+// until the response supplies the provider ID; never guess which echo owns it.
+const pendingTextSends = new Map<string, Map<string, { text: string; wire: string; thread: string; reply: string }>>();
+const heldOutgoing = new Map<string, CoreEvent[]>();
+function holdOutgoing(e: CoreEvent): boolean {
+  if (e.type !== "message" && e.type !== "messageIdChanged") return false;
+  const m = e.msg, k = key(m.accountId, m.chatId), pending = pendingTextSends.get(k);
+  if (!m.outgoing || m.media || !pending?.size || get().msgs[k]?.some(x => x.id === m.id || x.uiPreviousIds?.includes(m.id))) return false;
+  const text = plain(m.text);
+  if (![...pending.values()].some(p => (text === p.text || text === p.wire) && (p.thread ? p.thread === m.threadId : !m.threadReply) && p.reply === (m.replyTo ?? ""))) return false;
+  const queue = heldOutgoing.get(k) ?? [];
+  queue.push(e); heldOutgoing.set(k, queue);
+  return true;
+}
+
 export function applyEvent(e: CoreEvent) {
+  if (holdOutgoing(e)) return;
   switch (e.type) {
     case "accounts": {
       const ids = new Set(e.accounts.map((a) => a.id));
@@ -394,6 +435,41 @@ export function applyEvent(e: CoreEvent) {
           active: s.active && tabs.includes(s.active) ? s.active : tabs[0] ?? null,
           route: !e.accounts.length && s.route !== "wizard" ? "welcome" : s.route === "welcome" && e.accounts.length ? "shell" : s.route,
         };
+      });
+      return;
+    }
+    case "history": {
+      set(s => {
+        const msgs = { ...s.msgs }, chats = { ...s.chats };
+        for (const chat of e.chats) chats[key(chat.accountId, chat.id)] = chat;
+        for (const msg of e.messages) {
+          const k = key(msg.accountId, msg.chatId);
+          if (!msgs[k] || holdOutgoing({ type: "message", msg, isNew: false })) continue;
+          msgs[k] = upsert(msgs[k], msg);
+        }
+        return { msgs, chats };
+      });
+      return;
+    }
+    case "profiles": {
+      const profiles = new Map(e.profiles.map(p => [p.id, p]));
+      set(s => {
+        let changed = false;
+        const msgs = { ...s.msgs };
+        for (const [k, list] of Object.entries(s.msgs)) {
+          if (!k.startsWith(`${e.accountId}|`)) continue;
+          let touched = false;
+          const next = list.map(m => {
+            const p = profiles.get(m.senderId);
+            if (!p) return m;
+            const senderPhoto = p.photo || m.senderPhoto, senderName = p.name || m.senderName;
+            if (senderPhoto === m.senderPhoto && senderName === m.senderName) return m;
+            touched = true;
+            return { ...m, senderPhoto, senderName };
+          });
+          if (touched) { msgs[k] = next; changed = true; }
+        }
+        return changed ? { msgs } : {};
       });
       return;
     }
@@ -441,6 +517,7 @@ export function applyEvent(e: CoreEvent) {
     case "message": {
       const k = key(e.msg.accountId, e.msg.chatId);
       const known = get().msgs[k]?.some((m) => m.id === e.msg.id) ?? false;
+      if (e.isNew && e.msg.threadReply && e.msg.threadId) bumpThread(k, e.msg);
       if (get().msgs[k]) {
         set((s) => ({
           msgs: { ...s.msgs, [k]: upsert(s.msgs[k], e.msg) },
@@ -555,6 +632,11 @@ export async function openChat(k: string) {
   if (!get().msgs[chatKey]) await showCached(chatKey);
   if (!get().msgs[chatKey]) await loadLatest(chatKey);
   else void loadLatest(chatKey);
+  if (get().chats[chatKey]?.threaded) {
+    void primeRoots(chatKey);
+    // cache only: the reply counts under thread starters, without touching the network
+    if (!get().threadList[chatKey]) void loadThreadList(chatKey, false, false);
+  }
   if (isThreadTab(k)) return void loadThread(k);
   const c = get().chats[k];
   if (c?.unread || c?.mention) void markRead(k);
@@ -743,6 +825,7 @@ async function showCached(k: string) {
   const primary = !!get().chats[k]?.threaded;
   const [page, roots] = await api.cachedMessages(...splitKey(k), PAGE, primary).catch(() => [[], []] as Msg[][]);
   if ((!page.length && !roots.length) || get().msgs[k]) return;
+  if (roots.length) primed.add(k);
   let list = page;
   for (const m of roots) list = upsert(list, m);
   const preview = threadPreviews(k, list);
@@ -870,6 +953,115 @@ async function fillRoots(k: string) {
   });
 }
 
+/** Threaded spaces: the newest 100 rows can all be replies of one or two busy threads, and
+ *  a list filled by prefetch or a thread tab never got the starters. They are a page of
+ *  their own (cache first), once per chat. */
+const primed = new Set<string>();
+async function primeRoots(k: string) {
+  if (primed.has(k)) return;
+  primed.add(k);
+  const page = await api.primaryMessages(...splitKey(k), 0, PAGE).catch(() => null);
+  if (!page) return void primed.delete(k);
+  if (!page.messages.length || !get().msgs[k]) return;
+  primaryCursor.set(k, Math.min(primaryCursor.get(k) ?? Infinity, page.before));
+  set((s) => {
+    let next = s.msgs[k] ?? [];
+    for (const m of page.messages) next = upsert(next, m);
+    return { msgs: { ...s.msgs, [k]: next } };
+  });
+}
+
+// ── thread list: its own flow, never derived from the timeline's page ─────────
+const THREAD_PAGE = 30;
+const byLatest = (a: ThreadSummary, b: ThreadSummary) => b.lastSort - a.lastSort;
+
+/** `remote`: when the cache runs out, let Rust walk three older history pages first. */
+export async function loadThreadList(k: string, more = false, remote = true) {
+  const current = get().threadList[k];
+  if (current?.state === "loading" || (more && current?.state === "done")) return;
+  const before = more ? current?.items[current.items.length - 1]?.lastSort ?? 0 : 0;
+  set((s) => ({ threadList: { ...s.threadList, [k]: { items: current?.items ?? [], state: "loading" } } }));
+  try {
+    const page = await api.threadList(...splitKey(k), before, THREAD_PAGE, remote);
+    set((s) => {
+      // live replies may have moved threads up meanwhile: theirs win over the cached rows
+      const held = more ? s.threadList[k]?.items ?? [] : (s.threadList[k]?.items ?? []).filter((t) => t.lastSort > (page.threads[0]?.lastSort ?? Infinity));
+      const seen = new Set(held.map((t) => t.threadId));
+      const items = [...held, ...page.threads.filter((t) => !seen.has(t.threadId))].sort(byLatest);
+      return { threadList: { ...s.threadList, [k]: { items, state: page.hasMore ? "idle" : "done" } } };
+    });
+    void fillThreadRoots(k);
+  } catch {
+    set((s) => ({ threadList: { ...s.threadList, [k]: { items: s.threadList[k]?.items ?? [], state: "idle" } } }));
+  }
+}
+
+/** Starters the cache doesn't have: at most eight per page, two in flight. */
+async function fillThreadRoots(k: string) {
+  const have = new Set((get().msgs[k] ?? []).filter((m) => !m.threadReply).map((m) => m.threadId));
+  const missing = (get().threadList[k]?.items ?? [])
+    .filter((t) => !t.root && !have.has(t.threadId) && !rootTried.has(`${k}#${t.threadId}`))
+    .slice(0, 8)
+    .map((t) => t.threadId);
+  const [accountId, chatId] = splitKey(k);
+  for (let i = 0; i < missing.length; i += 2) {
+    const batch = missing.slice(i, i + 2);
+    batch.forEach((t) => rootTried.add(`${k}#${t}`));
+    const roots = (await Promise.all(batch.map((t) => api.threadRoot(accountId, chatId, t).catch(() => [] as Msg[])))).flat();
+    if (!roots.length) continue;
+    set((s) => {
+      const list = s.threadList[k];
+      if (!list) return {};
+      const items = list.items.map((t) => (t.root ? t : { ...t, root: roots.find((r) => r.threadId === t.threadId && !r.threadReply) ?? null }));
+      return { threadList: { ...s.threadList, [k]: { ...list, items } } };
+    });
+  }
+}
+
+/** A new reply moves its thread to the top of a loaded list and counts once. */
+function bumpThread(k: string, m: Msg) {
+  set((s) => {
+    const list = s.threadList[k];
+    const old = list?.items.find((t) => t.threadId === m.threadId);
+    if (old?.recent.some((r) => r.id === m.id)) return {};
+    const id = `${k}#${m.threadId}`, total = s.threadCounts[id];
+    const threadCounts = total ? { ...s.threadCounts, [id]: { ...total, count: total.count + 1 } } : s.threadCounts;
+    if (!list) return { threadCounts };
+    const root = old?.root ?? s.msgs[k]?.find((x) => x.threadId === m.threadId && !x.threadReply) ?? null;
+    const item: ThreadSummary = {
+      threadId: m.threadId, root, replies: (old?.replies ?? 0) + 1,
+      lastSort: Math.max(old?.lastSort ?? 0, m.sort), lastTs: Math.max(old?.lastTs ?? 0, m.ts),
+      recent: [...(old?.recent ?? []), m].slice(-3),
+    };
+    const items = [item, ...list.items.filter((t) => t.threadId !== m.threadId)];
+    return { threadCounts, threadList: { ...s.threadList, [k]: { ...list, items } } };
+  });
+}
+
+// ── reply totals: a flow of their own, for threads on screen only ─────────────
+const countQueue: { k: string; threadId: string }[] = [];
+const countAsked = new Set<string>();
+let counting = 0;
+/** Newest ask first (what is on screen now), two requests in flight, once per session. */
+export function wantThreadCount(k: string, threadId: string) {
+  const id = `${k}#${threadId}`;
+  if (countAsked.has(id) || get().chats[k]?.kind === "web") return;
+  countAsked.add(id);
+  countQueue.push({ k, threadId });
+  pumpCounts();
+}
+function pumpCounts() {
+  while (counting < 2 && countQueue.length) {
+    const { k, threadId } = countQueue.pop()!;
+    const id = `${k}#${threadId}`;
+    counting++;
+    void api.threadCount(...splitKey(k), threadId)
+      .then((total) => set((s) => ({ threadCounts: { ...s.threadCounts, [id]: total } })))
+      .catch(() => countAsked.delete(id))
+      .finally(() => { counting--; pumpCounts(); });
+  }
+}
+
 export async function loadOlder(k: string) {
   const s = get();
   const list = s.msgs[k];
@@ -961,7 +1153,7 @@ let localId = 0;
 /** Show a message the backend just returned (e.g. a sent sticker) without waiting for its event. */
 export function addMsg(m: Msg) {
   const k = key(m.accountId, m.chatId);
-  set((s) => ({ msgs: { ...s.msgs, [k]: upsert(s.msgs[k] ?? [], m) }, fresh: { ...s.fresh, [m.id]: true } }));
+  set((s) => ({ msgs: { ...s.msgs, [k]: upsert(s.msgs[k] ?? [], m) }, fresh: { ...s.fresh, [m.id]: true }, sent: s.sent + 1 }));
 }
 
 /** Message text for re-sending elsewhere: markup flattened, line breaks kept. */
@@ -997,7 +1189,7 @@ export async function forwardMsg(m: Msg, to: string, { comment = "", threadId }:
 export async function send(k: string, text: string, { wire, ...opts }: { replyTo?: string; threadId?: string; file?: string; voice?: number; wire?: string; plain?: boolean; asFile?: boolean } = {}) {
   const [accountId, chatId] = splitKey(k);
   const temp: Msg = {
-    accountId, chatId, id: `local-${++localId}`, sort: Number.MAX_SAFE_INTEGER - 1000 + localId, senderId: "", senderName: "", senderPhoto: "",
+    accountId, chatId, id: `local-${++localId}`, sort: Number.MAX_SAFE_INTEGER - 1000 + localId, senderId: accountOf(accountId)?.selfId ?? "", senderName: "", senderPhoto: "",
     outgoing: true, ts: Date.now(), edited: false, deleted: false, kind: opts.file ? "media" : "text", text,
     media: opts.file ? { kind: opts.voice !== undefined ? "voice" : "file", name: opts.file.split("/").pop() ?? "file", size: 0, mime: "", width: 0, height: 0, fileRef: "", localPath: opts.file, thumb: "", url: "" } : null, // localPath: the upload progress key
     link: null, replyTo: opts.replyTo ?? "", replyName: "", replyText: "", reactions: [], threadId: opts.threadId ?? "",
@@ -1008,14 +1200,28 @@ export async function send(k: string, text: string, { wire, ...opts }: { replyTo
     temp.replyName = replied.outgoing ? "Bạn" : replied.senderName;
     temp.replyText = plain(replied.text) || replied.media?.name || "";
   }
-  set((s) => ({ msgs: { ...s.msgs, [k]: [...(s.msgs[k] ?? []), temp] }, fresh: { ...s.fresh, [temp.id]: true } }));
+  if (!opts.file) {
+    const pending = pendingTextSends.get(k) ?? new Map();
+    pending.set(temp.id, { text: plain(text), wire: plain(wire ?? text), thread: opts.threadId ?? "", reply: opts.replyTo ?? "" });
+    pendingTextSends.set(k, pending);
+  }
+  set((s) => ({ msgs: { ...s.msgs, [k]: [...(s.msgs[k] ?? []), temp] }, fresh: { ...s.fresh, [temp.id]: true }, sent: s.sent + 1 }));
   try {
-    const real = await api.send({ accountId, chatId, text: wire ?? text, ...opts });
+    const response = await api.send({ accountId, chatId, text: wire ?? text, ...opts });
+    const changes = (heldOutgoing.get(k) ?? []).filter((event): event is Extract<CoreEvent, { type: "messageIdChanged" }> => event.type === "messageIdChanged");
+    const real = correlateAcknowledgement(response, changes);
     set((s) => {
       return { msgs: { ...s.msgs, [k]: reconcileMessage(s.msgs[k] ?? [], real, temp.id) }, fresh: { ...s.fresh, [real.id]: true } };
     });
   } catch (e) {
     set((s) => ({ msgs: { ...s.msgs, [k]: (s.msgs[k] ?? []).map((m) => (m.id === temp.id ? { ...m, status: "failed", error: String(e) } : m)) } }));
+  } finally {
+    const pending = pendingTextSends.get(k);
+    pending?.delete(temp.id);
+    if (!pending?.size) pendingTextSends.delete(k);
+    const queued = heldOutgoing.get(k);
+    heldOutgoing.delete(k);
+    for (const event of queued ?? []) applyEvent(event);
   }
 }
 
@@ -1046,14 +1252,17 @@ export function allowedReactions(m: Msg): Promise<string[] | null> {
 }
 
 export async function toggleReaction(k: string, m: Msg, emoji: string) {
-  const r = m.reactions.find((x) => x.emoji === emoji);
+  const r = m.reactions.find((x) => bare(x.emoji) === bare(emoji));
+  emoji = r?.emoji ?? emoji;
   const add = !r?.mine;
   if (add) {
     const only = await allowedReactions(m);
-    if (only && !only.includes(emoji)) {
+    const providerEmoji = only?.find(e => bare(e) === bare(emoji));
+    if (only && !providerEmoji) {
       toast(only.length ? `Chat này không cho thả ${emoji} — bấm 🙂 để chọn biểu cảm khác` : "Chat này không cho thả biểu cảm", "info");
       return;
     }
+    emoji = providerEmoji ?? emoji;
   }
   // optimistic: the platform confirms through a message update
   const reactions = add
