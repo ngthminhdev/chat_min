@@ -278,7 +278,6 @@ pub fn show(core: &Arc<Core>, a: &Account, chat_id: &str, x: f64, y: f64, w: f64
         }
         wv.show().map_err(|e| e.to_string())?;
         if navigate { let _ = wv.set_focus(); }
-        core.notifier.set_open(&a.id, chat_id, true);
         return Ok(());
     }
     let (_, url) = site(&a.platform).ok_or("Nền tảng không hỗ trợ")?;
@@ -385,14 +384,11 @@ pub fn show(core: &Arc<Core>, a: &Account, chat_id: &str, x: f64, y: f64, w: f64
         });
     let wv = window.add_child(builder, pos, size).map_err(|e| e.to_string())?;
     if navigate { let _ = wv.set_focus(); }
-    core.notifier.set_open(&a.id, chat_id, true);
     Ok(())
 }
 
 #[cfg(desktop)]
 pub fn hide(core: &Core, account_id: &str) {
-    let open = core.web_open.lock().unwrap().get(account_id).cloned().flatten().unwrap_or_else(|| "web".into());
-    core.notifier.set_open(account_id, &open, false);
     if let Some(wv) = core.app.get_webview(&label(account_id)) {
         // WebKit can retain a native drag destination after hiding. Remove its hit
         // area as well, so background Zalo/Messenger cannot receive another chat's drop.

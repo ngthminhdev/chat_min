@@ -99,7 +99,9 @@ export interface Member { id: string; name: string; status: string; role: string
 /** who reacted (emoji, name) and who read a message as (name, photo) — Telegram groups only */
 export interface MsgPeople { reactions: [string, string][]; viewers: [string, string][] }
 
+export interface WindowPresence { foreground: boolean; revision: number }
 export type CoreEvent =
+  | ({ type: "windowPresence" } & WindowPresence)
   | { type: "accounts"; accounts: Account[] }
   | { type: "health"; accountId: string; health: HealthState; text: string; until: number }
   | { type: "auth"; accountId: string; step: "phone" | "code" | "password" | "qr" | "ready" | "error"; info: string; error: string }

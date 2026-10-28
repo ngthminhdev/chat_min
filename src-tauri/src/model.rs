@@ -181,6 +181,7 @@ pub struct SenderProfile {
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum Event {
+    WindowPresence { foreground: bool, revision: u64 },
     #[serde(rename_all = "camelCase")]
     Accounts {
         accounts: Vec<Account>,

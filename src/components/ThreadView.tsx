@@ -19,6 +19,7 @@ export function ThreadView({ tab }: { tab: string }) {
   const platform = useApp((s) => s.accounts.find((a) => a.id === chat?.accountId)?.platform);
   const list = useApp((s) => (meta ? s.msgs[meta.chatKey] : undefined));
   const fresh = useApp((s) => s.fresh);
+  const windowForeground = useApp(s => s.windowPresence?.foreground);
   const older = useApp(s => s.older[tab]);
   const limit = useApp(s => s.threadPages[tab]?.limit ?? 20);
   const pageLoaded = useApp(s => !!s.threadPages[tab]);
@@ -42,8 +43,11 @@ export function ThreadView({ tab }: { tab: string }) {
   useViewportTranslate(box, tab, meta?.chatKey ?? "", shown);
   const last = replies[replies.length - 1]?.sort;
   useEffect(() => {
-    if (meta && last !== undefined) seenThread(meta.chatKey, meta.threadId, last);
-  }, [meta?.chatKey, meta?.threadId, last]);
+    const read = () => { if (meta && last !== undefined) seenThread(meta.chatKey, meta.threadId, last); };
+    read();
+    window.addEventListener("focus", read);
+    return () => window.removeEventListener("focus", read);
+  }, [meta?.chatKey, meta?.threadId, last, windowForeground]);
   const rows = useMemo(() => layoutMessages(replies), [replies]);
   useEffect(() => {
     if (!jumpTo) return;

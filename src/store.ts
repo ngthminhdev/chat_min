@@ -10,7 +10,7 @@ import { isMobile } from "./lib/mobile";
 import { mobileConversationVisible } from "./lib/mobile-navigation";
 import { PLATFORMS, type Cap } from "./lib/platforms";
 import { themeBase } from "./lib/themes";
-import type { Account, Chat, CoreEvent, Folder, Health, Media, Msg, ThreadSummary, Topic } from "./lib/types";
+import type { Account, Chat, CoreEvent, Folder, Health, Media, Msg, ThreadSummary, Topic, WindowPresence } from "./lib/types";
 import type { IconName } from "./ui/Icon";
 
 export type Route = "shell" | "inbox" | "settings" | "search" | "welcome" | "wizard";
@@ -70,6 +70,7 @@ export interface SyncState { checks: ("idle" | "run" | "ok" | "err")[]; log: str
 
 interface State {
   booted: boolean;
+  windowPresence: WindowPresence | null;
   tgConfigured: boolean;
   /** "chatKey|threadId" → muted: no banner, no bell entry (thread_mute) */
   mutedThreads: Record<string, true>;
@@ -187,6 +188,7 @@ const saved: Partial<State> & { _savedAt?: number } = (() => {
 
 export const useApp = create<State>(() => ({
   booted: false,
+  windowPresence: isTauri && !isMobile ? { foreground: false, revision: 0 } : null,
   tgConfigured: false,
   mutedThreads: {},
   gchatConfigured: false,
@@ -360,7 +362,7 @@ export const fail = (e: unknown) => {
 };
 
 // ── boot & events ───────────────────────────────────────────────────────────
-let eventOff: (() => void) | null = null;
+let eventOff: ReturnType<typeof onEvent> | null = null;
 let bootPending: Promise<void> | null = null;
 export function boot(): Promise<void> {
   return bootPending ??= bootOnce().finally(() => { bootPending = null; });
@@ -383,7 +385,6 @@ async function bootOnce() {
   void api.inbox(100).then((inbox) => set({ inbox })).catch(() => {});
   void api.presence().then((ids) => set({ online: Object.fromEntries(ids.map((id) => [id, true as const])) })).catch(() => {});
   set({
-    booted: true,
     accounts: st.accounts,
     health: st.health,
     chats,
@@ -397,7 +398,13 @@ async function bootOnce() {
   });
   durableReady = durableRead;
   persistUi(get(), true);
-  eventOff ??= onEvent(applyEvent);
+  const subscription = eventOff ??= onEvent(applyEvent);
+  try { await subscription.ready; }
+  catch (error) { subscription(); if (eventOff === subscription) eventOff = null; throw error; }
+  set({booted:true});
+  if (isTauri && !isMobile) void api.windowPresence().then(p => {
+    if (p) applyEvent({type:"windowPresence",...p});
+  }).catch(e => console.error("Native window presence unavailable", e));
   if (active && !isMobile) void openChat(active);
 }
 
@@ -473,6 +480,13 @@ export function applyEvent(e: CoreEvent) {
       });
       return;
     }
+    case "windowPresence": {
+      if (get().windowPresence && e.revision < get().windowPresence!.revision) return;
+      set({windowPresence:{foreground:e.foreground,revision:e.revision}});
+      const k = chatKeyOf(get().active);
+      if (k && e.foreground && !isThreadTab(get().active) && isWatching(k)) markRead(k, true);
+      return;
+    }
     case "health":
       // just came online: Telegram's chat list is still streaming in, so give it a moment
       if (e.health === "ok" && get().health[e.accountId]?.health !== "ok") setTimeout(() => void prefetchUnread(e.accountId), 3000);
@@ -501,7 +515,7 @@ export function applyEvent(e: CoreEvent) {
       }
       set((s) => ({ chats: { ...s.chats, [k]: e.chat } }));
       // the open chat stays read while it is on screen
-      if (e.chat.kind !== "web" && (e.chat.unread > 0 || e.chat.mention) && isWatching(k)) markRead(k);
+      if (e.chat.kind !== "web" && (e.chat.unread > 0 || e.chat.mention) && isWatching(k)) markRead(k, true);
       return;
     }
     case "chatRemoved": {
@@ -527,14 +541,14 @@ export function applyEvent(e: CoreEvent) {
       }
       // arriving where I'm looking (the chat, or for a reply its open thread tab): already read
       const here = e.msg.threadReply
-        ? get().active === threadTabKey(k, e.msg.threadId) && (!isMobile || mobileConversationVisible(get())) && document.hasFocus() && !document.hidden
+        ? get().active === threadTabKey(k, e.msg.threadId) && get().route === "shell" && (!isMobile || mobileConversationVisible(get())) && isReadingWindow()
         : isWatching(k);
       if (e.inbox && here) set((s) => ({ inboxRead: { ...s.inboxRead, [inboxKey(e.msg)]: true } }));
       if (e.inbox)
         set((s) => ({ inbox: [e.msg, ...s.inbox.filter((x) => x.id !== e.msg.id || x.chatId !== e.msg.chatId)].slice(0, 100) }));
       // notifications and the Dock badge are decided in Rust (notify.rs): this webview
       // can be throttled while the window is hidden
-      if (e.isNew && isWatching(k)) void markRead(k);
+      if (e.isNew && isWatching(k)) void markRead(k, true);
       return;
     }
     case "messageIdChanged": {
@@ -594,8 +608,9 @@ export function applyEvent(e: CoreEvent) {
 
 /** The user is looking at this chat right now: new messages count as read. */
 // reading older messages up the list isn't seeing the new one: it stays unread (badge + "N tin mới")
+export const isReadingWindow = () => get().windowPresence?.foreground ?? (document.hasFocus() && !document.hidden);
 const isWatching = (k: string) =>
-  chatKeyOf(get().active) === k && get().route === "shell" && (!isMobile || mobileConversationVisible(get())) && get().atBottom && document.hasFocus() && !document.hidden;
+  (get().active === k || (!!get().active && !!get().threadTabs[get().active!]?.topic && chatKeyOf(get().active) === k)) && get().route === "shell" && (!isMobile || mobileConversationVisible(get())) && get().atBottom && isReadingWindow();
 
 // ── chats & messages ────────────────────────────────────────────────────────
 const PAGE = 50;
@@ -639,7 +654,7 @@ export async function openChat(k: string) {
   }
   if (isThreadTab(k)) return void loadThread(k);
   const c = get().chats[k];
-  if (c?.unread || c?.mention) void markRead(k);
+  if (c?.unread || c?.mention) void markRead(k, true);
 }
 
 /** Opens a Google Chat thread as its own workspace tab, next to its space. */
@@ -668,8 +683,10 @@ export function threadUnread(s: Pick<State, "unreadMark" | "fresh" | "threadSeen
   return replies.filter((r) => !r.outgoing && r.sort > seen && ((mark !== undefined && r.sort >= mark) || s.fresh[r.id])).length;
 }
 
-export const seenThread = (k: string, thread: string, sort: number) =>
+export const seenThread = (k: string, thread: string, sort: number) => {
+  if (get().active !== threadTabKey(k, thread) || get().route !== "shell" || (isMobile && !mobileConversationVisible(get())) || !isReadingWindow()) return;
   set((s) => ((s.threadSeen[`${k}#${thread}`] ?? -Infinity) >= sort ? s : { threadSeen: { ...s.threadSeen, [`${k}#${thread}`]: sort } }));
+};
 
 export function openThreadTab(chatKey: string, root: Msg) {
   if (!root.threadId) return toast("Tin nhắn này chưa có thread ID từ Google Chat", "info");
@@ -1094,17 +1111,28 @@ export async function loadOlder(k: string) {
 }
 
 let readT: Record<string, ReturnType<typeof setTimeout>> = {};
-export function markRead(k: string) {
+export function markRead(k: string, automatic = false) {
+  clearTimeout(readT[k]);
+  delete readT[k];
+  if (automatic && !isWatching(k)) return;
   // Web providers have no mark-read REST endpoint. Opening the actual thread lets the
   // website acknowledge it; never zero its badge locally then call Google Chat.
   if (get().chats[k]?.kind === "web") { void openChat(k); return; }
-  clearTimeout(readT[k]);
-  readT[k] = setTimeout(() => {
+  readT[k] = setTimeout(async () => {
+    delete readT[k];
+    if (automatic && !isWatching(k)) return;
     const chat = get().chats[k];
     if (!chat) return;
     const ids = (get().msgs[k] ?? []).filter((m) => !m.outgoing).slice(-30).map((m) => m.id);
-    set((s) => ({ chats: { ...s.chats, [k]: { ...chat, unread: 0, mention: false } } }));
-    void api.markRead(chat.accountId, chat.id, ids).catch(() => {});
+    try {
+      const accepted = await api.markRead(chat.accountId, chat.id, ids, automatic);
+      if (accepted === false) return;
+      set((s) => {
+        const current = s.chats[k];
+        if (!current || current.lastTs !== chat.lastTs || current.unread !== chat.unread || current.mention !== chat.mention || current.preview !== chat.preview || current.previewFrom !== chat.previewFrom) return {};
+        return { chats: { ...s.chats, [k]: { ...current, unread: 0, mention: false } } };
+      });
+    } catch { /* Keep unread state when acknowledgement fails. */ }
   }, 250);
 }
 

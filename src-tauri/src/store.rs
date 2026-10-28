@@ -201,6 +201,16 @@ impl Store {
         Ok(())
     }
 
+    pub fn acknowledge_read(&self, before: &Chat) -> R<Option<Chat>> {
+        let Some(mut current) = self.chat(&before.account_id, &before.id)? else { return Ok(None) };
+        if current.last_ts != before.last_ts || current.unread != before.unread || current.mention != before.mention
+            || current.preview != before.preview || current.preview_from != before.preview_from { return Ok(None); }
+        current.unread = 0;
+        current.mention = false;
+        self.put_chat(&current)?;
+        Ok(Some(current))
+    }
+
     pub fn remove_chat(&self, account_id: &str, id: &str) -> R<()> {
         self.db
             .execute(
@@ -818,6 +828,32 @@ fn fts_query(q: &str) -> String {
         .map(|w| format!("\"{w}\"*"))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+#[cfg(test)]
+mod read_ack_tests {
+    use super::*;
+    #[test]
+    fn late_native_read_ack_preserves_newer_unread_even_with_same_millisecond() {
+        let store = Store::memory();
+        let before = Chat {account_id:"gc-a".into(),id:"space".into(),unread:2,last_ts:100,preview:"old".into(),..Default::default()};
+        for same_ms in [false,true] {
+            let current = Chat {unread:3,last_ts:if same_ms {100} else {101},preview:"new".into(),..before.clone()};
+            store.put_chat(&current).unwrap();
+            assert!(store.acknowledge_read(&before).unwrap().is_none());
+            assert_eq!(store.chat("gc-a","space").unwrap().unwrap().unread,3);
+        }
+    }
+    #[test]
+    fn valid_native_ack_preserves_current_metadata_and_never_recreates_a_deleted_chat() {
+        let store = Store::memory();
+        let before = Chat {account_id:"zalo-a".into(),id:"chat".into(),unread:2,last_ts:100,..Default::default()};
+        store.put_chat(&Chat {title:"updated name".into(),muted:true,..before.clone()}).unwrap();
+        let acknowledged=store.acknowledge_read(&before).unwrap().unwrap();
+        assert_eq!(acknowledged.unread,0);assert!(acknowledged.muted);assert_eq!(acknowledged.title,"updated name");
+        store.remove_chat("zalo-a","chat").unwrap();
+        assert!(store.acknowledge_read(&before).unwrap().is_none());
+    }
 }
 
 #[cfg(test)]

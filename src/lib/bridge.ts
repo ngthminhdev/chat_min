@@ -19,12 +19,13 @@ function call<T>(cmd: string, args: Record<string, unknown> = {}): Promise<T> {
   return demoMod().then((d) => d.call(cmd, args) as T);
 }
 
-export function onEvent(cb: (e: CoreEvent) => void): () => void {
+export function onEvent(cb: (e: CoreEvent) => void) {
   let off = () => {};
   let disposed = false;
-  if (isTauri) listen<CoreEvent>("chatmin", (e) => { if (!disposed) cb(e.payload); }).then((u) => { if (disposed) u(); else off = u; });
-  else demoMod().then((d) => { if (!disposed) off = d.onEvent(cb); });
-  return () => { disposed = true; off(); };
+  const ready = isTauri
+    ? listen<CoreEvent>("chatmin", (e) => { if (!disposed) cb(e.payload); }).then((u) => { if (disposed) u(); else off = u; })
+    : demoMod().then((d) => { if (!disposed) off = d.onEvent(cb); });
+  return Object.assign(() => { disposed = true; off(); }, {ready});
 }
 
 export interface AppShortcut {
@@ -97,7 +98,9 @@ export const api = {
   /** who reacted / read one message (reaction tooltips, "seen by" list) */
   msgPeople: (accountId: string, chatId: string, msgId: string) => call<MsgPeople>("msg_people", { accountId, chatId, msgId }),
   pin: (accountId: string, chatId: string, msgId: string, on: boolean) => call<void>("pin", { accountId, chatId, msgId, on }),
-  markRead: (accountId: string, chatId: string, msgIds: string[]) => call<void>("mark_read", { accountId, chatId, msgIds }),
+  markRead: (accountId: string, chatId: string, msgIds: string[], automatic = false) => call<boolean>("mark_read", { accountId, chatId, msgIds, automatic }),
+  windowPresence: () => isTauri ? call<import("./types").WindowPresence | null>("window_presence") : Promise.resolve(null),
+  setReadingChat: (key: string | null) => isTauri ? call<void>("set_reading_chat", { key }) : Promise.resolve(),
   setOpen: (accountId: string, chatId: string, open: boolean) => call<void>("set_open", { accountId, chatId, open }),
   setMuted: (accountId: string, chatId: string, muted: boolean) => call<void>("set_muted", { accountId, chatId, muted }),
   threadMute: (accountId: string, chatId: string, threadId: string, muted: boolean) => call<void>("thread_mute", { accountId, chatId, threadId, muted }),

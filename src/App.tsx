@@ -132,6 +132,10 @@ export default function App() {
 
   const page = route === "welcome" || route === "wizard";
   const tabPage = route === "inbox" || route === "settings" || route === "search";
+  const readingChat = booted && route === "shell" && (!isMobile || mobileConversationVisible({route,active,leftCollapsed:left,rightCollapsed:right})) ? chatKeyOf(active) : null;
+  useEffect(() => {
+    void api.setReadingChat(readingChat).catch(e => api.logJs(`reading chat: ${e}`));
+  }, [readingChat]);
   useEffect(() => {
     if (!isMobile && tabPage && window.matchMedia("(max-width: 760px)").matches) useApp.setState({ leftCollapsed: true });
   }, [tabPage, route]);
@@ -373,7 +377,7 @@ function useGlobalHandlers() {
       const s = useApp.getState();
       const c = s.active ? s.chats[s.active] : undefined;
       if (isMobile && !mobileConversationVisible(s)) return;
-      if (s.active && !isThreadTab(s.active) && s.route === "shell" && s.atBottom && (c?.unread || c?.mention)) markRead(s.active);
+      if (s.active && !isThreadTab(s.active) && s.route === "shell" && s.atBottom && (c?.unread || c?.mention)) markRead(s.active, true);
     };
     // typing indicators expire on their own
     const tick = setInterval(() => {

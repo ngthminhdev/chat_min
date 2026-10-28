@@ -1612,7 +1612,8 @@ impl GChat {
         core: &Arc<Core>,
         account_id: &str,
         space: &str,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
+        let Some(before) = core.store().chat(account_id, space)? else { return Ok(false) };
         let now = now_ms();
         self.api(
             core,
@@ -1623,15 +1624,9 @@ impl GChat {
         )
         .await?;
         if let Some(a) = self.accs.lock().unwrap().get_mut(account_id) {
-            a.read.insert(space.into(), now);
+            a.read.entry(space.into()).and_modify(|read| *read = (*read).max(now)).or_insert(now);
         }
-        let chat = core.store().chat(account_id, space)?;
-        if let Some(mut chat) = chat {
-            chat.unread = 0;
-            chat.mention = false;
-            core.put_chat(chat);
-        }
-        Ok(())
+        core.acknowledge_read(&before)
     }
 
     // ── http ────────────────────────────────────────────────────────────────

@@ -74,7 +74,7 @@ pub enum Ring {
 #[derive(Default)]
 pub struct Notifier {
     prefs: Mutex<HashMap<String, Prefs>>,
-    /// (account id, chat id) open on screen
+    /// Conversation actually rendered by the frontend (separate from provider polling).
     active: Mutex<Option<(String, String)>>,
     /// unread per chat, muted chats as 0; their sum is the Dock badge
     unread: Mutex<UnreadBadge>,
@@ -107,21 +107,16 @@ impl Notifier {
         *self.prefs.lock().unwrap() = prefs;
     }
 
-    pub fn set_open(&self, account_id: &str, chat_id: &str, open: bool) {
-        let mut a = self.active.lock().unwrap();
-        if open {
-            *a = Some((account_id.into(), chat_id.into()));
-        } else if a.as_ref().is_some_and(|(x, y)| x == account_id && y == chat_id) {
-            *a = None;
-        }
+    pub fn set_reading(&self, key: Option<&str>) {
+        *self.active.lock().unwrap() = key.and_then(|k| k.split_once('|')).map(|(account,chat)| (account.to_owned(),chat.to_owned()));
     }
 
     /// The chat on screen in the focused window: its messages are being read, no banner.
     /// Other chats still ring while ChatMin is in front.
-    fn watching(&self, app: &AppHandle, account_id: &str, chat_id: &str) -> bool {
+    pub fn watching(&self, app: &AppHandle, account_id: &str, chat_id: &str) -> bool {
         let on_screen = self.active.lock().unwrap().as_ref().is_some_and(|(a, c)| a == account_id && c == chat_id);
         #[cfg(desktop)]
-        let in_front = app.get_window("main").is_some_and(|w| w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false));
+        let in_front = { let _ = app; crate::window_presence::readable() };
         // the Android window has no focus/visibility answer: trust the webview's own report
         #[cfg(mobile)]
         let in_front = { let _ = app; !self.background.load(std::sync::atomic::Ordering::Relaxed) };

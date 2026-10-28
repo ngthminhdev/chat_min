@@ -16,6 +16,7 @@ mod island_view;
 mod model;
 mod notify;
 mod notify_state;
+mod window_presence;
 mod store;
 mod tg;
 
@@ -172,6 +173,19 @@ impl Core {
             account_id: account_id.into(),
             chat_id: chat_id.into(),
         });
+    }
+
+    /// Publish a read acknowledgement only if no newer unread snapshot replaced it.
+    pub fn acknowledge_read(&self, before: &Chat) -> Res<bool> {
+        let store = self.store();
+        let Some(chat) = store.acknowledge_read(before)? else { return Ok(false) };
+        // Keep state, badge and event publication ordered against later provider writes.
+        self.notifier.track(&self.app, &chat, false);
+        let mut shown = vec![chat];
+        self.zalo.profiles.chats(&self.cache_dir, &mut shown);
+        self.emit(Event::Chat {chat:shown.remove(0)});
+        drop(store);
+        Ok(true)
     }
     fn download_dir(&self) -> PathBuf {
         let d = self.config.lock().unwrap().download_dir.clone();
@@ -1537,11 +1551,18 @@ async fn mark_read(
     account_id: String,
     chat_id: String,
     msg_ids: Vec<String>,
-) -> Res<()> {
+    automatic: Option<bool>,
+) -> Res<bool> {
     let core = core.inner().clone();
+    // WebKit focus can lag a Space switch or a queued read request.
+    if automatic.unwrap_or(false) && !core.notifier.watching(&core.app, &account_id, &chat_id) {
+        eprintln!("[read] skipped automatic acknowledgement outside foreground conversation");
+        return Ok(false);
+    }
     if core.platform(&account_id) == "telegram" {
-        core.tg.mark_read(&account_id, &chat_id, msg_ids).await
+        core.tg.mark_read(&account_id, &chat_id, msg_ids).await?;
     } else if core.platform(&account_id) == "zalo" {
+        let before = core.store().chat(&account_id, &chat_id)?;
         let sources: Vec<Value> = msg_ids
             .iter()
             .filter_map(|m| zalo::source(&core, &account_id, &chat_id, m).ok())
@@ -1553,20 +1574,27 @@ async fn mark_read(
                 serde_json::json!({"chatId":chat_id,"sources":sources}),
             )
             .await?;
-        let chat = core.store().chat(&account_id, &chat_id)?;
-        if let Some(mut chat) = chat {
-            chat.unread = 0;
-            chat.mention = false;
-            core.put_chat(chat);
-        }
-        Ok(())
+        return before.as_ref().map(|chat| core.acknowledge_read(chat)).unwrap_or(Ok(false));
     } else {
-        core.gchat.mark_read(&core, &account_id, &chat_id).await
+        return core.gchat.mark_read(&core, &account_id, &chat_id).await;
     }
+    Ok(true)
+}
+
+#[tauri::command]
+fn window_presence() -> Option<window_presence::Snapshot> {
+    #[cfg(desktop)]
+    return Some(window_presence::snapshot());
+    #[cfg(mobile)]
+    None
+}
+
+#[tauri::command]
+fn set_reading_chat(core: C<'_>, key: Option<String>) {
+    core.notifier.set_reading(key.as_deref());
 }
 #[tauri::command]
 async fn set_open(core: C<'_>, account_id: String, chat_id: String, open: bool) -> Res<()> {
-    core.notifier.set_open(&account_id, &chat_id, open);
     if open && matches!(core.platform(&account_id), "telegram" | "gchat" | "zalo") {
         web::hide_all(&core);
     }
@@ -2043,10 +2071,20 @@ pub fn run() {
         // a messenger keeps running when its window closes (notifications, Dock badge);
         // ⌘Q quits, clicking the Dock icon brings the window back
         .on_window_event(|w, e| {
+            #[cfg(desktop)]
+            if w.label() == "main" {
+                match e {
+                    tauri::WindowEvent::Focused(false) => window_presence::publish(w.app_handle(), false),
+                    tauri::WindowEvent::Focused(true) | tauri::WindowEvent::Resized(_) => window_presence::refresh(w.app_handle()),
+                    _ => {}
+                }
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = e {
                 if w.label() == "main" {
                     api.prevent_close();
                     let _ = w.hide();
+                    #[cfg(desktop)]
+                    window_presence::publish(w.app_handle(), false);
                 }
             }
         })
@@ -2099,6 +2137,8 @@ pub fn run() {
                 web_open: Default::default(),
             });
             app.manage(core.clone());
+            #[cfg(desktop)]
+            window_presence::install(app.handle());
             // Native listeners may deliver before WebKit has hydrated Settings.
             match core.store().ui_state() {
                 Ok(Some(snapshot)) => core.notifier.set_prefs(notify::saved_prefs(&snapshot)),
@@ -2311,6 +2351,8 @@ pub fn run() {
             presence,
             pin,
             mark_read,
+            window_presence,
+            set_reading_chat,
             set_open,
             set_muted,
             thread_mute,

@@ -205,7 +205,7 @@ function MessageList({ k }: { k: string }) {
     if (bottom !== useApp.getState().atBottom) {
       useApp.setState({ atBottom: bottom });
       const c = useApp.getState().chats[k];
-      if (bottom && (c?.unread || c?.mention)) markRead(k);
+      if (bottom && (c?.unread || c?.mention)) markRead(k, true);
     }
   };
   useEffect(() => () => useApp.setState({ atBottom: true }), [k]);
