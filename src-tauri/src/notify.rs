@@ -417,7 +417,7 @@ fn show_photo(app: &AppHandle, title: &str, body: &str, chat: &str, photo: &str,
         let photo = photo.to_owned();
         let queued = std::time::Instant::now();
         if let Err(error) = app.run_on_main_thread(move || {
-            if crate::island::session_active() { mac::attention(dock_bounce); }
+            if crate::island::session_active() { mac::attention(&handle, dock_bounce); }
             eprintln!("[notify] dispatch queue_us={} mode={}", queued.elapsed().as_micros(), if SYSTEM_MODE.load(std::sync::atomic::Ordering::Relaxed) { "system" } else { "island" });
             if SYSTEM_MODE.load(std::sync::atomic::Ordering::Relaxed) {
                 mac::show(&title, &body, &target);
@@ -470,7 +470,7 @@ fn clear_delivered(app: &AppHandle, key: Option<String>) {
 /// Needs a signed .app bundle (`bundle.macOS.signingIdentity` in tauri.conf.json).
 #[cfg(target_os = "macos")]
 mod mac {
-    use crate::notify_state::BounceGate;
+    use crate::notify_state::{AttentionRequest, BounceGate, DOCK_BOUNCE_MS};
     use objc2::MainThreadMarker;
     use objc2_app_kit::{NSApplication, NSRequestUserAttentionType, NSWorkspace};
     use objc2::rc::Retained;
@@ -485,26 +485,40 @@ mod mac {
     use tauri::AppHandle;
 
     thread_local! {
-        static ATTENTION: std::cell::RefCell<(BounceGate, Option<isize>)> = std::cell::RefCell::new((BounceGate::default(), None));
+        static ATTENTION: std::cell::RefCell<(BounceGate, AttentionRequest)> = std::cell::RefCell::new((BounceGate::default(), AttentionRequest::default()));
     }
-    pub fn attention(enabled: bool) {
+    pub fn attention(handle: &AppHandle, enabled: bool) {
         let Some(mtm) = MainThreadMarker::new() else { return };
         let app = NSApplication::sharedApplication(mtm);
         let reduced = NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion();
         ATTENTION.with(|state| {
             let mut state = state.borrow_mut();
+            // A burst shares one bounded attention window; new messages don't restart it.
+            if state.1.is_active() { return; }
             if state.0.allow(std::time::Instant::now(), enabled, app.isActive(), reduced) {
-                if let Some(request) = state.1.take() { app.cancelUserAttentionRequest(request); }
-                state.1 = Some(app.requestUserAttention(NSRequestUserAttentionType::InformationalRequest));
-                eprintln!("[notify] dock attention requested");
+                if let Some(request) = state.1.finish(None) { app.cancelUserAttentionRequest(request); }
+                let request = app.requestUserAttention(NSRequestUserAttentionType::CriticalRequest);
+                state.1.begin(request);
+                let handle = handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(DOCK_BOUNCE_MS)).await;
+                    if let Err(error) = handle.run_on_main_thread(move || finish_attention(Some(request), "timeout")) {
+                        eprintln!("[notify] dock attention stop dispatch failed: {error}");
+                    }
+                });
+                eprintln!("[notify] dock attention requested style=repeating duration_ms={DOCK_BOUNCE_MS}");
             }
         });
     }
     pub fn cancel_attention() {
+        finish_attention(None, "cleared");
+    }
+    fn finish_attention(expected: Option<isize>, reason: &str) {
         let Some(mtm) = MainThreadMarker::new() else { return };
         ATTENTION.with(|state| {
-            if let Some(request) = state.borrow_mut().1.take() {
+            if let Some(request) = state.borrow_mut().1.finish(expected) {
                 NSApplication::sharedApplication(mtm).cancelUserAttentionRequest(request);
+                eprintln!("[notify] dock attention stopped reason={reason}");
             }
         });
     }

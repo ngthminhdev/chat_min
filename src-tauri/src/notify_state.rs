@@ -1,6 +1,25 @@
 //! Deterministic, bounded notification bookkeeping; no AppKit or WebView dependency.
 use std::{collections::HashMap, time::Instant};
 pub const MAX_DIGEST_CHATS: usize = 128;
+pub const DOCK_BOUNCE_MS: u64 = 30_000;
+#[derive(Default)]
+pub struct AttentionRequest {
+    current: Option<isize>,
+}
+impl AttentionRequest {
+    pub fn is_active(&self) -> bool {
+        self.current.is_some()
+    }
+    pub fn begin(&mut self, request: isize) -> Option<isize> {
+        self.current.replace(request)
+    }
+    pub fn finish(&mut self, expected: Option<isize>) -> Option<isize> {
+        if expected.is_some() && expected != self.current {
+            return None;
+        }
+        self.current.take()
+    }
+}
 #[derive(Default)]
 struct UnreadChat {
     raw: i32,
@@ -141,6 +160,22 @@ impl Digest {
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn stale_stop_timer_cannot_cancel_a_newer_bounce_and_activation_clears_it() {
+        let mut pending = AttentionRequest::default();
+        assert!(!pending.is_active());
+        assert_eq!(pending.begin(11), None);
+        assert!(pending.is_active());
+        assert_eq!(pending.begin(12), Some(11));
+        assert_eq!(pending.finish(Some(11)), None);
+        assert_eq!(pending.finish(None), Some(12));
+        assert!(!pending.is_active());
+        assert_eq!(pending.finish(Some(12)), None);
+        pending.begin(13);
+        assert_eq!(pending.finish(Some(13)), Some(13));
+        assert_eq!(pending.finish(None), None);
+    }
 
     #[test]
     fn unread_totals_replace_remove_and_clamp_without_retaining_zeroes() {

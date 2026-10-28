@@ -231,7 +231,7 @@ export function Settings() {
                 <Row title="Chỉ khi được nhắc tên" help="Chỉ báo khi bạn được nhắc tên.">
                   <Toggle checked={p.mentions} label={`Chỉ khi được nhắc tên ${a.name}`} onChange={(v) => setNotif(a.id, { mentions: v })} />
                 </Row>
-                {mac && <Row title="Nhảy biểu tượng ở Dock" help="Nhảy ngắn khi ChatMin ở nền; tối đa một lần mỗi 10 giây. Tôn trọng giờ im lặng và Giảm chuyển động của macOS.">
+                {mac && <Row title="Nhảy biểu tượng ở Dock" help="Nhảy lặp tối đa 30 giây khi ChatMin ở nền, dừng khi quay lại app. Tin đến dồn không kéo dài bộ đếm. Tôn trọng giờ im lặng và Giảm chuyển động của macOS.">
                   <Toggle checked={p.dockBounce} label={`Nhảy Dock ${a.name}`} onChange={(v) => setNotif(a.id, { dockBounce: v })} />
                 </Row>}
                 <Row title="Im lặng theo giờ" help="Dùng múi giờ máy. Khung giờ có thể qua nửa đêm.">
