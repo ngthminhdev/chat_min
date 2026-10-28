@@ -14,6 +14,22 @@ export function normalizeContact(u) {
 export function normalizeChat(accountId, type, id, info = {}) {
   return {accountId,id:chatKey(type,id),kind:type===1?'group':'dm',title:info.name || info.displayName || String(id),description:'',lastTs:0,preview:'',previewFrom:'',unread:0,mention:false,muted:false,memberCount:info.totalMember || 0,order:0,pinned:false,canSend:true,threaded:false,created:'',photo:info.fullAvt || info.avt || info.avatar || '',photoRef:'',forum:false};
 }
+// Location shares have no href on some clients: their pin lives in params instead.
+function locationText(content, params) {
+  let href='';
+  try {const u=new URL(content.href);if(['http:','https:'].includes(u.protocol) && u.hostname)href=content.href;} catch {}
+  const coordinate=(v,max)=>{
+    if(typeof v!=='number' && (typeof v!=='string' || !/^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(v)))return null;
+    const n=Number(v);return Number.isFinite(n) && Math.abs(n)<=max?n:null;
+  };
+  const lat=coordinate(params?.latitude,90),lon=coordinate(params?.longitude,180);
+  if(!href && lat!==null && lon!==null){
+    const query=new URLSearchParams({api:'1',query:`${lat},${lon}`});
+    if(typeof params.placeId==='string' && params.placeId.trim())query.set('query_place_id',params.placeId);
+    href=`https://www.google.com/maps/search/?${query}`;
+  }
+  return [content.title,content.description,href].filter(v=>typeof v==='string' && v.trim()).join('\n') || '[Vị trí Zalo]';
+}
 export function normalizeMessage(accountId, raw, me) {
   const d = raw.data ?? {}, ts = Number(d.ts);
   if (!d.msgId || !Number.isSafeInteger(ts) || ts <= 0) throw new Error('Tin Zalo thiếu ID hoặc thời gian');
@@ -27,5 +43,6 @@ export function normalizeMessage(accountId, raw, me) {
     media={kind,name:object.title || (kind==='image'?'Ảnh':kind==='voice'?'Tin nhắn thoại':kind==='sticker'?'Sticker.webp':'Tệp'),size:Number(params.fileSize || params.size || 0),mime:'',width:Number(params.width || params.video_width || object.width || (kind==='sticker'?128:0)),height:Number(params.height || params.video_height || object.height || (kind==='sticker'?128:0)),fileRef:url || (kind==='sticker' && /^[1-9]\d{0,9}$/.test(String(object.id))?`zalo-sticker:${object.id}`:''),localPath:'',thumb:object.thumb || object.thumbUrl || '',thumbFile:'',url:''};
   }
   const q=d.quote;
-  return {accountId,chatId:chatKey(raw.type,String(raw.threadId)),id:String(d.msgId),sort:ts,senderId:String(d.uidFrom || ''),senderName:d.dName || '',senderPhoto:'',outgoing:!!raw.isSelf || String(d.uidFrom)===me,ts,edited:false,deleted:false,kind:media?'media':'text',text:typeof c==='string'?c:media?'':object?.title || object?.description || '[Nội dung Zalo]',media,albumId:String(params.hdId || ''),link:null,replyTo:q?String(q.globalMsgId || ''):'',replyName:q?.fromD || '',replyText:q?.msg || '',reactions:[],threadId:'',threadReply:false,status:raw.isSelf?'sent':'',error:'',pinned:false,mentionsMe:(d.mentions || []).some(m=>String(m.uid)===me || String(m.uid)==='-1'),rev:JSON.stringify(d)};
+  const text=type==='chat.location.new' && object?locationText(object,params):typeof c==='string'?c:media?'':object?.title || object?.description || '[Nội dung Zalo]';
+  return {accountId,chatId:chatKey(raw.type,String(raw.threadId)),id:String(d.msgId),sort:ts,senderId:String(d.uidFrom || ''),senderName:d.dName || '',senderPhoto:'',outgoing:!!raw.isSelf || String(d.uidFrom)===me,ts,edited:false,deleted:false,kind:media?'media':'text',text,media,albumId:String(params?.hdId || ''),link:null,replyTo:q?String(q.globalMsgId || ''):'',replyName:q?.fromD || '',replyText:q?.msg || '',reactions:[],threadId:'',threadReply:false,status:raw.isSelf?'sent':'',error:'',pinned:false,mentionsMe:(d.mentions || []).some(m=>String(m.uid)===me || String(m.uid)==='-1'),rev:JSON.stringify(d)};
 }

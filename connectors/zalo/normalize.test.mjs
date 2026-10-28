@@ -1,7 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
 import { normalizeMessage, chatKey, splitChatKey, normalizeContact } from './normalize.mjs';
 const raw = (data = {}, extra = {}) => ({type: 0, threadId: '42', isSelf: false, data: {msgId:'9007199254740999', cliMsgId:'77', uidFrom:'42', ts:'1793000000000', dName:'Lan', msgType:'webchat', content:'Xin chào', ...data}, ...extra});
+for(const fixture of JSON.parse(readFileSync(new URL('./location-fixtures.json',import.meta.url),'utf8'))) {
+  test(fixture.name,()=>{
+    const m=normalizeMessage('zalo-a',raw({msgType:'chat.location.new',content:fixture.content}),'me');
+    assert.equal(m.text,fixture.text);
+    assert.equal(m.kind,'text');
+    assert.deepEqual(JSON.parse(m.rev).content,fixture.content);
+  });
+}
 test('keeps provider IDs as strings and separates DM/group IDs', () => {
   assert.equal(chatKey(0, '42'), 'u:42'); assert.equal(chatKey(1, '42'), 'g:42');
   assert.deepEqual(splitChatKey('g:42'), {type:1, id:'42'});

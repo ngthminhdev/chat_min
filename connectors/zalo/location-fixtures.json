@@ -1,0 +1,37 @@
+[
+  {
+    "name": "location with serialized coordinates retains full Maps URL",
+    "content": {"title":"Kids story 유치원","description":"Quận 7, Thành phố Hồ Chí Minh","href":"","params":"{\"latitude\":\"10.7277429\",\"longitude\":\"106.7098618\",\"placeId\":\"\"}"},
+    "text": "Kids story 유치원\nQuận 7, Thành phố Hồ Chí Minh\nhttps://www.google.com/maps/search/?api=1&query=10.7277429%2C106.7098618"
+  },
+  {
+    "name": "object params accept zero coordinates and encode place ID",
+    "content": {"title":"Vị trí","params":{"latitude":0,"longitude":0,"placeId":"place & id"}},
+    "text": "Vị trí\nhttps://www.google.com/maps/search/?api=1&query=0%2C0&query_place_id=place+%26+id"
+  },
+  {
+    "name": "existing HTTPS location link is retained",
+    "content": {"title":"Map","description":"Address","href":"https://maps.app.goo.gl/example","params":"invalid"},
+    "text": "Map\nAddress\nhttps://maps.app.goo.gl/example"
+  },
+  {
+    "name": "invalid or missing coordinates do not become zero location",
+    "content": {"title":"Place","description":"Address","params":{"latitude":"","longitude":null}},
+    "text": "Place\nAddress"
+  },
+  {
+    "name": "out of range coordinates and unsafe href never become links",
+    "content": {"title":"Place","href":"javascript:alert(1)","params":{"latitude":91,"longitude":181}},
+    "text": "Place"
+  },
+  {
+    "name": "malformed params retain readable location information",
+    "content": {"title":"Place","description":"Address","params":"{"},
+    "text": "Place\nAddress"
+  },
+  {
+    "name": "boolean coordinates cannot generate a position",
+    "content": {"title":"Place","params":{"latitude":false,"longitude":true}},
+    "text": "Place"
+  }
+]

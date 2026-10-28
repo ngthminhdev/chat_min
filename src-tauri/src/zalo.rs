@@ -764,6 +764,21 @@ fn ingest(core: &Arc<Core>, id: &str, v: Value) -> Result<(), String> {
 mod tests {
     use super::*;
     #[test]
+    fn cached_locations_recover_maps_urls_without_network_or_losing_message_state() {
+        let fixtures: Value = serde_json::from_str(include_str!("../../connectors/zalo/location-fixtures.json")).unwrap();
+        for fixture in fixtures.as_array().unwrap() {
+            let raw = json!({"msgType":"chat.location.new","content":fixture["content"]});
+            let mut rows = vec![Msg { account_id:"zalo-a".into(), id:"123".into(), text:fixture["content"]["title"].as_str().unwrap().into(), rev:raw.to_string(), status:"seen".into(), deleted:true, ..Default::default() }];
+            hydrate(std::path::Path::new("/nonexistent"), &mut rows);
+            assert_eq!(rows[0].text, fixture["text"].as_str().unwrap(), "{}", fixture["name"]);
+            assert_eq!(rows[0].rev,raw.to_string());
+            assert_eq!(rows[0].status,"seen");
+            assert!(rows[0].deleted);
+            hydrate(std::path::Path::new("/nonexistent"), &mut rows);
+            assert_eq!(rows[0].text, fixture["text"].as_str().unwrap());
+        }
+    }
+    #[test]
     fn legacy_media_repair_keeps_remote_assets_available_on_cached_pages() {
         let mut rows = vec![Msg { account_id: "zalo-a".into(), rev: json!({"content":{"oriUrl":"https://a.zdn.vn/full", "thumbUrl":"https://a.zdn.vn/thumb", "params":"{\"width\":640,\"height\":480}"}}).to_string(), media: Some(crate::model::Media { kind: "image".into(), ..Default::default() }), ..Default::default() }, Msg { account_id: "zalo-a".into(), rev: json!({"content":{"id":123,"catId":4}}).to_string(), media: Some(crate::model::Media { kind: "sticker".into(), name:"Tệp".into(), ..Default::default() }), ..Default::default() }];
         hydrate(std::path::Path::new("/nonexistent"), &mut rows);
@@ -919,6 +934,36 @@ fn media_url(url: &str) -> Result<reqwest::Url, String> {
     }
     Ok(url)
 }
+// Repair old cached location shares from the retained wire payload, without a refetch.
+fn repair_location(msg: &mut Msg) {
+    if !msg.rev.contains("\"chat.location.new\"") { return; }
+    let raw: Value = serde_json::from_str(&msg.rev).unwrap_or_default();
+    if raw["msgType"] != "chat.location.new" || !raw["content"].is_object() { return; }
+    let content = &raw["content"];
+    let params: Value = content["params"].as_str()
+        .map(|s| serde_json::from_str(s).unwrap_or_default())
+        .unwrap_or_else(|| content["params"].clone());
+    let mut href = content["href"].as_str().filter(|s| {
+        reqwest::Url::parse(s).is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.host_str().is_some())
+    }).unwrap_or_default().to_string();
+    let coordinate = |v: &Value, max: f64| -> Option<f64> {
+        let n = v.as_f64().or_else(|| v.as_str()?.parse::<f64>().ok())?;
+        (n.is_finite() && n.abs() <= max).then_some(if n == 0.0 { 0.0 } else { n })
+    };
+    if href.is_empty() {
+        if let (Some(lat), Some(lon)) = (coordinate(&params["latitude"], 90.0), coordinate(&params["longitude"], 180.0)) {
+            let mut url = reqwest::Url::parse("https://www.google.com/maps/search/").unwrap();
+            url.query_pairs_mut().append_pair("api", "1").append_pair("query", &format!("{lat},{lon}"));
+            if let Some(place) = params["placeId"].as_str().filter(|s| !s.trim().is_empty()) {
+                url.query_pairs_mut().append_pair("query_place_id", place);
+            }
+            href = url.to_string();
+        }
+    }
+    msg.text = [content["title"].as_str().unwrap_or_default(), content["description"].as_str().unwrap_or_default(), &href]
+        .into_iter().filter(|s| !s.trim().is_empty()).collect::<Vec<_>>().join("\n");
+    if msg.text.is_empty() { msg.text = "[Vị trí Zalo]".into(); }
+}
 fn repair_media(msg: &mut Msg) {
     let Some(media) = &mut msg.media else { return };
     if !media.file_ref.is_empty() && !media.thumb.is_empty() && media.width > 0 {
@@ -985,6 +1030,7 @@ pub fn hydrate(cache: &std::path::Path, msgs: &mut [Msg]) {
         .iter_mut()
         .filter(|m| m.account_id.starts_with("zalo-"))
     {
+        repair_location(m);
         repair_media(m);
         if let Some(media) = &mut m.media {
             if !media.file_ref.is_empty() {

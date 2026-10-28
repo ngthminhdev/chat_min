@@ -13,6 +13,13 @@ test("fmt escapes, then renders code, links and mentions", () => {
   assert.equal(fmt("`https://x.io`"), "<p><code>https://x.io</code></p>");
 });
 
+test('location messages show the complete clickable Google Maps URL', () => {
+  const url='https://www.google.com/maps/search/?api=1&query=10.7277429%2C106.7098618';
+  const html=fmt(`Kids story 유치원\nQuận 7\n${url}`);
+  const escaped=url.replaceAll('&','&amp;');
+  assert.equal(html,`<p>Kids story 유치원<br>Quận 7<br><a class="msg-link" href="${escaped}">${escaped}</a></p>`);
+});
+
 test("**bold** with a space before the closing marker, as Google's rich composer writes it", () => {
   assert.equal(fmt("**Starting 26 October, **VIBE will"), "<p><strong>Starting 26 October, </strong>VIBE will</p>");
   assert.equal(fmt("**Need Support? **\nIf"), "<p><strong>Need Support? </strong><br>If</p>");
