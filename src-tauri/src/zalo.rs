@@ -764,6 +764,20 @@ fn ingest(core: &Arc<Core>, id: &str, v: Value) -> Result<(), String> {
 mod tests {
     use super::*;
     #[test]
+    fn cached_recommended_links_recover_full_urls_without_changing_call_events() {
+        let fixtures: Value = serde_json::from_str(include_str!("../../connectors/zalo/link-fixtures.json")).unwrap();
+        for fixture in fixtures.as_array().unwrap() {
+            let raw = json!({"msgType":"chat.recommended","content":fixture["content"]});
+            let mut rows = vec![Msg { account_id:"zalo-a".into(), id:"123".into(), text:fixture["beforeText"].as_str().unwrap().into(), rev:raw.to_string(), status:"seen".into(), ..Default::default() }];
+            hydrate(std::path::Path::new("/nonexistent"), &mut rows);
+            assert_eq!(rows[0].text, fixture["text"].as_str().unwrap(), "{}", fixture["name"]);
+            assert_eq!(rows[0].rev,raw.to_string());
+            assert_eq!(rows[0].status,"seen");
+            hydrate(std::path::Path::new("/nonexistent"), &mut rows);
+            assert_eq!(rows[0].text, fixture["text"].as_str().unwrap());
+        }
+    }
+    #[test]
     fn cached_locations_recover_maps_urls_without_network_or_losing_message_state() {
         let fixtures: Value = serde_json::from_str(include_str!("../../connectors/zalo/location-fixtures.json")).unwrap();
         for fixture in fixtures.as_array().unwrap() {
@@ -934,23 +948,26 @@ fn media_url(url: &str) -> Result<reqwest::Url, String> {
     }
     Ok(url)
 }
-// Repair old cached location shares from the retained wire payload, without a refetch.
-fn repair_location(msg: &mut Msg) {
-    if !msg.rev.contains("\"chat.location.new\"") { return; }
+// Recover locations and link recommendations from cached wire payloads without a refetch.
+fn repair_shared_links(msg: &mut Msg) {
+    if !msg.rev.contains("\"chat.location.new\"") && !msg.rev.contains("\"chat.recommended\"") { return; }
     let raw: Value = serde_json::from_str(&msg.rev).unwrap_or_default();
-    if raw["msgType"] != "chat.location.new" || !raw["content"].is_object() { return; }
     let content = &raw["content"];
+    let location = raw["msgType"] == "chat.location.new";
+    let recommended = raw["msgType"] == "chat.recommended" && content["action"] == "recommened.link";
+    if !content.is_object() || (!location && !recommended) { return; }
     let params: Value = content["params"].as_str()
         .map(|s| serde_json::from_str(s).unwrap_or_default())
         .unwrap_or_else(|| content["params"].clone());
     let mut href = content["href"].as_str().filter(|s| {
         reqwest::Url::parse(s).is_ok_and(|u| matches!(u.scheme(), "http" | "https") && u.host_str().is_some())
     }).unwrap_or_default().to_string();
+    if recommended && href.is_empty() { return; }
     let coordinate = |v: &Value, max: f64| -> Option<f64> {
         let n = v.as_f64().or_else(|| v.as_str()?.parse::<f64>().ok())?;
         (n.is_finite() && n.abs() <= max).then_some(if n == 0.0 { 0.0 } else { n })
     };
-    if href.is_empty() {
+    if location && href.is_empty() {
         if let (Some(lat), Some(lon)) = (coordinate(&params["latitude"], 90.0), coordinate(&params["longitude"], 180.0)) {
             let mut url = reqwest::Url::parse("https://www.google.com/maps/search/").unwrap();
             url.query_pairs_mut().append_pair("api", "1").append_pair("query", &format!("{lat},{lon}"));
@@ -960,7 +977,9 @@ fn repair_location(msg: &mut Msg) {
             href = url.to_string();
         }
     }
-    msg.text = [content["title"].as_str().unwrap_or_default(), content["description"].as_str().unwrap_or_default(), &href]
+    let title = content["title"].as_str().filter(|s| !s.trim().is_empty())
+        .or_else(|| recommended.then(|| params["mediaTitle"].as_str()).flatten()).unwrap_or_default();
+    msg.text = [title, content["description"].as_str().unwrap_or_default(), &href]
         .into_iter().filter(|s| !s.trim().is_empty()).collect::<Vec<_>>().join("\n");
     if msg.text.is_empty() { msg.text = "[Vị trí Zalo]".into(); }
 }
@@ -1030,7 +1049,7 @@ pub fn hydrate(cache: &std::path::Path, msgs: &mut [Msg]) {
         .iter_mut()
         .filter(|m| m.account_id.starts_with("zalo-"))
     {
-        repair_location(m);
+        repair_shared_links(m);
         repair_media(m);
         if let Some(media) = &mut m.media {
             if !media.file_ref.is_empty() {

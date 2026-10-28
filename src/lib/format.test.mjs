@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { normalizeMessage } from "../../connectors/zalo/normalize.mjs";
 import { fmt, plain, norm, initials, listTime, dayLabel } from "./format.ts";
 
 test("fmt escapes, then renders code, links and mentions", () => {
@@ -18,6 +20,14 @@ test('location messages show the complete clickable Google Maps URL', () => {
   const html=fmt(`Kids story 유치원\nQuận 7\n${url}`);
   const escaped=url.replaceAll('&','&amp;');
   assert.equal(html,`<p>Kids story 유치원<br>Quận 7<br><a class="msg-link" href="${escaped}">${escaped}</a></p>`);
+});
+
+test('a Zalo Maps recommendation with an empty title renders its full original link', () => {
+  const [fixture]=JSON.parse(readFileSync(new URL('../../connectors/zalo/link-fixtures.json',import.meta.url),'utf8'));
+  const m=normalizeMessage('zalo-a',{type:0,threadId:'42',data:{msgId:'123',ts:'1793000000000',msgType:'chat.recommended',content:fixture.content}},'me');
+  const html=fmt(m.text),url=fixture.content.href;
+  assert(html.includes(`<a class="msg-link" href="${url}">${url}</a>`));
+  assert(html.includes('Quán cà phê · Hồ Chí Minh'));
 });
 
 test("**bold** with a space before the closing marker, as Google's rich composer writes it", () => {

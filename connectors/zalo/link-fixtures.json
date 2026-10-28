@@ -1,0 +1,50 @@
+[
+  {
+    "name": "Maps recommendation with empty title keeps its place name and full URL",
+    "content": {"title":"","description":"Tìm kiếm các doanh nghiệp địa phương, xem bản đồ và tìm chỉ đường trên Google Maps.","href":"https://maps.app.goo.gl/example?g_st=iz","action":"recommened.link","params":"{\"mediaTitle\":\"Quán cà phê · Hồ Chí Minh\",\"src\":\"maps.app.goo.gl\"}"},
+    "beforeText": "Tìm kiếm các doanh nghiệp địa phương, xem bản đồ và tìm chỉ đường trên Google Maps.",
+    "text": "Quán cà phê · Hồ Chí Minh\nTìm kiếm các doanh nghiệp địa phương, xem bản đồ và tìm chỉ đường trên Google Maps.\nhttps://maps.app.goo.gl/example?g_st=iz"
+  },
+  {
+    "name": "ordinary shared links keep the original URL and query parameters",
+    "content": {"title":"Article","description":"Summary","href":"https://example.com/article?a=1&b=two","action":"recommened.link","params":{}},
+    "beforeText": "Article",
+    "text": "Article\nSummary\nhttps://example.com/article?a=1&b=two"
+  },
+  {
+    "name": "shared link title wins over preview mediaTitle",
+    "content": {"title":"Original","href":"http://example.com/a","action":"recommened.link","params":{"mediaTitle":"Preview"}},
+    "beforeText": "Original",
+    "text": "Original\nhttp://example.com/a"
+  },
+  {
+    "name": "malformed preview params cannot hide a valid URL",
+    "content": {"title":"","description":"Summary","href":"https://example.com/","action":"recommened.link","params":"{"},
+    "beforeText": "Summary",
+    "text": "Summary\nhttps://example.com/"
+  },
+  {
+    "name": "null preview params cannot hide a valid URL",
+    "content": {"title":"","href":"https://example.com/","action":"recommened.link","params":"null"},
+    "beforeText": "[Nội dung Zalo]",
+    "text": "https://example.com/"
+  },
+  {
+    "name": "recommended links reject executable hrefs",
+    "content": {"title":"Title","href":"javascript:alert(1)","action":"recommened.link"},
+    "beforeText": "Title",
+    "text": "Title"
+  },
+  {
+    "name": "recommended links without href retain their fallback text",
+    "content": {"description":"Summary","action":"recommened.link","params":{}},
+    "beforeText": "Summary",
+    "text": "Summary"
+  },
+  {
+    "name": "recommended call events are not shared links",
+    "content": {"title":"Cuộc gọi nhỡ","href":"https://example.com/","action":"recommened.misscall"},
+    "beforeText": "Cuộc gọi nhỡ",
+    "text": "Cuộc gọi nhỡ"
+  }
+]

@@ -14,10 +14,19 @@ export function normalizeContact(u) {
 export function normalizeChat(accountId, type, id, info = {}) {
   return {accountId,id:chatKey(type,id),kind:type===1?'group':'dm',title:info.name || info.displayName || String(id),description:'',lastTs:0,preview:'',previewFrom:'',unread:0,mention:false,muted:false,memberCount:info.totalMember || 0,order:0,pinned:false,canSend:true,threaded:false,created:'',photo:info.fullAvt || info.avt || info.avatar || '',photoRef:'',forum:false};
 }
+function httpLink(value) {
+  if(typeof value!=='string')return '';
+  try {const u=new URL(value);if(['http:','https:'].includes(u.protocol) && u.hostname)return value;} catch {}
+  return '';
+}
+function recommendedLinkText(content, params) {
+  const href=httpLink(content.href);if(!href)return null;
+  const title=[content.title,params?.mediaTitle].find(v=>typeof v==='string' && v.trim());
+  return [title,content.description,href].filter(v=>typeof v==='string' && v.trim()).join('\n');
+}
 // Location shares have no href on some clients: their pin lives in params instead.
 function locationText(content, params) {
-  let href='';
-  try {const u=new URL(content.href);if(['http:','https:'].includes(u.protocol) && u.hostname)href=content.href;} catch {}
+  let href=httpLink(content.href);
   const coordinate=(v,max)=>{
     if(typeof v!=='number' && (typeof v!=='string' || !/^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(v)))return null;
     const n=Number(v);return Number.isFinite(n) && Math.abs(n)<=max?n:null;
@@ -43,6 +52,8 @@ export function normalizeMessage(accountId, raw, me) {
     media={kind,name:object.title || (kind==='image'?'Ảnh':kind==='voice'?'Tin nhắn thoại':kind==='sticker'?'Sticker.webp':'Tệp'),size:Number(params.fileSize || params.size || 0),mime:'',width:Number(params.width || params.video_width || object.width || (kind==='sticker'?128:0)),height:Number(params.height || params.video_height || object.height || (kind==='sticker'?128:0)),fileRef:url || (kind==='sticker' && /^[1-9]\d{0,9}$/.test(String(object.id))?`zalo-sticker:${object.id}`:''),localPath:'',thumb:object.thumb || object.thumbUrl || '',thumbFile:'',url:''};
   }
   const q=d.quote;
-  const text=type==='chat.location.new' && object?locationText(object,params):typeof c==='string'?c:media?'':object?.title || object?.description || '[Nội dung Zalo]';
+  let text=typeof c==='string'?c:media?'':object?.title || object?.description || '[Nội dung Zalo]';
+  if(type==='chat.location.new' && object)text=locationText(object,params);
+  else if(type==='chat.recommended' && object?.action==='recommened.link')text=recommendedLinkText(object,params) ?? text;
   return {accountId,chatId:chatKey(raw.type,String(raw.threadId)),id:String(d.msgId),sort:ts,senderId:String(d.uidFrom || ''),senderName:d.dName || '',senderPhoto:'',outgoing:!!raw.isSelf || String(d.uidFrom)===me,ts,edited:false,deleted:false,kind:media?'media':'text',text,media,albumId:String(params?.hdId || ''),link:null,replyTo:q?String(q.globalMsgId || ''):'',replyName:q?.fromD || '',replyText:q?.msg || '',reactions:[],threadId:'',threadReply:false,status:raw.isSelf?'sent':'',error:'',pinned:false,mentionsMe:(d.mentions || []).some(m=>String(m.uid)===me || String(m.uid)==='-1'),rev:JSON.stringify(d)};
 }

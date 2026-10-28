@@ -11,6 +11,14 @@ for(const fixture of JSON.parse(readFileSync(new URL('./location-fixtures.json',
     assert.deepEqual(JSON.parse(m.rev).content,fixture.content);
   });
 }
+for(const fixture of JSON.parse(readFileSync(new URL('./link-fixtures.json',import.meta.url),'utf8'))) {
+  test(fixture.name,()=>{
+    const m=normalizeMessage('zalo-a',raw({msgType:'chat.recommended',content:fixture.content}),'me');
+    assert.equal(m.text,fixture.text);
+    assert.equal(m.kind,'text');
+    assert.deepEqual(JSON.parse(m.rev).content,fixture.content);
+  });
+}
 test('keeps provider IDs as strings and separates DM/group IDs', () => {
   assert.equal(chatKey(0, '42'), 'u:42'); assert.equal(chatKey(1, '42'), 'g:42');
   assert.deepEqual(splitChatKey('g:42'), {type:1, id:'42'});
