@@ -4,35 +4,38 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 const resource = new URL('../../src-tauri/resources/web-bridge.js', import.meta.url);
 const script = readFileSync(resource, 'utf8');
+const HOST = { messenger: 'www.facebook.com', zalo: 'chat.zalo.me', whatsapp: 'web.whatsapp.com' };
 function page(href = '/messages/e2ee/t/123/', unread = true, provider = 'messenger', badge = 'fa-5_Plus_24_Line') {
   let now = 0, next = 0, scans = 0, observer, selected = false;
-  const timers = new Map(), sent = [], states = [], navigation = [], listeners = {};
+  const timers = new Map(), sent = [], states = [], navigation = [], translates = [], listeners = {};
   const row = { textContent: 'LanTin nhắn chưa đọc:Xin chào1 phút', innerText: `Lan\n${unread ? 'Tin nhắn chưa đọc: ' : ''}Xin chào\n1 phút`, querySelector: () => null };
   const child = { getBoundingClientRect: () => ({left:0,top:0,width:100,height:40}), dispatchEvent() {} };
   const zalo = { firstElementChild: child, click: () => { selected = true; }, className: 'conv-item', parentElement: { closest: () => null }, textContent: 'Lan 3 giờ Bạn: Xin chào',
     querySelector: (q) => q === '.truncate' ? { textContent: 'Lan' } : q.includes('z-conv-message') ? { textContent: 'Bạn: Xin chào' } : q.includes('unread-v2') ? { className: badge, textContent: '' } : null };
+  const wa = { getBoundingClientRect: () => ({left:0,top:0,width:100,height:40}), dispatchEvent: (e) => { if (e.type === 'click') selected = true; }, textContent: 'LanHôm quaXin chào2', innerText: 'Lan\nHôm qua\nXin chào\n2',
+    querySelector: (q) => q === 'span[title]' ? { textContent: 'Lan' } : q.includes('unread') ? { textContent: '2' } : null };
   const link = { parentElement: null, getAttribute: (k) => k === 'href' ? href : k === 'aria-label' ? 'Lan' : null, closest: () => row };
   const document = {
     head: { appendChild() {} }, body: {}, documentElement: {}, title: 'Messenger', hidden: false,
     getElementById: () => true,
     querySelector: () => null,
-    querySelectorAll: (q) => { if (q === '.conv-item') return [zalo]; if (q.includes('href*=')) { scans++; return [link]; } return []; },
+    querySelectorAll: (q) => { if (q === '.conv-item') return [zalo]; if (q.startsWith('#pane-side')) return [wa]; if (q.includes('href*=')) { scans++; return [link]; } return []; },
     addEventListener: (type, fn) => { listeners[type] = fn; },
   };
   const schedule = (fn, delay = 0, interval = 0) => { timers.set(++next, { fn, at: now + delay, interval }); return next; };
   const recoveryStorage = new Map();
   const context = {
-    document, location: { hostname: provider === 'zalo' ? 'chat.zalo.me' : 'www.facebook.com', href: `https://${provider === 'zalo' ? 'chat.zalo.me' : 'www.facebook.com'}${href}`, pathname: href, assign: (url) => navigation.push(url), replace: (url) => navigation.push(url) },
+    document, location: { hostname: HOST[provider], href: `https://${HOST[provider]}${href}`, pathname: href, assign: (url) => navigation.push(url), replace: (url) => navigation.push(url) },
     sessionStorage: { getItem: key => recoveryStorage.get(key) ?? null, setItem: (key,value) => recoveryStorage.set(key,value) },
-    window: { addEventListener: (type,fn) => { listeners[type] = fn; }, innerWidth: 1000, open: (url) => { const u = new URL(url); if (u.hostname === 'rows') sent.push(JSON.parse(decodeURIComponent(u.pathname.slice(1)))); if (u.hostname === 'state') states.push(JSON.parse(decodeURIComponent(u.pathname.slice(1)))); } },
+    window: { addEventListener: (type,fn) => { listeners[type] = fn; }, innerWidth: 1000, open: (url) => { const u = new URL(url); if (u.hostname === 'rows') sent.push(JSON.parse(decodeURIComponent(u.pathname.slice(1)))); if (u.hostname === 'state') states.push(JSON.parse(decodeURIComponent(u.pathname.slice(1)))); if (u.hostname === 'translate') translates.push(JSON.parse(decodeURIComponent(u.pathname.slice(1)))); } },
     setTimeout: (fn, delay) => schedule(fn, delay), clearTimeout: (id) => timers.delete(id),
     setInterval: (fn, delay) => schedule(fn, delay, delay), clearInterval: (id) => timers.delete(id),
     MutationObserver: class { constructor(fn) { observer = fn; } observe() {} disconnect() {} },
-    PointerEvent: class {}, MouseEvent: class {}, URL, Date: class extends Date { static now() { return now; } },
+    PointerEvent: class { constructor(type) { this.type = type; } }, MouseEvent: class { constructor(type) { this.type = type; } }, URL, Date: class extends Date { static now() { return now; } },
   };
   vm.runInNewContext(script, context);
   const advance = (ms) => { const end = now + ms; let runs = 0; while (true) { const pair = [...timers].sort((a,b) => a[1].at-b[1].at)[0]; if (!pair || pair[1].at > end) break; assert.ok(++runs < 1000, 'timer storm'); const [id,t] = pair; now=t.at; timers.delete(id); if (t.interval) timers.set(id,{...t,at:now+t.interval}); t.fn(); } now=end; };
-  return { sent, states, navigation, document, row, advance, open: (id) => context.window.__cm.open(id), selected: () => selected, mutate: () => observer?.([]), scans: () => scans, listeners };
+  return { sent, states, navigation, translates, document, row, advance, cm: () => context.window.__cm, open: (id) => context.window.__cm.open(id), selected: () => selected, mutate: () => observer?.([]), scans: () => scans, listeners };
 }
 test('encrypted Messenger threads synchronize immediately with their unread preview', () => {
   const p = page(); p.advance(200);
@@ -153,4 +156,46 @@ test('Zalo recovers a timed-out application chunk without an infinite reload loo
   p.listeners.unhandledrejection({reason:Error('ChunkLoadError')});p.advance(1200);
   assert.equal(p.navigation.length,2);
   assert.ok(p.states.includes('load-error'));
+});
+
+test('WhatsApp rows are keyed by title with the badge count, yesterday label and preview', () => {
+  const p = page('/', true, 'whatsapp'); p.advance(200);
+  const r = p.sent[0]?.[0];
+  assert.equal(r.id, 'Lan');
+  assert.equal(r.unread, 2);
+  assert.equal(r.preview, 'Xin chào', 'badge digits never leak into the preview');
+  assert.equal(r.ago, 86400);
+  assert.equal(r.outgoing, false);
+  assert.equal(p.states.at(-1), 'ready');
+});
+
+test('opening a WhatsApp conversation presses its row', () => {
+  const p = page('/', true, 'whatsapp'); p.advance(200);
+  p.open('Lan');
+  assert.equal(p.selected(), true);
+});
+
+test('the WhatsApp QR page is reported as a login instead of silently staying connected', () => {
+  const p = page('/', true, 'whatsapp');
+  p.document.querySelectorAll = () => [];
+  p.document.querySelector = (q) => q.includes('data-ref') ? {} : null;
+  p.advance(200);
+  assert.equal(p.states.at(-1), 'login');
+});
+
+test('translating a WhatsApp bubble asks the shell once and renders the answer under the text', () => {
+  const p = page('/', true, 'whatsapp'); p.advance(200);
+  const box = { className: '', textContent: '', remove: () => { appended = null; } };
+  let appended = null;
+  p.document.createElement = () => box;
+  const bubble = { dataset: {}, innerText: 'Hello there', querySelector: (q) => q === '.cm-tr' ? appended : null, appendChild: (el) => { appended = el; } };
+  assert.equal(p.cm().translate(bubble), true);
+  assert.deepEqual(p.translates, [{ id: '1', text: 'Hello there' }]);
+  assert.equal(box.className, 'cm-tr loading');
+  p.document.querySelectorAll = (q) => q === '[data-cm-tr]' ? [bubble] : [];
+  p.cm().translated('1', 'Xin chào', false);
+  assert.equal(box.textContent, 'Xin chào');
+  assert.equal(box.className, 'cm-tr');
+  assert.equal(p.cm().translate(bubble), false, 'a second click hides the translation instead of paying again');
+  assert.equal(p.translates.length, 1);
 });

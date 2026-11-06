@@ -290,6 +290,8 @@ fn brand_image(key: &str) -> Option<Retained<NSImage>> {
         include_bytes!("../resources/island/gchat.png")
     } else if key.starts_with("messenger-") {
         include_bytes!("../resources/island/messenger.png")
+    } else if key.starts_with("whatsapp-") {
+        include_bytes!("../resources/island/whatsapp.png")
     } else if key.starts_with("zalo-") {
         include_bytes!("../resources/island/zalo.png")
     } else {

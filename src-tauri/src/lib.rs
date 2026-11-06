@@ -138,7 +138,7 @@ impl Core {
         let mut chat = chat;
         let local_mute = matches!(
             self.platform(&chat.account_id),
-            "gchat" | "messenger" | "zalo"
+            "gchat" | "messenger" | "whatsapp" | "zalo"
         );
         let store = self.store();
         if local_mute {
@@ -451,6 +451,8 @@ impl Core {
             "gchat"
         } else if account_id.starts_with("messenger-") {
             "messenger"
+        } else if account_id.starts_with("whatsapp-") {
+            "whatsapp"
         } else if account_id.starts_with("zalo-") {
             "zalo"
         } else {
@@ -1669,6 +1671,21 @@ fn web_hide(core: C, account_id: String) {
 fn web_reload(core: C, account_id: String) {
     web::reload(&core, &account_id);
 }
+/// AI result for a bubble the provider page asked to translate (`error`: show it as such).
+#[tauri::command]
+fn web_translated(core: C, account_id: String, id: String, text: String, error: bool) {
+    let js = format!(
+        "window.__cm && __cm.translated({}, {}, {error})",
+        serde_json::to_string(&id).unwrap_or_default(),
+        serde_json::to_string(&text).unwrap_or_default()
+    );
+    web::eval(&core, &account_id, &js);
+}
+/// Translated draft → replaces the provider composer's text.
+#[tauri::command]
+fn web_draft(core: C, account_id: String, text: String) {
+    web::eval(&core, &account_id, &format!("window.__cm && __cm.draft({})", serde_json::to_string(&text).unwrap_or_default()));
+}
 #[tauri::command]
 fn web_devtools(core: C, account_id: String) {
     web::devtools(&core, &account_id);
@@ -2308,6 +2325,8 @@ pub fn run() {
             web_show,
             web_hide,
             web_reload,
+            web_translated,
+            web_draft,
             topic_history,
             save_file,
             open_local,

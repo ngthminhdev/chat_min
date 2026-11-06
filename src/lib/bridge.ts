@@ -40,6 +40,15 @@ export function onAppShortcut(cb: (shortcut: AppShortcut) => void): () => void {
   return () => { disposed = true; off(); };
 }
 
+export interface WebTranslate { accountId: string; kind: "translate" | "draft"; id?: string; text: string }
+/** A provider page (WhatsApp / Messenger) asked ChatMin to translate a bubble or its draft. */
+export function onWebTranslate(cb: (e: WebTranslate) => void): () => void {
+  let off = () => {};
+  let disposed = false;
+  if (isTauri) listen<WebTranslate>("web-translate", (e) => { if (!disposed) cb(e.payload); }).then((u) => { if (disposed) u(); else off = u; });
+  return () => { disposed = true; off(); };
+}
+
 export const api = {
   appState: () => call<AppState>("app_state"),
   uiState: () => isTauri ? call<Record<string, unknown> | null>("ui_state") : Promise.resolve(null),
@@ -80,6 +89,8 @@ export const api = {
   webHide: (accountId: string) => call<void>("web_hide", { accountId }),
   webReload: (accountId: string) => call<void>("web_reload", { accountId }),
   webDevtools: (accountId: string) => call<void>("web_devtools", { accountId }),
+  webTranslated: (accountId: string, id: string, text: string, error = false) => call<void>("web_translated", { accountId, id, text, error }),
+  webDraft: (accountId: string, text: string) => call<void>("web_draft", { accountId, text }),
   stickers: (accountId: string) => call<StickerPack[]>("stickers", { accountId }),
   sendSticker: (a: { accountId: string; chatId: string; threadId?: string; fileId: number; width: number; height: number; emoji: string }) => call<Msg>("send_sticker", a),
   /** base64 bytes → a cache file path that `send` can upload */

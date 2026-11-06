@@ -1,9 +1,9 @@
 // AI actions on top of the store: inline message translation, whole-chat translation,
 // draft translation and reply suggestions. Prompts live in Rust (ai.rs).
-import { api } from "./lib/bridge";
+import { api, type WebTranslate } from "./lib/bridge";
 import { plain } from "./lib/format";
 import type { Msg, Suggestion } from "./lib/types";
-import { fail, isThreadTab, useApp } from "./store";
+import { fail, isThreadTab, key, useApp } from "./store";
 import { hm } from "./lib/format";
 
 /** [name sent to the model, label, short tag] */
@@ -131,6 +131,31 @@ export async function translateDraft(chatKey: string, draft: string, to = target
   if (!draft.trim()) return null;
   const [out] = await api.aiRun("translate_to", [draft], useApp.getState().prefs.aiMe, to);
   return out || null;
+}
+
+/** A provider webview (WhatsApp / Messenger) asked for a translation: same languages and cache
+ *  as native chats; the result goes back into the page (web_translated / web_draft). */
+export async function translateWeb(e: WebTranslate) {
+  const s = useApp.getState();
+  const chatKey = s.active?.startsWith(`${e.accountId}|`) ? s.active : key(e.accountId, "web");
+  const [me, to] = langs(chatKey);
+  try {
+    if (e.kind === "draft") {
+      const out = await translateDraft(chatKey, e.text, to);
+      if (out) await api.webDraft(e.accountId, out);
+      return;
+    }
+    const ck = cacheKey(e.text, me, to);
+    let out = cache.get(ck);
+    if (out === undefined) {
+      out = (await api.aiRun("translate", [e.text], me, to))[0] ?? "";
+      remember(ck, out);
+    }
+    await api.webTranslated(e.accountId, e.id ?? "", out);
+  } catch (err) {
+    if (e.kind === "draft") fail(err);
+    else await api.webTranslated(e.accountId, e.id ?? "", String(err), true).catch(() => {});
+  }
 }
 
 /** Three replies for the last stretch of the conversation (thread-only when given). */

@@ -13,6 +13,7 @@ import type { Platform } from "../lib/types";
 import telegramLogo from "../assets/brands/telegram.svg";
 import gchatLogo from "../assets/brands/gchat.svg";
 import messengerLogo from "../assets/brands/messenger.svg";
+import whatsappLogo from "../assets/brands/whatsapp.svg";
 import zaloLogo from "../assets/brands/zalo.svg";
 
 const ICONS = {
@@ -43,7 +44,7 @@ export function Icon({ name, className = "" }: { name: IconName; className?: str
 }
 
 // official colour logos (Wikimedia Commons), shown as <img> so their gradient ids never clash
-const BRANDS: Record<Platform, string> = { telegram: telegramLogo, gchat: gchatLogo, messenger: messengerLogo, zalo: zaloLogo };
+const BRANDS: Record<Platform, string> = { telegram: telegramLogo, gchat: gchatLogo, messenger: messengerLogo, whatsapp: whatsappLogo, zalo: zaloLogo };
 
 /** Platform logo in brand colours — sits next to the connection dot. */
 export function Glyph({ platform }: { platform: Platform }) {

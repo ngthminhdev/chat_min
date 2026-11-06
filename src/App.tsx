@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { MotionConfig } from "motion/react";
-import { api, isTauri, onAppShortcut, openUrl, type AppShortcut } from "./lib/bridge";
+import { api, isTauri, onAppShortcut, onWebTranslate, openUrl, type AppShortcut } from "./lib/bridge";
+import { translateWeb } from "./ai";
 import { windowAppearance } from "./lib/appearance";
 import { Effect, EffectState, getCurrentWindow } from "@tauri-apps/api/window";
 import { PLATFORMS } from "./lib/platforms";
@@ -388,11 +389,13 @@ function useGlobalHandlers() {
       }
     }, 1000);
     const offShortcut = onAppShortcut((shortcut) => onKey({ ...shortcut, preventDefault() {} }));
+    const offTranslate = onWebTranslate((e) => void translateWeb(e));
     document.addEventListener("keydown", onKey);
     document.addEventListener("click", onClick);
     window.addEventListener("focus", onFocus);
     return () => {
       offShortcut();
+      offTranslate();
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("click", onClick);
       window.removeEventListener("focus", onFocus);

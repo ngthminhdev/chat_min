@@ -258,9 +258,11 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
     case "web_hide":
     case "web_reload":
     case "web_devtools":
+    case "web_translated":
+    case "web_draft":
       return;
     case "web_add":
-      throw new Error("Messenger / Zalo chỉ chạy trong app ChatMin, không có trong bản demo trình duyệt");
+      throw new Error("Messenger / WhatsApp / Zalo chỉ chạy trong app ChatMin, không có trong bản demo trình duyệt");
     case "stickers":
       return [{ id: "recent", title: "Gần đây", stickers: ["👍", "😂", "🔥", "🙏", "🎉", "😅", "🫡", "❤️", "👀", "🤝"].map((e, i) => ({ id: i + 1, thumb: "", thumbKind: "img", emoji: e, width: 512, height: 512 })) }];
     case "send_sticker":

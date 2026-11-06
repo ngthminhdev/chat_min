@@ -432,6 +432,9 @@ button.tab-close { padding: 0; border: 0; background: transparent; font-family: 
 .msgs { background: var(--app-bg); }
 .statusbar > div:first-child { padding-left: 12px; }
 .statusbar .right-status { padding-right: 12px; }
+/* narrow window: accounts shrink to their dots (names stay in the tooltip); below 480px the ⌘K hint gives its room to the counts */
+@media (max-width: 760px) { .statusbar .acc-label { display: none; } }
+@media (max-width: 480px) { .statusbar .right-status > span:last-child { display: none; } }
 .footer-shell { display: grid; grid-template-columns: 32px minmax(0, 1fr) 32px; align-items: stretch; min-width: 0; border-top: 1px solid var(--line); background: var(--window); }
 .footer-shell .statusbar { min-width: 0; border-top: 0; }
 .footer-shell > .panel-toggle { display: grid; place-items: center; width: 32px; min-width: 0; height: 27px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--text-3); cursor: pointer; }
@@ -865,6 +868,8 @@ body.left-collapsed.right-collapsed .main:not(.r2-page) { grid-template-columns:
 .sidebar, .sidebar .side-scroll { min-width: 0; }
 .sec-more-count { display: none; }
 @media (min-width: 761px) {
+  /* the rail keeps its handle: drag it out to reopen the chat list */
+  body.left-collapsed .resize-handle.left { display: block; left: 48px; }
   body.left-collapsed .sidebar { grid-template-rows: minmax(0, 1fr); overflow: hidden; }
   body.left-collapsed .sidebar .sidebar-top,
   body.left-collapsed .sidebar .mini-tabs,
@@ -942,6 +947,8 @@ body.left-collapsed.right-collapsed .main:not(.r2-page) { grid-template-columns:
   body:not(.left-collapsed) .main:not(.r2-page) > .workspace { visibility: hidden; }
   body:not(.left-collapsed):not(.right-collapsed):not(.inspector-unavailable) .main > .inspector { display: none; }
   .resize-handle.left { display: none; }
+  /* one column, like Telegram narrow: the details panel replaces the conversation instead of a drawer over a blank strip */
+  .main > .inspector { width: 100%; box-shadow: none; }
   .titlebar { grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; }
   .traffic { padding-left: 84px; }
   .titlebar .search { justify-content: center; padding-inline: 8px; }

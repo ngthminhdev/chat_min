@@ -1,4 +1,4 @@
-//! Messenger and Zalo have no public API for personal accounts, so each runs as its own
+//! Messenger, WhatsApp and Zalo have no public API for personal accounts, so each runs as its own
 //! web app in a child webview laid over the conversation area. ChatMin only creates,
 //! positions, shows and hides it. The injected bridge observes sidebar mutations and sends
 //! changed snapshots to a sequential background worker; title counts remain a fallback.
@@ -18,6 +18,7 @@ use tauri::{Emitter, LogicalPosition, LogicalSize, Manager, WebviewBuilder, Webv
 pub fn site(platform: &str) -> Option<(&'static str, &'static str)> {
     match platform {
         "messenger" => Some(("Messenger", "https://www.facebook.com/messages/")),
+        "whatsapp" => Some(("WhatsApp", "https://web.whatsapp.com/")),
         "zalo" => Some(("Zalo", "https://chat.zalo.me/")),
         _ => None,
     }
@@ -79,7 +80,7 @@ pub fn add(core: &Core, platform: &str) -> Result<Account, String> {
         id: id.clone(),
         platform: platform.into(),
         name: name.into(),
-        color: if platform == "zalo" { "blue".into() } else { "purple".into() },
+        color: match platform { "zalo" => "blue", "whatsapp" => "green", _ => "purple" }.into(),
         handle: url.trim_start_matches("https://").trim_end_matches('/').into(),
         self_id: id,
     };
@@ -332,7 +333,7 @@ pub fn show(core: &Arc<Core>, a: &Account, chat_id: &str, x: f64, y: f64, w: f64
         })
         .on_document_title_changed(move |_, title| {
             // Messenger flashes "X đã nhắn tin cho bạn" between "(1) Messenger": only the site title counts
-            if title.contains("Messenger") || title.contains("Zalo") {
+            if title.contains("Messenger") || title.contains("Zalo") || title.contains("WhatsApp") {
                 c.web_unread(&id, title_count(&title));
             }
         })
@@ -359,6 +360,15 @@ pub fn show(core: &Arc<Core>, a: &Account, chat_id: &str, x: f64, y: f64, w: f64
                             }
                         }
                     }
+                    // the page wants a bubble or its draft translated: the shell owns languages, cache and AI config
+                    Some(kind @ ("translate" | "draft")) => match serde_json::from_str::<serde_json::Value>(&body) {
+                        Ok(mut v) if v.is_object() => {
+                            v["accountId"] = id4.clone().into();
+                            v["kind"] = kind.into();
+                            let _ = c2.app.emit_to("main", "web-translate", v);
+                        }
+                        _ => c2.log_line("web.log", &format!("{kind} parse")),
+                    },
                     Some("state") => match serde_json::from_str::<String>(&body).as_deref() {
                         Ok("ready") => c2.set_health(&id4, "ok", "Web đã kết nối", 0),
                         Ok("load-error") => {
@@ -437,6 +447,15 @@ fn percent_decode(s: &str) -> String {
 }
 
 #[cfg(desktop)]
+pub fn eval(core: &Core, account_id: &str, js: &str) {
+    if let Some(wv) = core.app.get_webview(&label(account_id)) {
+        let _ = wv.eval(js);
+    }
+}
+#[cfg(mobile)]
+pub fn eval(_core: &Core, _account_id: &str, _js: &str) {}
+
+#[cfg(desktop)]
 pub fn devtools(core: &Core, account_id: &str) {
     if let Some(wv) = core.app.get_webview(&label(account_id)) {
         wv.open_devtools();
@@ -508,6 +527,7 @@ mod tests {
     fn counts_from_titles() {
         assert_eq!(title_count("(3) Messenger"), 3);
         assert_eq!(title_count("(99+) Zalo"), 99);
+        assert_eq!(title_count("(2) WhatsApp"), 2);
         assert_eq!(title_count("Messenger"), 0);
         assert_ne!(store_id("messenger-1"), store_id("messenger-2"));
         assert_eq!(percent_decode("%7B%22a%22%3A1%7D"), r#"{"a":1}"#);

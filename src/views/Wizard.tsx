@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { api, openUrl, pickFile } from "../lib/bridge";
-import { PLATFORMS } from "../lib/platforms";
+import { PLATFORMS, isWebApp } from "../lib/platforms";
 import type { Platform } from "../lib/types";
 import { key, openChat, sortedChats, toast, useApp } from "../store";
 import { ColorPicker } from "../components/Overlays";
@@ -91,8 +91,8 @@ export function Wizard() {
                       setPlatform={setPlatform}
                       next={() => {
                         setError("");
-                        // Messenger retains the provider website; Zalo has native QR authentication.
-                        if (platform === "messenger") {
+                        // Messenger / WhatsApp retain the provider website; Zalo has native QR authentication.
+                        if (isWebApp(platform)) {
                           api.webAdd(platform)
                             .then((a) => {
                               leave(`Đã thêm ${a.name} — đăng nhập ngay trong khung chat`);
@@ -161,7 +161,7 @@ export function Wizard() {
 }
 
 function PlatformStep({ platform, setPlatform, next }: { platform: Platform; setPlatform: (p: Platform) => void; next: () => void }) {
-  const cards: [string, string, boolean][] = [["telegram", "Telegram", true], ["gchat", "Google Chat", true], ["messenger", "Messenger", true], ["zalo", "Zalo", true]];
+  const cards: [string, string, boolean][] = [["telegram", "Telegram", true], ["gchat", "Google Chat", true], ["messenger", "Messenger", true], ["whatsapp", "WhatsApp", true], ["zalo", "Zalo", true]];
   return (
     <form className="wizard-form" onSubmit={(e) => (e.preventDefault(), next())}>
       <div className="engine-cards">
@@ -177,7 +177,7 @@ function PlatformStep({ platform, setPlatform, next }: { platform: Platform; set
           >
             <span className="provider-logo">{on ? <Glyph platform={p as Platform} /> : <Icon name="messages-square" />}</span>
             <strong>{label}</strong>
-            <span className="provider-description">{p === "messenger" ? "Đăng nhập trong ứng dụng" : p === "zalo" ? "Quét QR · Hội thoại trong ChatMin" : p === "telegram" ? "Số điện thoại hoặc mã QR" : "Tài khoản Google Workspace"}</span>
+            <span className="provider-description">{p === "messenger" ? "Đăng nhập trong ứng dụng" : p === "whatsapp" ? "Quét QR trong ứng dụng" : p === "zalo" ? "Quét QR · Hội thoại trong ChatMin" : p === "telegram" ? "Số điện thoại hoặc mã QR" : "Tài khoản Google Workspace"}</span>
             <span className="provider-selection" aria-hidden="true">{platform === p && <Icon name="check" />}</span>
           </button>
         ))}

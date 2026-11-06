@@ -1,7 +1,7 @@
 import type { Platform } from "./types";
 
 // CAPABILITY: one layout for every platform. A feature the platform lacks is hidden or
-// dimmed with a tooltip — never a platform-specific screen. Messenger is web-backed; Zalo uses the native connector.
+// dimmed with a tooltip — never a platform-specific screen. Messenger and WhatsApp are web-backed; Zalo uses the native connector.
 export type Cap = "reply" | "reactions" | "edit" | "delete" | "pin" | "threads" | "stickers" | "voice" | "readReceipts" | "typing";
 
 export const PLATFORMS: Record<Platform, { name: string; caps: Record<Cap, boolean> }> = {
@@ -11,12 +11,16 @@ export const PLATFORMS: Record<Platform, { name: string; caps: Record<Cap, boole
   },
   // web apps run in their own webview: ChatMin's own message tools don't apply
   messenger: { name: "Messenger", caps: { reply: false, reactions: false, edit: false, delete: false, pin: false, threads: false, stickers: false, voice: false, readReceipts: false, typing: false } },
+  whatsapp: { name: "WhatsApp", caps: { reply: false, reactions: false, edit: false, delete: false, pin: false, threads: false, stickers: false, voice: false, readReceipts: false, typing: false } },
   zalo: { name: "Zalo", caps: { reply: true, reactions: true, edit: false, delete: true, pin: false, threads: false, stickers: true, voice: false, readReceipts: true, typing: true } },
   gchat: {
     name: "Google Chat",
     caps: { reply: true, reactions: true, edit: true, delete: true, pin: false, threads: true, stickers: false, voice: true, readReceipts: false, typing: false },
   },
 };
+
+/** Platforms whose account is the provider's own website in a child webview. */
+export const isWebApp = (p: Platform) => p === "messenger" || p === "whatsapp";
 
 export const CAP_LABELS: Record<Cap, string> = {
   reply: "Trả lời / trích dẫn", reactions: "Biểu cảm", edit: "Sửa tin đã gửi", delete: "Xoá với mọi người",

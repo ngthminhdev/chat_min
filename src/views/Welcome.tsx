@@ -28,6 +28,7 @@ export function Welcome() {
         <span><Glyph platform="telegram" /> Telegram</span>
         <span><Glyph platform="gchat" /> Google Chat</span>
         <span><Glyph platform="messenger" /> Messenger</span>
+        <span><Glyph platform="whatsapp" /> WhatsApp</span>
         <span><Glyph platform="zalo" /> Zalo</span>
       </motion.div>
       <motion.small {...item(6)}>Tài khoản được quản lý riêng · Không trộn lịch sử hội thoại</motion.small>

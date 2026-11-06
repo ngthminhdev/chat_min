@@ -1,5 +1,5 @@
 // Mirrors src-tauri/src/model.rs (serde camelCase).
-export type Platform = "telegram" | "gchat" | "messenger" | "zalo";
+export type Platform = "telegram" | "gchat" | "messenger" | "whatsapp" | "zalo";
 export type HealthState = "ok" | "syncing" | "offline" | "reconnecting" | "expired" | "rate";
 
 export interface Account {

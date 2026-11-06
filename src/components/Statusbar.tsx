@@ -32,9 +32,9 @@ export function Statusbar() {
               data-tip={`${a.name} · ${h === "ok" ? "Đã đồng bộ" : HEALTH_LABELS[h]}`}
             >
               <span className="conn-dot" />
-              {a.name}
+              <span className="acc-label">{a.name}</span>
               {h === "ok" ? null : h === "syncing" || h === "reconnecting" ? (
-                <span className="warn"><Icon name="refresh-cw" className="spin" /> {HEALTH_LABELS[h]}</span>
+                <span className="warn"><Icon name="refresh-cw" className="spin" /> <span className="acc-label">{HEALTH_LABELS[h]}</span></span>
               ) : (
                 <span className={`health-text ${h}`}>{HEALTH_LABELS[h]}</span>
               )}

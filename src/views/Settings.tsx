@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, openPath, pickFolder, type StorageView } from "../lib/bridge";
 import { fileSize } from "../lib/format";
 import type { AiView } from "../lib/types";
-import { HEALTH_LABELS, PLATFORMS } from "../lib/platforms";
+import { HEALTH_LABELS, PLATFORMS, isWebApp } from "../lib/platforms";
 import { LANGS } from "../ai";
 import { THEMES } from "../lib/themes";
 import type { BackgroundMode } from "../lib/appearance";
@@ -169,7 +169,7 @@ export function Settings() {
                           ...anchor(e.currentTarget),
                           items: [
                             { icon: "pencil", label: "Đổi tên", run: () => renameAccount(a.id) },
-                            a.platform === "messenger"
+                            isWebApp(a.platform)
                               ? { icon: "refresh-cw", label: "Tải lại trang", run: () => void api.webReload(a.id) }
                               : { icon: "refresh-cw", label: "Đăng nhập lại", run: () => startWizard(a.id) },
                             { icon: "trash-2", label: "Xoá tài khoản…", danger: true, run: () => removeAccount(a.id) },
@@ -405,7 +405,7 @@ function BrowserCard() {
   return (
     <section className="settings-card">
       <h3>Liên kết ngoài</h3>
-      <Row title="Trình duyệt mở liên kết" help="Đăng nhập Google, link trong tin nhắn và cửa sổ Messenger/Zalo mở ra ngoài." icon="external-link">
+      <Row title="Trình duyệt mở liên kết" help="Đăng nhập Google, link trong tin nhắn và cửa sổ Messenger/WhatsApp/Zalo mở ra ngoài." icon="external-link">
         <select className="settings-select" aria-label="Trình duyệt mở liên kết" value={v?.current ?? ""} onChange={(e) => set(e.target.value)}>
           <option value="">Mặc định của máy</option>
           {v?.installed.map((n) => <option key={n} value={n}>{n}</option>)}
