@@ -13,7 +13,7 @@ import { themeBase } from "./lib/themes";
 import type { Account, Chat, CoreEvent, Folder, Health, Media, Msg, ThreadSummary, Topic, WindowPresence } from "./lib/types";
 import type { IconName } from "./ui/Icon";
 
-export type Route = "shell" | "inbox" | "settings" | "search" | "welcome" | "wizard";
+export type Route = "shell" | "inbox" | "settings" | "search" | "todo" | "welcome" | "wizard";
 export type InspTab = "info" | "members" | "files" | "media" | "pinned" | "threads";
 
 /** Chats and their message lists are keyed by "accountId|chatId". */
@@ -440,7 +440,7 @@ export function applyEvent(e: CoreEvent) {
           chats,
           tabs,
           active: s.active && tabs.includes(s.active) ? s.active : tabs[0] ?? null,
-          route: !e.accounts.length && s.route !== "wizard" ? "welcome" : s.route === "welcome" && e.accounts.length ? "shell" : s.route,
+          route: !e.accounts.length && s.route !== "wizard" && s.route !== "todo" ? "welcome" : s.route === "welcome" && e.accounts.length ? "shell" : s.route,
         };
       });
       return;

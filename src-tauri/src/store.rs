@@ -100,6 +100,12 @@ impl Store {
     }
 
     // ── accounts ────────────────────────────────────────────────────────────
+    pub fn has_account(&self, id: &str) -> R<bool> {
+        self.db
+            .query_row("SELECT EXISTS(SELECT 1 FROM accounts WHERE id=?1)", [id], |row| row.get(0))
+            .map_err(e)
+    }
+
     pub fn accounts(&self) -> R<Vec<Account>> {
         let mut st = self
             .db

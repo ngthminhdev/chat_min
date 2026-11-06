@@ -101,6 +101,8 @@ export interface MsgPeople { reactions: [string, string][]; viewers: [string, st
 
 export interface WindowPresence { foreground: boolean; revision: number }
 export type CoreEvent =
+  | { type: "todoChanged" }
+  | { type: "todoOpen" }
   | ({ type: "windowPresence" } & WindowPresence)
   | { type: "accounts"; accounts: Account[] }
   | { type: "health"; accountId: string; health: HealthState; text: string; until: number }

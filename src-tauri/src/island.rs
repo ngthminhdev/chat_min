@@ -17,13 +17,14 @@ use std::{
     collections::HashMap,
     ptr::NonNull,
     rc::Rc,
+    sync::{atomic::{AtomicBool, Ordering}, Once},
 };
 use ui::{color, rect};
 
 type Open = Rc<dyn Fn(&str)>;
+static SESSION_ACTIVE: AtomicBool = AtomicBool::new(true);
 thread_local! {
     static ISLAND:RefCell<Option<Island>>=const{RefCell::new(None)};
-    static SESSION_ACTIVE:Cell<bool>=const{Cell::new(true)};
     static APPEARANCE:Cell<Appearance>=Cell::new(Appearance::default());
     #[cfg(debug_assertions)]
     static PREVIEW_DISPLAY:Cell<Option<u64>>=const{Cell::new(None)};
@@ -250,13 +251,8 @@ impl Island {
                 }
             })
         });
-        let pause = block2::RcBlock::new(|_: NonNull<NSNotification>| {
-            SESSION_ACTIVE.with(|s| s.set(false));
-            with_island(|i| i.dismiss());
-        });
-        let resume = block2::RcBlock::new(|_: NonNull<NSNotification>| SESSION_ACTIVE.with(|s| s.set(true)));
+        install_session_observer();
         let center = NSNotificationCenter::defaultCenter();
-        let workspace = NSWorkspace::sharedWorkspace().notificationCenter();
         let queue = NSOperationQueue::mainQueue();
         let observers = unsafe {
             vec![
@@ -265,18 +261,6 @@ impl Island {
                     None,
                     Some(&queue),
                     &refresh,
-                ),
-                workspace.addObserverForName_object_queue_usingBlock(
-                    Some(NSWorkspaceSessionDidResignActiveNotification),
-                    None,
-                    Some(&queue),
-                    &pause,
-                ),
-                workspace.addObserverForName_object_queue_usingBlock(
-                    Some(NSWorkspaceSessionDidBecomeActiveNotification),
-                    None,
-                    Some(&queue),
-                    &resume,
                 ),
             ]
         };
@@ -812,14 +796,37 @@ pub fn set_avatar(target: &str, source: &str, path: &str) {
         }
     });
 }
-pub fn session_active() -> bool { SESSION_ACTIVE.with(Cell::get) }
+pub fn install_session_observer() {
+    static INSTALL: Once = Once::new();
+    INSTALL.call_once(|| {
+        let workspace = NSWorkspace::sharedWorkspace().notificationCenter();
+        let queue = NSOperationQueue::mainQueue();
+        let pause = block2::RcBlock::new(|_: NonNull<NSNotification>| {
+            SESSION_ACTIVE.store(false, Ordering::Relaxed);
+            with_island(|i| i.dismiss());
+        });
+        let resume = block2::RcBlock::new(|_: NonNull<NSNotification>| {
+            SESSION_ACTIVE.store(true, Ordering::Relaxed);
+        });
+        // The notification center observers stay registered for the process lifetime.
+        unsafe {
+            std::mem::forget(workspace.addObserverForName_object_queue_usingBlock(
+                Some(NSWorkspaceSessionDidResignActiveNotification), None, Some(&queue), &pause,
+            ));
+            std::mem::forget(workspace.addObserverForName_object_queue_usingBlock(
+                Some(NSWorkspaceSessionDidBecomeActiveNotification), None, Some(&queue), &resume,
+            ));
+        }
+    });
+}
+pub fn session_active() -> bool { SESSION_ACTIVE.load(Ordering::Relaxed) }
 
 pub fn show(title: &str, body: &str, target: &str, photo: &str, open: Open) -> bool {
     let Some(mtm) = MainThreadMarker::new() else { return false };
     ISLAND.with(|cell| {
         let mut state = cell.borrow_mut();
         let i = state.get_or_insert_with(|| Island::new(mtm, open));
-        if !SESSION_ACTIVE.with(Cell::get) {
+        if !SESSION_ACTIVE.load(Ordering::Relaxed) {
             return true;
         }
         if i.queue.push_with_avatar(title, body, target, photo) {

@@ -1,7 +1,7 @@
 import {
   ArrowDown, AtSign, AudioLines, Bell, BellOff, Check, CheckCheck, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Copy,
   CornerDownRight, Download, Ellipsis, ExternalLink, FileArchive, FileCode, FileText, Film, Folder, FolderOpen, FolderPlus, Forward, Hash, Image,
-  Inbox, Info, KeyRound, Languages, Layers, Link, Lock, Mail, Megaphone, MessageCircleReply, MessageSquareText, MessagesSquare, Mic,
+  Inbox, Info, KeyRound, Languages, Layers, Link, ListChecks, Lock, Mail, Megaphone, MessageCircleReply, MessageSquareText, MessagesSquare, Mic,
   Palette, PanelLeft, PanelRight, Paperclip, Pencil, Phone, Pin, PinOff, Play, Plus, Minus, QrCode, RefreshCw, RemoveFormatting, Reply, RotateCw,
   Search, Send, Settings, Smile, Sparkles, Sticker, Trash2, Undo2, UserPlus, Users, WifiOff, X, type LucideIcon,
   // folder icons (Folders.tsx picker)
@@ -22,7 +22,7 @@ const ICONS = {
   clock: Clock, copy: Copy, "corner-down-right": CornerDownRight, download: Download, ellipsis: Ellipsis,
   "external-link": ExternalLink, "file-archive": FileArchive, "file-code": FileCode, "file-text": FileText, film: Film,
   folder: Folder, "folder-open": FolderOpen, "folder-plus": FolderPlus, forward: Forward, hash: Hash, image: Image, inbox: Inbox, info: Info, "key-round": KeyRound,
-  languages: Languages, layers: Layers, link: Link, lock: Lock, mail: Mail, megaphone: Megaphone, "message-circle-reply": MessageCircleReply,
+  languages: Languages, layers: Layers, link: Link, "list-checks": ListChecks, lock: Lock, mail: Mail, megaphone: Megaphone, "message-circle-reply": MessageCircleReply,
   "message-square-text": MessageSquareText, "messages-square": MessagesSquare, mic: Mic, palette: Palette,
   "panel-left": PanelLeft, "panel-right": PanelRight, paperclip: Paperclip, pencil: Pencil, phone: Phone, pin: Pin,
   "pin-off": PinOff, play: Play, plus: Plus, minus: Minus, "qr-code": QrCode, "refresh-cw": RefreshCw, reply: Reply, "rotate-cw": RotateCw,

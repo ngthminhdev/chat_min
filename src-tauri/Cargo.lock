@@ -538,6 +538,7 @@ dependencies = [
  "objc2-quartz-core",
  "objc2-user-notifications",
  "qrcode",
+ "regex",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",

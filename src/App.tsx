@@ -26,6 +26,8 @@ import { Wizard, startWizard } from "./views/Wizard";
 import { Inbox } from "./views/Inbox";
 import { MessageSearch } from "./views/MessageSearch";
 import { Settings } from "./views/Settings";
+import { TodoView } from "./views/Todo";
+import { watchTodos } from "./todo-state";
 import { Icon } from "./ui/Icon";
 import { isMobile } from "./lib/mobile";
 import { mobileConversationVisible } from "./lib/mobile-navigation";
@@ -132,7 +134,7 @@ export default function App() {
   }, [prefs.backgroundTransparency]);
 
   const page = route === "welcome" || route === "wizard";
-  const tabPage = route === "inbox" || route === "settings" || route === "search";
+  const tabPage = route === "inbox" || route === "settings" || route === "search" || route === "todo";
   const readingChat = booted && route === "shell" && (!isMobile || mobileConversationVisible({route,active,leftCollapsed:left,rightCollapsed:right})) ? chatKeyOf(active) : null;
   useEffect(() => {
     void api.setReadingChat(readingChat).catch(e => api.logJs(`reading chat: ${e}`));
@@ -154,6 +156,8 @@ export default function App() {
     if (!booted) return;
     void api.notifyPrefs(Object.fromEntries(useApp.getState().accounts.map((a) => [a.id, { ...DEFAULT_NOTIFY, ...notif[a.id] }]))).catch((e) => api.logJs(`notification prefs: ${e}`));
   }, [notif, accountIds, booted]);
+
+  useEffect(() => { if (booted) return watchTodos(); }, [booted]);
 
   useGlobalHandlers();
   useAndroidNavigation();
@@ -188,6 +192,8 @@ export default function App() {
                   <section className="page-view"><Settings /></section>
                 ) : route === "search" ? (
                   <section className="page-view"><MessageSearch /></section>
+                ) : route === "todo" ? (
+                  <section className="page-view"><TodoView /></section>
                 ) : threadTab ? (
                   // keyed: each thread tab starts with its own scroll state (stuck to the bottom)
                   <ThreadView key={threadTab} tab={threadTab} />
@@ -281,6 +287,8 @@ function useGlobalHandlers() {
         if (s.forward) return st({ forward: null });
         if (s.pop) return st({ pop: null });
         if (s.palette) return st({ palette: null });
+        if (s.route === "todo" && inField) return;
+        if (s.route === "todo") return st({ route: s.accounts.length ? "shell" : "welcome" });
         if (s.active && (s.replyTo[s.active] || s.editing[s.active])) {
           e.preventDefault();
           const a = s.active;
@@ -351,6 +359,7 @@ function useGlobalHandlers() {
       }
       if (lower === "w") {
         e.preventDefault();
+        if (s.route === "todo") return st({ route: s.accounts.length ? "shell" : "welcome" });
         if (s.route === "inbox" || s.route === "settings" || s.route === "search") return st({ route: "shell" });
         if (s.active) closeTab(s.active);
         return;

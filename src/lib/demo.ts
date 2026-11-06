@@ -2,6 +2,7 @@
 // same commands as Rust, so the UI can be reviewed without real accounts. Never bundled
 // into the Tauri app path (bridge.ts only imports it outside Tauri).
 import type { Account, AppState, Chat, CoreEvent, Member, Msg } from "./types";
+import { blankTodo, type Todo, type TodoDraft, type TodoSource } from "./todos";
 
 const listeners = new Set<(e: CoreEvent) => void>();
 const emit = (e: CoreEvent) => listeners.forEach((l) => l(e));
@@ -222,8 +223,55 @@ const ai = { format: "openai", endpoint: "https://openrouter.ai/api/v1", model: 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const k = (a: unknown, c: unknown) => `${a}|${c}`;
 
+const todoItems = new Map<number, Todo>();
+let nextTodo = 1;
+if (!new URLSearchParams(location.search).has("empty")) {
+  const c = chats.find(c => c.kind === "dm")!;
+  const title = "Gửi bản cập nhật tiến độ";
+  const id = nextTodo++;
+  todoItems.set(id, {
+    ...blankTodo(), id, title, status: "suggested", createdAt: Date.now(),
+    dueAt: at(-1, "17:00"), completedAt: null, remindedAt: null,
+    source: {
+      accountId: c.accountId, chatId: c.id, messageId: "demo-preview", threadId: "", label: c.title,
+      excerpt: "Nhờ bạn gửi bản cập nhật tiến độ trước 17h ngày mai", sentAt: Date.now(), preview: true,
+    },
+  });
+}
+
 export async function call(cmd: string, a: Record<string, any>): Promise<unknown> {
   switch (cmd) {
+    case "todo_list":
+      return [...todoItems.values()].reverse();
+    case "todo_save": {
+      const draft = a.draft as TodoDraft;
+      const source = a.source as TodoSource | null;
+      if (!draft.title.trim() || (draft.link && !/^https?:\/\//.test(draft.link))) throw new Error("Kiểm tra tên việc và liên kết.");
+      const existing = a.id === null ? undefined : todoItems.get(a.id);
+      if (a.id !== null && !existing) throw new Error("Việc này đã bị xoá.");
+      const id = existing?.id ?? nextTodo++;
+      todoItems.set(id, {
+        id, source: existing?.source ?? source, status: existing?.status === "done" ? "done" : "open",
+        createdAt: existing?.createdAt ?? Date.now(), completedAt: existing?.completedAt ?? null,
+        remindedAt: existing?.remindAt === draft.remindAt ? existing?.remindedAt ?? null : null,
+        ...draft, title: draft.title.trim(),
+      });
+      emit({ type: "todoChanged" });
+      return id;
+    }
+    case "todo_set_done": {
+      const item = todoItems.get(a.id);
+      if (item && item.status !== "suggested") {
+        todoItems.set(a.id, { ...item, status: a.done ? "done" : "open", completedAt: a.done ? Date.now() : null });
+      }
+      emit({ type: "todoChanged" });
+      return;
+    }
+    case "todo_dismiss":
+    case "todo_delete":
+      todoItems.delete(a.id);
+      emit({ type: "todoChanged" });
+      return;
     case "app_state": {
       const empty = new URLSearchParams(location.search).has("empty");
       return { accounts: empty ? [] : accounts, health, chats: empty ? [] : chats, tgConfigured: true, gchatConfigured: true, mutedThreads: [] } satisfies AppState;

@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { closeTab, openChat, useApp } from "../store";
 import { Icon } from "../ui/Icon";
 
-const PAGE_TABS = { inbox: ["inbox", "Tất cả hội thoại"], settings: ["settings", "Cài đặt"], search: ["search", "Tìm tin nhắn"] } as const;
+const PAGE_TABS = { inbox: ["inbox", "Tất cả hội thoại"], settings: ["settings", "Cài đặt"], search: ["search", "Tìm tin nhắn"], todo: ["list-checks", "Việc cần làm"] } as const;
 
 export function Tabs() {
   const tabs = useApp((s) => s.tabs);
@@ -14,7 +14,7 @@ export function Tabs() {
   const drafts = useApp((s) => s.drafts);
   const threadTabs = useApp((s) => s.threadTabs);
   const strip = useRef<HTMLElement>(null);
-  const page = route === "inbox" || route === "settings" || route === "search" ? PAGE_TABS[route] : null;
+  const page = route === "inbox" || route === "settings" || route === "search" || route === "todo" ? PAGE_TABS[route] : null;
   const focusTab = (target: string) => requestAnimationFrame(() => {
     const el = [...(strip.current?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [])].find(node => node.dataset.tabKey === target);
     el?.focus({ preventScroll: true });
@@ -119,7 +119,7 @@ export function Tabs() {
             <Icon name={page[0]} />
             <span className="tab-title">{page[1]}</span>
             <button className="tab-close" aria-label={`Đóng ${page[1]}`} data-tip="Đóng" data-kbd="⌘W" onClick={() => {
-              useApp.setState({ route: "shell" });
+              useApp.setState({ route: accounts.length ? "shell" : "welcome" });
               if (active) focusTab(active);
               else requestAnimationFrame(() => strip.current?.querySelector<HTMLButtonElement>(".tab-add")?.focus());
             }}>

@@ -310,6 +310,14 @@ pub fn alert(app: &AppHandle, title: &str, body: &str) {
     show(app, title, body, "");
 }
 
+type DeliveryAck = Option<tokio::sync::oneshot::Sender<bool>>;
+
+pub async fn todo(app: &AppHandle, id: i64, title: &str) -> bool {
+    let (ack, result) = tokio::sync::oneshot::channel();
+    dispatch(app, "Nhắc việc · ChatMin", title, &format!("todo:{id}"), "", true, Some(ack));
+    matches!(tokio::time::timeout(std::time::Duration::from_secs(5), result).await, Ok(Ok(true)))
+}
+
 /// Settings → "Gửi thông báo thử": the same path a message takes, minus the rules.
 pub fn test(app: &AppHandle) {
     // Repeat tests are separate deliveries; an empty first line still only opens the app.
@@ -373,7 +381,10 @@ fn open(app: &AppHandle, target: &str) {
     }
     let mut parts = target.split('\n').map(String::from);
     let key = parts.next().unwrap_or_default();
-    if !key.is_empty() {
+    if let Some(id) = key.strip_prefix("todo:").and_then(|value| value.parse().ok()) {
+        crate::todo::queue_open(id);
+        let _ = app.emit("chatmin", crate::model::Event::TodoOpen);
+    } else if !key.is_empty() {
         let (msg, thread) = (parts.next().unwrap_or_default(), parts.next().unwrap_or_default());
         let _ = app.emit("chatmin", crate::model::Event::Open { key, msg, thread });
     }
@@ -393,7 +404,10 @@ pub fn on_click(app: &AppHandle) {
         });
     }
     #[cfg(target_os = "macos")]
-    mac::install(app);
+    {
+        crate::island::install_session_observer();
+        mac::install(app);
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -404,6 +418,10 @@ fn show(app: &AppHandle, title: &str, body: &str, chat: &str) {
     show_photo(app, title, body, chat, "", true);
 }
 fn show_photo(app: &AppHandle, title: &str, body: &str, chat: &str, photo: &str, dock_bounce: bool) {
+    dispatch(app, title, body, chat, photo, dock_bounce, None);
+}
+
+fn dispatch(app: &AppHandle, title: &str, body: &str, chat: &str, photo: &str, dock_bounce: bool, ack: DeliveryAck) {
     #[cfg(target_os = "macos")]
     {
         // Serialize native delivery and mode-switch cleanup on the same main thread.
@@ -412,15 +430,19 @@ fn show_photo(app: &AppHandle, title: &str, body: &str, chat: &str, photo: &str,
         let photo = photo.to_owned();
         let queued = std::time::Instant::now();
         if let Err(error) = app.run_on_main_thread(move || {
-            if crate::island::session_active() { mac::attention(&handle, dock_bounce); }
+            let active = crate::island::session_active();
+            if ack.is_some() && !active { return; }
+            if active { mac::attention(&handle, dock_bounce); }
             eprintln!("[notify] dispatch queue_us={} mode={}", queued.elapsed().as_micros(), if SYSTEM_MODE.load(std::sync::atomic::Ordering::Relaxed) { "system" } else { "island" });
             if SYSTEM_MODE.load(std::sync::atomic::Ordering::Relaxed) {
-                mac::show(&title, &body, &target);
+                mac::show(&title, &body, &target, ack);
             } else {
                 if !crate::island::session_active() { return; }
                 let callback_app = handle.clone();
                 let open = std::rc::Rc::new(move |target: &str| open(&callback_app, target));
-                if !crate::island::show(&title, &body, &target, &photo, open) {
+                let shown = crate::island::show(&title, &body, &target, &photo, open);
+                if let Some(ack) = ack { let _ = ack.send(shown); }
+                if !shown {
                     eprintln!("[island] display unavailable; system banners remain disabled");
                 } else if !photo.is_empty() {
                     tauri::async_runtime::spawn(async move {
@@ -441,7 +463,9 @@ fn show_photo(app: &AppHandle, title: &str, body: &str, chat: &str, photo: &str,
         let n = app.notification().builder().title(title).body(body).sound("default").extra("chat", chat);
         #[cfg(mobile)]
         let n = n.channel_id(CHANNEL).icon("ic_stat_chatmin");
-        match n.show() {
+        let result = n.show();
+        if let Some(ack) = ack { let _ = ack.send(result.is_ok()); }
+        match result {
             Ok(()) => eprintln!("[notify] shown"),
             Err(e) => eprintln!("[notify] {e}"),
         }
@@ -580,7 +604,7 @@ mod mac {
         center.requestAuthorizationWithOptions_completionHandler(UNAuthorizationOptions::Alert | UNAuthorizationOptions::Sound | UNAuthorizationOptions::Badge, &done);
     }
 
-    pub fn show(title: &str, body: &str, chat: &str) {
+    pub fn show(title: &str, body: &str, chat: &str, ack: super::DeliveryAck) {
         if !bundled() || !super::SYSTEM_MODE.load(std::sync::atomic::Ordering::Relaxed) {
             return;
         }
@@ -594,9 +618,12 @@ mod mac {
         static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let id = NSString::from_str(&format!("chatmin-{}-{}", crate::now_ms(), NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
         let request = UNNotificationRequest::requestWithIdentifier_content_trigger(&id, &content, None);
-        let done = block2::RcBlock::new(|err: *mut NSError| {
+        let ack = std::sync::Mutex::new(ack);
+        let done = block2::RcBlock::new(move |err: *mut NSError| {
+            let system_mode = super::SYSTEM_MODE.load(std::sync::atomic::Ordering::Relaxed);
+            if let Some(ack) = ack.lock().unwrap().take() { let _ = ack.send(system_mode && err.is_null()); }
             // A request submitted just before switching modes may complete after cleanup.
-            if !super::SYSTEM_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+            if !system_mode {
                 silence();
                 return;
             }

@@ -19,6 +19,7 @@ mod notify_state;
 mod window_presence;
 mod store;
 mod tg;
+mod todo;
 
 /// Native UI QA without loading credentials, opening accounts, or starting provider listeners.
 #[cfg(all(target_os = "macos", debug_assertions))]
@@ -96,6 +97,7 @@ pub struct Core {
     pub data_dir: PathBuf,
     pub cache_dir: PathBuf,
     store: Mutex<Store>,
+    todos: Mutex<todo::TodoStore>,
     config: Mutex<Config>,
     pub health: Mutex<HashMap<String, Health>>,
     pub tg: Tg,
@@ -320,6 +322,27 @@ impl Core {
                 && (msg.mentions_me
                     || followed
                     || chat.as_ref().is_some_and(|c| c.kind == "dm" && !c.muted));
+            if !muted
+                && !msg.outgoing
+                && msg.kind != "service"
+                && chat.as_ref().is_none_or(|c| !c.muted)
+                && (msg.mentions_me || chat.as_ref().is_some_and(|c| c.kind == "dm"))
+            {
+                todo::capture(self, todo::Source {
+                    account_id: msg.account_id.clone(),
+                    chat_id: msg.chat_id.clone(),
+                    message_id: msg.id.clone(),
+                    thread_id: if msg.thread_reply || chat.as_ref().is_some_and(|c| c.forum) {
+                        msg.thread_id.clone()
+                    } else {
+                        String::new()
+                    },
+                    label: chat.as_ref().map_or_else(|| msg.sender_name.clone(), |c| c.title.clone()),
+                    excerpt: msg.text.chars().take(600).collect(),
+                    sent_at: msg.ts,
+                    preview: false,
+                });
+            }
             let rang = if muted {
                 notify::Ring::No
             } else {
@@ -528,6 +551,45 @@ fn next_color(existing: &[Account], preferred: &str) -> String {
 
 type Res<T> = Result<T, String>;
 type C<'a> = State<'a, Arc<Core>>;
+
+// ── personal todos ──────────────────────────────────────────────────────────
+#[tauri::command]
+fn todo_take_open() -> Option<i64> {
+    todo::take_open()
+}
+
+#[tauri::command]
+fn todo_list(core: C) -> Res<Vec<todo::Todo>> {
+    core.todos.lock().unwrap().list()
+}
+
+#[tauri::command]
+fn todo_save(core: C, id: Option<i64>, draft: todo::Draft, source: Option<todo::Source>) -> Res<i64> {
+    let id = core.todos.lock().unwrap().save(id, draft, source, now_ms())?;
+    core.emit(Event::TodoChanged);
+    Ok(id)
+}
+
+#[tauri::command]
+fn todo_set_done(core: C, id: i64, done: bool) -> Res<()> {
+    core.todos.lock().unwrap().set_done(id, done, now_ms())?;
+    core.emit(Event::TodoChanged);
+    Ok(())
+}
+
+#[tauri::command]
+fn todo_dismiss(core: C, id: i64) -> Res<()> {
+    core.todos.lock().unwrap().dismiss(id)?;
+    core.emit(Event::TodoChanged);
+    Ok(())
+}
+
+#[tauri::command]
+fn todo_delete(core: C, id: i64) -> Res<()> {
+    core.todos.lock().unwrap().delete(id)?;
+    core.emit(Event::TodoChanged);
+    Ok(())
+}
 
 // ── app state & config ──────────────────────────────────────────────────────
 #[derive(Serialize)]
@@ -929,10 +991,12 @@ async fn account_remove(core: C<'_>, id: String) -> Res<()> {
         _ => web::close(&core, &id),
     }
     core.store().remove_account(&id)?;
+    let todo_cleanup = core.todos.lock().unwrap().remove_account(&id);
+    core.emit(Event::TodoChanged);
     core.notifier.remove_account(&core.app, &id);
     core.health.lock().unwrap().remove(&id);
     core.emit_accounts();
-    Ok(())
+    todo_cleanup
 }
 
 // ── chats & messages ────────────────────────────────────────────────────────
@@ -2143,6 +2207,7 @@ pub fn run() {
             let core = Arc::new(Core {
                 app: app.handle().clone(),
                 store: Mutex::new(Store::open(&data_dir.join("chatmin.db"))?),
+                todos: Mutex::new(todo::TodoStore::open(&data_dir.join("todos.db"))?),
                 data_dir,
                 cache_dir,
                 config: Mutex::new(config),
@@ -2219,6 +2284,7 @@ pub fn run() {
             #[cfg(mobile)]
             notify::setup_channel(app.handle());
             notify::on_click(app.handle());
+            todo::start_reminders(core.clone());
             let accounts = core.store().accounts()?;
             for a in accounts {
                 core.health.lock().unwrap().insert(
@@ -2306,6 +2372,12 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_state,
+            todo_list,
+            todo_take_open,
+            todo_save,
+            todo_set_done,
+            todo_dismiss,
+            todo_delete,
             ui_state,
             ui_state_set,
             config_set,

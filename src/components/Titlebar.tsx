@@ -8,6 +8,7 @@ import { Icon } from "../ui/Icon";
 import { PersonAvatar } from "../ui/Avatar";
 import { useMobileBack } from "../mobile";
 import { isMobile } from "../lib/mobile";
+import { useTodoData } from "../todo-state";
 
 export function Titlebar() {
   const dark = useApp((s) => themeBase(s.prefs.theme) === "dark");
@@ -23,6 +24,7 @@ export function Titlebar() {
         <kbd>⌘⇧F</kbd>
       </button>
       <div className="toolbar" data-tauri-drag-region>
+        <TodoButton />
         <Notifications />
         <button
           className="tool-btn icon-only lg"
@@ -49,6 +51,18 @@ export function Titlebar() {
       </div>
     </header>
   );
+}
+
+export function TodoButton() {
+  const active = useApp(s => s.route === "todo");
+  const ready = useApp(s => s.booted);
+  const count = useTodoData(s => s.items.filter(t => t.status === "suggested").length);
+  return <button type="button" className={`tool-btn icon-only lg todo-nav${active ? " active" : ""}`}
+    aria-label={count ? `Việc cần làm, ${count} gợi ý` : "Việc cần làm"} aria-pressed={active}
+    data-tip="Việc cần làm" disabled={!ready} onClick={() => useApp.setState({ route: "todo" })}>
+    <Icon name="list-checks" />
+    {count > 0 && <span className="bell-count" aria-hidden="true">{count > 99 ? "99+" : count}</span>}
+  </button>;
 }
 
 /** Bell: mentions of me, DMs, replies in my threads, reactions to my messages. */

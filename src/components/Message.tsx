@@ -1,3 +1,4 @@
+import { addTodoFromMessage } from "../todo-state";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { EASE } from "../lib/motion";
@@ -655,6 +656,7 @@ function menuFor(k: string, tab: string, m: Msg, caps: Record<Cap, boolean>): Me
       kbd: "⌘C",
       run: () => copyMsg(m),
     },
+    !m.deleted && m.kind !== "service" && m.status !== "sending" && m.status !== "failed" && { icon: "list-checks", label: "Tạo việc từ tin nhắn", run: () => addTodoFromMessage(m) },
     !m.deleted && m.kind !== "service" && { icon: "forward", label: "Chuyển tiếp…", run: () => useApp.setState({ palette: { mode: "chats", forward: m } }) },
     caps.pin && {
       icon: m.pinned ? "pin-off" : "pin",

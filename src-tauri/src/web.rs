@@ -215,6 +215,18 @@ pub fn rows(core: &Core, account_id: &str, rows: Vec<Row>, initialized: bool) {
         // Baseline the first snapshot; later incoming preview changes also ring at capped badges.
         if incoming(prev, &chat, initialized, r.outgoing, r.ago) {
             core.notifier.web(&core.app, &chat, &chat.preview);
+            if !chat.muted && prev.is_none_or(|p| p.preview != chat.preview) {
+                crate::todo::capture(core, crate::todo::Source {
+                    account_id: account_id.into(),
+                    chat_id: chat.id.clone(),
+                    message_id: format!("preview:{}", chat.last_ts),
+                    thread_id: String::new(),
+                    label: chat.title.clone(),
+                    excerpt: chat.preview.chars().take(600).collect(),
+                    sent_at: chat.last_ts,
+                    preview: true,
+                });
+            }
         }
         core.put_chat(chat);
     }

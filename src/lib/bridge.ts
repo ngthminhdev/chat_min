@@ -4,6 +4,8 @@ import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { Account, Chat, AiView, AppState, CoreEvent, Member, Msg, MsgPeople, StickerPack, ThreadSummary, Topic } from "./types";
 
+import type { Todo, TodoDraft, TodoSource } from "./todos";
+
 // `?demo`: the in-memory backend even inside a Tauri webview — the Android webview pointed at
 // the vite server (dev-only) still gets Tauri's IPC injected, which refuses a foreign origin
 export const isTauri = "__TAURI_INTERNALS__" in window && !new URLSearchParams(location.search).has("demo");
@@ -51,6 +53,12 @@ export function onWebTranslate(cb: (e: WebTranslate) => void): () => void {
 
 export const api = {
   appState: () => call<AppState>("app_state"),
+  todoTakeOpen: () => isTauri ? call<number | null>("todo_take_open") : Promise.resolve(null),
+  todoList: () => call<Todo[]>("todo_list"),
+  todoSave: (id: number | null, draft: TodoDraft, source: TodoSource | null) => call<number>("todo_save", { id, draft, source }),
+  todoSetDone: (id: number, done: boolean) => call<void>("todo_set_done", { id, done }),
+  todoDismiss: (id: number) => call<void>("todo_dismiss", { id }),
+  todoDelete: (id: number) => call<void>("todo_delete", { id }),
   uiState: () => isTauri ? call<Record<string, unknown> | null>("ui_state") : Promise.resolve(null),
   uiStateSet: (value: object) => isTauri ? call<void>("ui_state_set", { value }) : Promise.resolve(),
   configSet: (a: { tgApiId?: string; tgApiHash?: string; gchatJson?: string }) => call<void>("config_set", a),

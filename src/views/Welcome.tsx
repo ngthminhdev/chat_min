@@ -1,6 +1,7 @@
 import { motion } from "motion/react";
 import { EASE } from "../lib/motion";
 import { Glyph, Icon } from "../ui/Icon";
+import { useApp } from "../store";
 import { startWizard } from "./Wizard";
 
 export function Welcome() {
@@ -23,6 +24,9 @@ export function Welcome() {
       </motion.p>
       <motion.button type="button" className="tool-btn primary" onClick={() => startWizard()} {...item(4)}>
         Thêm tài khoản <kbd className="kbd">⌘N</kbd>
+      </motion.button>
+      <motion.button type="button" className="tool-btn" onClick={() => useApp.setState({ route: "todo" })} {...item(4)}>
+        <Icon name="list-checks" /> Việc cần làm
       </motion.button>
       <motion.div className="welcome-platforms" {...item(5)}>
         <span><Glyph platform="telegram" /> Telegram</span>
