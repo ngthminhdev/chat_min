@@ -123,3 +123,12 @@ body:is([data-background="glass"], [data-background="clear"]) .page-view.todo-vi
 
 .mobile .todo-heading h1 { display: none; }
 .mobile .todo-check-wrap { min-width: 44px; min-height: 44px; align-items: center; margin: -8px -8px 0; }
+
+.todo-note-preview { color: var(--text-2); font-size: 12px; }
+.todo-note-preview summary { cursor: pointer; }
+.todo-note-preview .tx { margin-top: 6px; }
+.todo-page .tx { line-height: 1.5; overflow-wrap: anywhere; }
+.todo-page .tx ul { list-style: disc; padding-inline-start: 1.4em; }
+.todo-page .tx strong { color: var(--text); }
+.todo-page .tx code { color: var(--accent-secondary); }
+.todo-page .tx pre { max-width: 100%; overflow: auto; }

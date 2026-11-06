@@ -425,6 +425,8 @@ export async function call(cmd: string, a: Record<string, any>): Promise<unknown
           { reply: "Could you share the failing cases first?", meaning: "Gửi mình mấy case fail trước được không?" },
           { reply: "Let's sync tomorrow morning on this.", meaning: "Sáng mai mình bàn chuyện này nhé." },
         ];
+      if (a.task === "todo_draft")
+        return [{ title: "Xác nhận đầu việc trong hội thoại", notes: "- **Rà lại yêu cầu** trong tin đã chọn.\n- Chốt bước thực hiện và báo tiến độ.", deadline: null, link: "" }];
       if (a.task === "summarize")
         return ["• Huy chốt lịch deploy thứ Sáu: freeze 14:00, migration 14:30, canary 16:00.\n• Staging đang trả 502 ở /v1/budgets, chưa rõ nguyên nhân.\n• Quân profile job weekly report: json.Marshal chiếm phần lớn CPU.\nCần bạn:\n• Trí check giúp phần rollback, nhất là bước tắt flag."];
       return texts.map((t) => `[${a.task === "translate_to" ? a.to : a.me}] ${t}`);

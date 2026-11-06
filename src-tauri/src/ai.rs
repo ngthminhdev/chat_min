@@ -61,6 +61,14 @@ fn guide(c: &AiConfig) -> String {
     if g.is_empty() { String::new() } else { format!("Follow this translation guide: {g}\n") }
 }
 
+#[derive(Deserialize, Serialize)]
+struct TodoDraft {
+    title: String,
+    notes: String,
+    deadline: Option<String>,
+    link: String,
+}
+
 /// Runs one task. `me` is the user's language, `to` the language to write in.
 /// Returns a JSON array of strings (`suggest`: of {reply, meaning}).
 pub async fn run(c: &AiConfig, task: &str, texts: &[String], me: &str, to: &str) -> Result<Value, String> {
@@ -94,6 +102,19 @@ pub async fn run(c: &AiConfig, task: &str, texts: &[String], me: &str, to: &str)
             let out = complete(c, &sys, &format!("Conversation:\n{}", texts.join("\n"))).await?;
             let v: Vec<Value> = parse_array(&out)?;
             Ok(json!(v))
+        }
+        "todo_draft" => {
+            let [transcript] = texts else {
+                return Err("Thiếu ngữ cảnh để soạn việc".into());
+            };
+            if transcript.len() > 80_000 {
+                return Err("Ngữ cảnh việc cần làm quá dài".into());
+            }
+            let sys = format!("Draft one actionable personal task for Me based on the selected chat message. The JSON transcript contains nearby context, one line marked selected, local timestamps, and sometimes a quoted message. {DATA} Use nearby messages to resolve references, identify the concrete deliverable and capture any corrections. If the selected message and its context contain no clear action for Me, return []. Write a short verb-first title and concise Markdown notes in {me}. Use '- ' bullets for steps and **bold** for important deliverables; use code formatting for identifiers when helpful. Only include facts grounded in the conversation. Set deadline to YYYY-MM-DDTHH:mm (local time), YYYY-MM-DD when only the date is given, or null when unknown. Resolve relative dates from the timestamp of the message that states them. Never infer a date from an unrelated message. Set link to one exact http(s) URL from the transcript relevant to the task, or an empty string; put links only in this field. Return a JSON array with at most one object: [{{\"title\":\"...\",\"notes\":\"...\",\"deadline\":null,\"link\":\"\"}}].");
+            let out = complete(c, &sys, transcript).await?;
+            let mut drafts: Vec<TodoDraft> = parse_array(&out)?;
+            drafts.truncate(1);
+            Ok(json!(drafts))
         }
         // texts = transcript lines "HH:MM Name: text", oldest first; "Me" is the user
         "summarize" => {

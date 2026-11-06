@@ -26,3 +26,23 @@ test("accepting a suggestion sets a future reminder within the deadline", () => 
   assert.equal(reminderFor(now - 1, now), null);
   assert.equal(reminderFor(null, now), null);
 });
+
+test("AI Todo uses nearby messages in the selected thread and keeps quoted context", async () => {
+  const { todoTranscript, aiTodoDraft } = await import("./todos.ts");
+  const msg = (id, sort, threadId, extra = {}) => ({
+    id, sort, threadId, accountId: "a", chatId: "c", kind: "text", ts: 0, senderName: "Lan", text: id, ...extra,
+  });
+  const selected = msg("target", 3, "t", { replyText: "The release is on Friday", outgoing: true });
+  const transcript = todoTranscript(selected, [
+    msg("prior", 1, "t"), msg("other thread", 2, "other"), selected,
+    msg("deleted", 4, "t", { deleted: true }), msg("follow-up https://example.test/ticket", 5, "t"),
+  ], true);
+  assert.deepEqual(transcript.map(line => line.text), ["prior", "target", "follow-up https://example.test/ticket"]);
+  assert.equal(transcript[1].selected, true);
+  assert.equal(transcript[1].author, "Me");
+  assert.equal(transcript[1].quote, "The release is on Friday");
+  const draft = aiTodoDraft({ title: "Review release", notes: "• Check status", deadline: "2026-02-31", link: "https://unseen.test/" }, transcript);
+  assert.equal(draft.dueAt, null);
+  assert.equal(draft.link, "");
+  assert.equal(aiTodoDraft({ title: "Review release", notes: "", deadline: "2026-11-30", link: "https://example.test/ticket" }, transcript).link, "https://example.test/ticket");
+});

@@ -1,3 +1,5 @@
+import type { Msg } from "./types";
+
 export interface TodoSource {
   accountId: string;
   chatId: string;
@@ -15,6 +17,44 @@ export interface TodoDraft {
   link: string;
   dueAt: number | null;
   remindAt: number | null;
+}
+
+export type TodoTranscriptLine = { author: string; time: string; text: string; selected: boolean; quote?: string };
+export type AiTodo = { title: string; notes: string; deadline: string | null; link: string };
+
+export function todoTranscript(selected: Msg, messages: Msg[], threaded: boolean): TodoTranscriptLine[] {
+  const sameContext = (m: Msg) => m.accountId === selected.accountId && m.chatId === selected.chatId &&
+    (!threaded || m.threadId === selected.threadId) && !m.deleted && m.kind !== "service" &&
+    m.status !== "sending" && m.status !== "failed" && (!!m.text.trim() || !!m.media);
+  const nearby = messages.filter(m => m.id !== selected.id && sameContext(m)).sort((a, b) => a.sort - b.sort);
+  const before = nearby.filter(m => m.sort <= selected.sort);
+  const context = before.slice(-12);
+  // Keep the thread starter when a long thread pushes it outside the nearby window.
+  const root = threaded && selected.threadId && selected.threadReply
+    ? before.find(m => !m.threadReply) : undefined;
+  if (root && !context.includes(root)) context.unshift(root);
+  return [...context, selected, ...nearby.filter(m => m.sort > selected.sort).slice(0, 5)].map(m => ({
+    author: m.outgoing ? "Me" : (m.senderName || "Participant").slice(0, 100),
+    time: toDateField(m.ts),
+    text: (m.text.trim() || m.media?.name || "[Attachment]").slice(0, m === selected ? 3200 : 900),
+    selected: m === selected,
+    ...(m === selected && m.replyText ? { quote: m.replyText.slice(0, 1000) } : {}),
+  }));
+}
+
+export function aiTodoDraft(result: AiTodo, transcript: TodoTranscriptLine[]): TodoDraft {
+  const title = result.title.trim().slice(0, 160);
+  const deadline = result.deadline ?? "";
+  const dueAt = fromDateField(/^\d{4}-\d{2}-\d{2}$/.test(deadline) ? `${deadline}T23:59` : deadline);
+  const link = result.link.trim();
+  const sourceUrls = transcript.flatMap(line => `${line.text} ${line.quote ?? ""}`.match(/https?:\/\/[^\s<>"')\]]+/g) ?? []);
+  return {
+    title,
+    notes: result.notes.trim().slice(0, 5000),
+    dueAt,
+    remindAt: reminderFor(dueAt),
+    link: sourceUrls.some(url => url.replace(/[.,;!?]+$/, "") === link) ? link : "",
+  };
 }
 
 export interface Todo extends TodoDraft {

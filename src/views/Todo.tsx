@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api, openUrl } from "../lib/bridge";
 import { norm, plain } from "../lib/format";
-import { blankTodo, fromDateField, reminderFor, summarizeTodos, todoPeriod, toDateField, type Todo, type TodoDraft, type TodoSource } from "../lib/todos";
+import { aiTodoDraft, blankTodo, fromDateField, reminderFor, summarizeTodos, todoPeriod, toDateField, type Todo, type TodoDraft, type TodoSource, type AiTodo, type TodoTranscriptLine } from "../lib/todos";
 import { confirmDialog, fail, key, openAt, openChat, toast, useApp } from "../store";
 import { refreshTodos, useTodoData } from "../todo-state";
 import { Icon } from "../ui/Icon";
+import { FormattedText } from "../components/FormattedText";
 import "../styles/todo.css";
 
 type Filter = "open" | "today" | "overdue" | "done" | "week" | "all";
-type Editor = { id: number | null; source: TodoSource | null; draft: TodoDraft; accepting?: boolean };
+type Editor = { id: number | null; source: TodoSource | null; draft: TodoDraft; accepting?: boolean; transcript?: TodoTranscriptLine[] };
 
 const FILTERS: [Filter, string][] = [
   ["open", "Đang mở"], ["today", "Hạn hôm nay"], ["overdue", "Quá hạn"], ["done", "Hoàn thành"], ["all", "Tất cả"],
@@ -50,13 +51,53 @@ function SourceDetails({ source }: { source: TodoSource }) {
   );
 }
 
-function TodoEditor({ editor, busy, error, onClose, onSubmit }: {
+type EditorProps = {
   editor: Editor;
   busy: boolean;
   error: string;
   onClose: () => void;
   onSubmit: (draft: TodoDraft) => void;
-}) {
+  aiMessage?: string;
+  generated?: boolean;
+};
+
+function DraftFromChat({ editor, ...props }: EditorProps & { editor: Editor & { transcript: TodoTranscriptLine[] } }) {
+  const transcript = editor.transcript;
+  const request = useRef<Promise<AiTodo[]>>();
+  const skipped = useRef(false);
+  const [result, setResult] = useState<{ draft: TodoDraft; message: string; generated?: boolean } | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    const fallback = (message: string) => {
+      if (mounted && !skipped.current) setResult({ draft: editor.draft, message });
+    };
+    request.current ??= api.aiRun<AiTodo>("todo_draft", [JSON.stringify(transcript)], useApp.getState().prefs.aiMe || "Vietnamese", "");
+    void request.current.then(([value]) => {
+      if (!value?.title.trim()) {
+        fallback("AI chưa tìm thấy đầu việc rõ ràng. Bạn có thể nhập nội dung bên dưới.");
+      } else if (mounted && !skipped.current) {
+        setResult({ draft: aiTodoDraft(value, transcript), message: "", generated: true });
+      }
+    }).catch(error => fallback(`Không soạn được nháp AI. ${String(error)}`));
+    return () => { mounted = false; };
+  }, [editor.draft, transcript]);
+
+  if (result) return <TodoEditor {...props} editor={{ ...editor, draft: result.draft }} aiMessage={result.message} generated={result.generated} />;
+  return <div className="todo-editor">
+    <h2>Soạn việc từ hội thoại</h2>
+    <p className="todo-subtle" role="status">AI đang đọc tin nhắn và ngữ cảnh xung quanh…</p>
+    <div className="todo-actions">
+      <button type="button" className="tool-btn" onClick={props.onClose}>Huỷ</button>
+      <button type="button" className="tool-btn" onClick={() => {
+        skipped.current = true;
+        setResult({ draft: editor.draft, message: "" });
+      }}>Nhập tay</button>
+    </div>
+  </div>;
+}
+
+function TodoEditor({ editor, busy, error, onClose, onSubmit, aiMessage, generated }: EditorProps) {
   const [title, setTitle] = useState(editor.draft.title);
   const [notes, setNotes] = useState(editor.draft.notes);
   const [link, setLink] = useState(editor.draft.link);
@@ -89,10 +130,15 @@ function TodoEditor({ editor, busy, error, onClose, onSubmit }: {
     <form ref={form} className="todo-editor" aria-label="Chi tiết việc cần làm" onSubmit={submit} onKeyDown={e => {
       if (e.key === "Escape" && !busy) { e.stopPropagation(); onClose(); }
     }}>
-      <h2>{editor.accepting ? "Xem lại gợi ý" : editor.id !== null ? "Sửa việc" : "Việc mới"}</h2>
-      <fieldset disabled={busy}>
+      <h2>{generated ? "Nháp việc do AI soạn" : editor.accepting ? "Xem lại gợi ý" : editor.id !== null ? "Sửa việc" : "Việc mới"}</h2>
+      {aiMessage && <p className="todo-error" role="status">{aiMessage}</p>}
+    <fieldset disabled={busy}>
         <label>Tên việc<input ref={input} value={title} onChange={e => setTitle(e.target.value)} required maxLength={160} /></label>
-        <label>Ghi chú<textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} maxLength={5000} /></label>
+        <label>Ghi chú <small>Hỗ trợ Markdown</small><textarea value={notes} onChange={e => setNotes(e.target.value)} rows={generated ? 4 : 2} maxLength={5000} /></label>
+        {notes && <details className="todo-note-preview" open={generated || undefined}>
+          <summary>Xem trước ghi chú</summary>
+          <FormattedText text={notes} />
+        </details>}
         <div className="todo-form-dates">
           <label>
             <span className="todo-date-label">Hạn chót {!due && <small>Chưa đặt</small>}</span>
@@ -162,9 +208,13 @@ export function TodoView() {
     }
     const source = intent.source;
     const match = items.find(t => t.source?.accountId === source.accountId && t.source.chatId === source.chatId && t.source.messageId === source.messageId);
-    openEditor(match ? editTodo(match) : {
-      id: null, source,
-      draft: { ...blankTodo(), title: Array.from(source.excerpt).slice(0, 160).join("") },
+    if (match && match.status !== "suggested") {
+      openEditor(editTodo(match));
+      return;
+    }
+    openEditor({
+      ...(match ? editTodo(match) : { id: null, source, draft: blankTodo() }),
+      transcript: intent.transcript,
     });
   }, [intent, items, loaded]);
 
@@ -216,6 +266,15 @@ export function TodoView() {
     return (a.dueAt ?? Infinity) - (b.dueAt ?? Infinity) || b.id - a.id;
   });
 
+  const editorProps = editor && {
+    editor, busy, error: formError, onClose: () => openEditor(null),
+    onSubmit: (draft: TodoDraft) => void run(
+      () => api.todoSave(editor.id, draft, editor.id === null ? editor.source : null),
+      id => saved(id, editor.id === null || editor.accepting ? "Đã thêm việc" : "Đã lưu thay đổi"),
+      true,
+    ),
+  };
+
   return (
     <div className="todo-page">
       <header className="todo-heading">
@@ -236,12 +295,9 @@ export function TodoView() {
         ))}
       </div>
 
-      {editor && <TodoEditor key={editor.id ?? editor.source?.messageId ?? "new"} editor={editor} busy={busy} error={formError}
-        onClose={() => openEditor(null)} onSubmit={draft => void run(
-          () => api.todoSave(editor.id, draft, editor.id === null ? editor.source : null),
-          id => saved(id, editor.id === null || editor.accepting ? "Đã thêm việc" : "Đã lưu thay đổi"),
-          true,
-        )} />}
+      {editor && editorProps && (editor.transcript
+        ? <DraftFromChat key={JSON.stringify(editor.source && [editor.source.accountId, editor.source.chatId, editor.source.messageId])} {...editorProps} editor={{ ...editor, transcript: editor.transcript }} />
+        : <TodoEditor key={editor.id ?? "new"} {...editorProps} />)}
 
       {suggestions.length > 0 && (
         <section className="todo-suggestions" aria-labelledby="todo-suggestions-title">
@@ -295,7 +351,7 @@ export function TodoView() {
                 onChange={() => void run(() => api.todoSetDone(t.id, !done), () => toast(done ? "Đã mở lại việc" : "Đã hoàn thành"))} /></label>
               <div className="todo-row-body">
                 <strong className={done ? "todo-done" : undefined}>{t.title}</strong>
-                {t.notes && <p className="todo-notes">{t.notes}</p>}
+                {t.notes && <div className="todo-notes"><FormattedText text={t.notes} /></div>}
                 {(t.dueAt !== null || t.remindAt !== null || t.completedAt !== null) && <div className="todo-meta">
                   {t.dueAt !== null && <span className={!done && t.dueAt < now ? "todo-late" : undefined}><Icon name="clock" /> {!done && t.dueAt < now ? "Quá hạn" : "Hạn"} {DATE.format(t.dueAt)}</span>}
                   {!done && t.remindAt !== null && <span><Icon name="bell" /> {t.remindedAt === null ? "Nhắc lúc" : "Lịch nhắc đã qua"} {DATE.format(t.remindAt)}</span>}

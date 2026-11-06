@@ -3,9 +3,9 @@ import { api, onEvent } from "./lib/bridge";
 import { plain } from "./lib/format";
 import type { Msg } from "./lib/types";
 import { key, useApp } from "./store";
-import type { Todo, TodoSource } from "./lib/todos";
+import { todoTranscript, type Todo, type TodoSource, type TodoTranscriptLine } from "./lib/todos";
 
-type TodoIntent = { source: TodoSource } | { id: number };
+type TodoIntent = { source: TodoSource; transcript: TodoTranscriptLine[] } | { id: number };
 
 export const useTodoData = create<{
   items: Todo[];
@@ -59,8 +59,11 @@ export function watchTodos() {
 }
 
 export function addTodoFromMessage(m: Msg) {
-  const chat = useApp.getState().chats[key(m.accountId, m.chatId)];
-  useTodoData.setState({ intent: { source: {
+  const state = useApp.getState();
+  const chatKey = key(m.accountId, m.chatId);
+  const chat = state.chats[chatKey];
+  const transcript = todoTranscript(m, state.msgs[chatKey] ?? [], !!(m.threadReply || chat?.forum || chat?.threaded));
+  useTodoData.setState({ intent: { transcript, source: {
     accountId: m.accountId, chatId: m.chatId, messageId: m.id,
     threadId: m.threadReply || chat?.forum ? m.threadId : "",
     label: chat?.title || m.senderName,
