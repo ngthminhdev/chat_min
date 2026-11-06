@@ -1,4 +1,7 @@
 .todo-nav { position: relative; }
+body:is([data-background="glass"], [data-background="clear"]) .page-view.todo-view {
+  background: var(--reading-surface);
+}
 .todo-page {
   container-type: inline-size;
   box-sizing: border-box;
@@ -103,6 +106,8 @@
 .todo-list-head input { width: min(48%, 230px); }
 .todo-editor textarea { resize: vertical; }
 .todo-form-dates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.todo-date-label { display: flex; justify-content: space-between; gap: 6px; }
+.todo-date-label small { color: var(--text-3); font-size: inherit; }
 .todo-form-hint { display: flex; flex-wrap: wrap; gap: 4px; }
 .todo-editor .todo-actions { justify-content: flex-end; margin-top: 12px; }
 .todo-page .todo-error { margin-top: 8px; color: var(--status-warning); }

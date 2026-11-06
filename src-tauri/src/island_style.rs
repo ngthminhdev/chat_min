@@ -115,6 +115,16 @@ pub fn reanimate(old: Mode, new: Mode, fresh: bool, geometry_changed: bool) -> b
 pub fn split_title(title: &str) -> (&str, &str) {
     title.split_once(" · ").unwrap_or((title, ""))
 }
+pub fn notice_labels<'a>(title: &'a str, key: &str, platform: &str) -> (&'a str, String, &'static str) {
+    let (name, context) = split_title(title);
+    if key.starts_with("todo:") {
+        (name, platform.to_owned(), "Mở việc")
+    } else {
+        let meta = if context.is_empty() { platform.to_owned() } else { format!("{platform} · {context}") };
+        (name, meta, "Mở hội thoại")
+    }
+}
+
 pub fn initials(title: &str) -> String {
     let words: Vec<_> = title.split_whitespace().collect();
     let mut result = words.first().and_then(|w| w.chars().next()).into_iter().collect::<String>();
@@ -130,6 +140,16 @@ pub fn initials(title: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn task_reminders_have_a_task_action_and_one_app_label() {
+        let (_, meta, action) = notice_labels("Nhắc việc · ChatMin", "todo:4", "ChatMin");
+        assert_eq!(meta, "ChatMin");
+        assert_eq!(action, "Mở việc");
+        let (_, meta, action) = notice_labels("Linh · Nhóm", "tg-1|2", "Telegram");
+        assert_eq!(meta, "Telegram · Nhóm");
+        assert_eq!(action, "Mở hội thoại");
+    }
+
     #[test]
     fn tracking_noise_and_content_updates_do_not_restart_panel_motion() {
         assert_eq!(confirmed_hover(true, false, true), None);

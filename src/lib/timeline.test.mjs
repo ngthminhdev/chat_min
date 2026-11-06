@@ -30,3 +30,26 @@ test('deferred mount yields a paint and cancelling a stale tab prevents its reve
   afterPaint(()=>mounted++,scheduler); frames.get(3)(); frames.get(4)();
   assert.equal(mounted,1);
 });
+test('a suspended animation frame cannot leave a loaded conversation on the skeleton', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let reveal = 0;
+  const frames = new Map();
+  let frame = 0;
+  const scheduler = {
+    request: fn => { frames.set(++frame, fn); return frame; },
+    cancel: id => frames.delete(id),
+  };
+  const cancel = afterPaint(() => reveal++, scheduler);
+  const delayed = frames.get(frame);
+  t.mock.timers.tick(200);
+  assert.equal(reveal, 1);
+  delayed();
+  assert.equal(reveal, 1);
+  assert.equal(frames.size, 0);
+  cancel();
+
+  const cancelStale = afterPaint(() => reveal++, scheduler);
+  cancelStale();
+  t.mock.timers.tick(200);
+  assert.equal(reveal, 1);
+});

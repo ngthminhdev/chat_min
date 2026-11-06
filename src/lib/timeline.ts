@@ -17,9 +17,22 @@ export function afterPaint(callback: () => void, scheduler = {
   request: (fn: FrameRequestCallback) => requestAnimationFrame(fn),
   cancel: (id: number) => cancelAnimationFrame(id),
 }) {
-  let cancelled = false;
-  let frame = scheduler.request(() => {
-    if (!cancelled) frame = scheduler.request(() => { if (!cancelled) callback(); });
+  let pending = true;
+  let frame = 0;
+  const cancel = () => {
+    pending = false;
+    clearTimeout(fallback);
+    scheduler.cancel(frame);
+  };
+  const reveal = () => {
+    if (!pending) return;
+    cancel();
+    callback();
+  };
+  // WKWebView can suspend animation frames while the window is occluded.
+  const fallback = setTimeout(reveal, 120);
+  frame = scheduler.request(() => {
+    if (pending) frame = scheduler.request(reveal);
   });
-  return () => { cancelled = true; scheduler.cancel(frame); };
+  return cancel;
 }

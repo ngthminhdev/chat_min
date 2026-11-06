@@ -1,7 +1,7 @@
 //! Native notification island: compact tab → new-message peek → grouped history.
 use crate::island_queue::{placement_with_width, IslandQueue};
 use crate::island_style::{
-    confirmed_hover, hover_expand_needed, layout, reanimate, select_display, split_title, Appearance, Display, Mode, GLOW,
+    confirmed_hover, hover_expand_needed, layout, notice_labels, reanimate, select_display, Appearance, Display, Mode, GLOW,
 };
 use crate::island_view::{self as ui, Content, Surface};
 use objc2::rc::Retained;
@@ -393,14 +393,14 @@ impl Island {
         let g = &self.queue.groups[index];
         // the peek is still notch-black; only the hover-expanded list wears the theme
         let p = if peek { self.appearance.on_black() } else { self.appearance };
-        let (name, context) = split_title(&g.title);
         let (platform, _) = ui::platform(&g.key);
+        let (name, meta, action) = notice_labels(&g.title, &g.key, platform);
         let row = ui::button(
             mtm,
             parent,
             &self.actions,
             "",
-            &format!("{name}: {}. Mở hội thoại", g.body),
+            &format!("{name}: {}. {action}", g.body),
             rect(8.0, y, width - 16.0, if peek { 96.0 } else { 70.0 }),
             0,
             p,
@@ -436,11 +436,6 @@ impl Island {
             0.0,
             p.foreground,
         );
-        let meta = if context.is_empty() {
-            platform.to_owned()
-        } else {
-            format!("{platform} · {context}")
-        };
         ui::label(
             mtm,
             &row,

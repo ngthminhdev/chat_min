@@ -63,11 +63,15 @@ function TodoEditor({ editor, busy, error, onClose, onSubmit }: {
   const [due, setDue] = useState(toDateField(editor.draft.dueAt));
   const [reminder, setReminder] = useState(toDateField(editor.draft.remindAt));
   const [validation, setValidation] = useState("");
+  const form = useRef<HTMLFormElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const deadline = fromDateField(due);
   const quickReminder = reminderFor(deadline);
   const nearDeadline = quickReminder !== null && deadline !== null && deadline - quickReminder < 30 * 60_000;
-  useEffect(() => { input.current?.focus(); }, []);
+  useEffect(() => {
+    input.current?.focus({ preventScroll: true });
+    form.current?.scrollIntoView({ block: "start" });
+  }, []);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -82,7 +86,7 @@ function TodoEditor({ editor, busy, error, onClose, onSubmit }: {
   };
 
   return (
-    <form className="todo-editor" aria-label="Chi tiết việc cần làm" onSubmit={submit} onKeyDown={e => {
+    <form ref={form} className="todo-editor" aria-label="Chi tiết việc cần làm" onSubmit={submit} onKeyDown={e => {
       if (e.key === "Escape" && !busy) { e.stopPropagation(); onClose(); }
     }}>
       <h2>{editor.accepting ? "Xem lại gợi ý" : editor.id !== null ? "Sửa việc" : "Việc mới"}</h2>
@@ -90,13 +94,20 @@ function TodoEditor({ editor, busy, error, onClose, onSubmit }: {
         <label>Tên việc<input ref={input} value={title} onChange={e => setTitle(e.target.value)} required maxLength={160} /></label>
         <label>Ghi chú<textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} maxLength={5000} /></label>
         <div className="todo-form-dates">
-          <label>Hạn chót<input type="datetime-local" value={due} onChange={e => setDue(e.target.value)} /></label>
-          <label>Nhắc lúc<input type="datetime-local" value={reminder} onChange={e => setReminder(e.target.value)} /></label>
+          <label>
+            <span className="todo-date-label">Hạn chót {!due && <small>Chưa đặt</small>}</span>
+            <input type="datetime-local" value={due} onChange={e => setDue(e.target.value)} />
+          </label>
+          <label>
+            <span className="todo-date-label">Nhắc lúc {!reminder && <small>Chưa đặt</small>}</span>
+            <input type="datetime-local" value={reminder} onChange={e => setReminder(e.target.value)} />
+          </label>
         </div>
         <div className="todo-form-hint">
           <button type="button" className="tool-btn" disabled={quickReminder === null} onClick={() => setReminder(toDateField(quickReminder))}>
             <Icon name="bell" /> {nearDeadline ? "Nhắc sát hạn" : "Nhắc trước hạn 30 phút"}
           </button>
+          {due && <button type="button" className="tool-btn" onClick={() => setDue("")}>Bỏ hạn chót</button>}
           {reminder && <button type="button" className="tool-btn" onClick={() => setReminder("")}>Bỏ lịch nhắc</button>}
         </div>
         <label>Liên kết Jira hoặc tài liệu<input type="url" value={link} onChange={e => setLink(e.target.value)} placeholder="https://…" maxLength={2048} /></label>

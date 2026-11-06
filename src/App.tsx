@@ -193,7 +193,7 @@ export default function App() {
                 ) : route === "search" ? (
                   <section className="page-view"><MessageSearch /></section>
                 ) : route === "todo" ? (
-                  <section className="page-view"><TodoView /></section>
+                  <section className="page-view todo-view"><TodoView /></section>
                 ) : threadTab ? (
                   // keyed: each thread tab starts with its own scroll state (stuck to the bottom)
                   <ThreadView key={threadTab} tab={threadTab} />
