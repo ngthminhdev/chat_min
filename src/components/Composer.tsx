@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { api, fileSrc, isTauri, pickFiles, pickMedia, type Staged } from "../lib/bridge";
-import { fileSize, plain } from "../lib/format";
+import { fileSize, plain, splitMessage } from "../lib/format";
 import { CAP_OFF_NOTE, PLATFORMS } from "../lib/platforms";
 import { addMsg, anchor, capsOf, fail, send, splitKey, toast, useApp } from "../store";
 import { Icon } from "../ui/Icon";
@@ -226,7 +226,7 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
       const { wire, shown } = mentions.encode(text);
       files.forEach((f, i) => void send(chatKey, i ? "" : shown, { file: f.path, replyTo: i ? undefined : replyId || undefined, threadId, wire: i ? undefined : wire, plain: plainSend, asFile }));
       setFiles([]);
-      useApp.setState((s) => ({ drafts: { ...s.drafts, [k]: "" }, replyTo: { ...s.replyTo, [k]: "" } }));
+      useApp.setState((s) => ({ drafts: { ...s.drafts, [k]: "" }, replyTo: { ...s.replyTo, [k]: "" }, plainSend: false }));
       return;
     }
     if (!text || blocked || !canSend || savingRef.current) return;
@@ -249,11 +249,16 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
       }));
     } else {
       const { wire, shown } = mentions.encode(text);
-      void send(chatKey, shown, { replyTo: replyId || undefined, threadId, wire, plain: plainSend });
+      // over the platform limit: several messages, in order, the reply only on the first
+      void (async () => {
+        for (const [i, part] of splitMessage(shown, wire).entries())
+          await send(chatKey, part.shown, { replyTo: i ? undefined : replyId || undefined, threadId, wire: part.wire, plain: plainSend });
+      })();
     }
     setOrig(null);
     dismissSuggestions();
-    useApp.setState((s) => editId && (s.editing[k] !== editId || s.drafts[k] !== draft) ? {} : ({ drafts: { ...s.drafts, [k]: "" }, replyTo: { ...s.replyTo, [k]: "" }, editing: { ...s.editing, [k]: "" } }));
+    // plain text is per message: a forgotten toggle used to break *every* later send
+    useApp.setState((s) => editId && (s.editing[k] !== editId || s.drafts[k] !== draft) ? { plainSend: false } : ({ drafts: { ...s.drafts, [k]: "" }, replyTo: { ...s.replyTo, [k]: "" }, editing: { ...s.editing, [k]: "" }, plainSend: false }));
   };
 
   const attach = async (media = false) => {
@@ -484,9 +489,9 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
                 className={`tool-btn icon-only${plainSend ? " active" : ""}`}
                 aria-pressed={plainSend}
                 aria-label="Gửi văn bản thuần"
-                data-tip={plainSend ? "Văn bản thuần: *abc* gửi y như gõ · Bấm để bật định dạng lại" : "Gửi văn bản thuần: *abc* không in đậm, `x` không thành code"}
+                data-tip={plainSend ? "Tin này gửi y như gõ, tự tắt sau khi gửi · Bấm để bật định dạng lại" : "Gửi tin này dạng văn bản thuần: *abc* không in đậm, `x` không thành code"}
                 disabled={blocked || saving}
-                onClick={() => { useApp.setState((s) => ({ plainSend: !s.plainSend })); toast(plainSend ? "Định dạng *đậm* _nghiêng_ `code` bật lại" : "Văn bản thuần: gửi y như gõ"); }}
+                onClick={() => { useApp.setState((s) => ({ plainSend: !s.plainSend })); toast(plainSend ? "Định dạng *đậm* _nghiêng_ `code` bật lại" : "Tin này gửi y như gõ, không định dạng"); }}
               >
                 <Icon name="remove-formatting" />
               </button>

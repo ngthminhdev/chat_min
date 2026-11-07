@@ -1250,10 +1250,14 @@ body.light .jump-bottom.has-new { color: #fff; }
 .sec-more .ic.up { transform: rotate(180deg); }
 .dl-pct { font: 600 var(--fs-xs)/1 var(--font-mono); color: inherit; }
 /* message markup: lists and code blocks (format.ts) */
-.bubble ul { margin: 2px 0; padding-left: 20px; }
+.bubble :is(ul, ol), .cmsg .tx :is(ul, ol) { margin: 2px 0; padding-left: 20px; }
 .bubble li { margin: 1px 0; }
 .bubble li::marker { color: var(--text-3); }
-.bubble :is(p, ul, pre) + :is(p, ul, pre) { margin-top: 6px; }
+.bubble :is(p, ul, ol, pre, blockquote) + :is(p, ul, ol, pre, blockquote) { margin-top: 6px; }
+.tx u { text-decoration: underline; }
+.tx .spoiler { filter: blur(5px); cursor: pointer; transition: filter .15s; }
+.tx .spoiler:hover, .tx .spoiler:active { filter: none; }
+.tx blockquote { margin: 2px 0; padding: 1px 10px; border-left: 3px solid color-mix(in oklab, var(--text), transparent 70%); color: var(--text-2); white-space: pre-wrap; }
 .bubble pre { margin: 0; padding: 8px 10px; border-radius: var(--radius-sm); background: color-mix(in oklab, var(--text), transparent 92%); font: .88em/1.5 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 .bubble s { opacity: .7; }
 /* send: solid accent when there is something to send; at rest just a quiet icon, not a

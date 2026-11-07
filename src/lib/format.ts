@@ -17,9 +17,16 @@ const EMPH: [RegExp, string][] = [
   // for markup characters that are plain text, the composer's "plain text" toggle too
   [/(^|[^\w*])\*\*(?=[^\s\u200B])([^*\n]*?\S[^\S\r\n]*)\*\*(?!\*)/g, "strong"],
   [/(^|[^\w*])\*(?=[^\s\u200B])([^*\n]*?\S)\*(?![\w*])/g, "strong"],
+  // ~~x~~: how Google's formattedText writes strikethrough
+  [/(^|[^\w~])~~(?=[^\s\u200B])([^~\n]*?\S)~~(?!~)/g, "s"],
+  // __x__ underline and ||x|| spoiler: Telegram entities (tg.rs render)
+  [/(^|[^\w_])__(?=[^\s\u200B])([^_\n]*?\S)__(?!_)/g, "u"],
+  [/(^|[^|])\|\|(?=[^\s\u200B])([^|\n]*?\S)\|\|(?!\|)/g, 'span class="spoiler"'],
   [/(^|[^\w_])_(?=[^\s\u200B])([^_\n]*?\S)_(?![\w_])/g, "em"],
   [/(^|[^\w~])~(?=[^\s\u200B])([^~\n]*?\S)~(?![\w~])/g, "s"],
 ];
+
+const emph = (s: string) => EMPH.reduce((out, [re, tag]) => out.replace(re, `$1<${tag}>$2</${tag.split(" ")[0]}>`), s);
 
 function inline(s: string, me: string[]): string {
   return s
@@ -29,33 +36,89 @@ function inline(s: string, me: string[]): string {
       // links and mentions become placeholders first so emphasis never reaches inside a URL
       const kept: string[] = [];
       const hold = (html: string) => `\u0000${kept.push(html) - 1}\u0000`;
-      let out = part.replace(INLINE, (_m, label, href, url, mention) => {
-        if (label) return hold(`<a class="msg-link" href="${href}">${label}</a>`);
-        if (url) return hold(`<a class="msg-link" href="${url}">${url}</a>`);
+      let out = part.replace(INLINE, (_m, label, href, url: string, mention) => {
+        // Google writes **bold** inside a link label; the rich composer also wraps the whole link
+        if (label) return hold(`<a class="msg-link" href="${href}">${emph(label.replace(/\n/g, " "))}</a>`);
+        if (url) {
+          // the text is escaped already: a quote right after the URL became &#39; / &quot;
+          const tail = /&(#39|quot|gt|lt|amp)$/.exec(url)?.[0] ?? "";
+          const clean = url.slice(0, url.length - tail.length).replace(/[.,:;!?)\]]+$/, "");
+          return hold(`<a class="msg-link" href="${clean}">${clean}</a>`) + url.slice(clean.length);
+        }
         return hold(`<span class="mention${me.includes(mention) ? " me" : ""}">@${mention}</span>`);
       });
-      for (const [re, tag] of EMPH) out = out.replace(re, `$1<${tag}>$2</${tag}>`);
+      out = emph(out);
       return out.replace(/\u0000(\d+)\u0000/g, (_m, n) => kept[+n]).replace(/\n/g, "<br>");
     })
     .join("");
 }
 
-/** A paragraph: runs of "* " / "- " / "• " lines become a list, other lines stay lines. */
+const LIST = /^(\s*)(?:([*\-•])|(\d{1,3})[.)])\s+(.*)$/;
+const QUOTE = /^&gt;\s?(.*)$/;
+const HEADING = /^#{1,6}\s+(\S.*)$/;
+type Item = { text: string; subs: string[] };
+/** A paragraph: runs of "* " / "- " / "1. " lines become a list (an item indented deeper than
+ *  the first is nested one level), "> " lines a quote, "# " lines a bold line, other lines
+ *  stay lines. A blank line between two bullets and an indented line under one (Google's
+ *  rich composer wraps long items at 80 columns) keep the list going. */
 function para(p: string, me: string[]): string {
+  const lines = p.split("\n");
   let out = "";
   let text: string[] = [];
-  let items: string[] = [];
+  let items: Item[] = [];
+  let quote: string[] = [];
+  let list = "";
+  let indent = 0;
+  const li = (l: string) => `<li>${inline(l, me)}</li>`;
   const flush = () => {
     if (text.length) out += `<p>${inline(text.join("\n"), me)}</p>`;
-    if (items.length) out += `<ul>${items.map((l) => `<li>${inline(l, me)}</li>`).join("")}</ul>`;
+    if (items.length) out += `<${list}>${items.map((it) => `<li>${inline(it.text, me)}${it.subs.length ? `<ul>${it.subs.map(li).join("")}</ul>` : ""}</li>`).join("")}</${list.slice(0, 2)}>`;
+    if (quote.length) out += `<blockquote>${inline(quote.join("\n"), me)}</blockquote>`;
     text = [];
     items = [];
+    quote = [];
   };
-  for (const line of p.split("\n")) {
-    const bullet = /^\s*[*\-•]\s+(.*)$/.exec(line);
-    if (bullet ? text.length : items.length) flush();
-    if (bullet) items.push(bullet[1]);
-    else text.push(line);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const q = QUOTE.exec(line);
+    if (q) {
+      if (text.length || items.length) flush();
+      quote.push(q[1]);
+      continue;
+    }
+    const h = HEADING.exec(line);
+    if (h) {
+      flush();
+      out += `<p><strong>${inline(h[1], me)}</strong></p>`;
+      continue;
+    }
+    const b = LIST.exec(line);
+    if (b) {
+      const kind = b[3] ? "ol" : "ul";
+      // ponytail: one nesting level, deeper indents join it
+      if (items.length && b[1].length > indent && !b[3]) {
+        items[items.length - 1].subs.push(b[4]);
+        continue;
+      }
+      if (text.length || quote.length || (items.length && kind !== list.slice(0, 2))) flush();
+      if (!items.length) {
+        list = kind === "ol" && b[3] !== "1" ? `ol start="${+b[3]}"` : kind;
+        indent = b[1].length;
+      }
+      items.push({ text: b[4], subs: [] });
+      continue;
+    }
+    if (items.length) {
+      if (/^\s+\S/.test(line)) {
+        const last = items[items.length - 1];
+        if (last.subs.length) last.subs[last.subs.length - 1] += `\n${line.trim()}`;
+        else last.text += `\n${line.trim()}`;
+        continue;
+      }
+      if (!line.trim() && LIST.test(lines[i + 1] ?? "")) continue;
+    }
+    if (items.length || quote.length) flush();
+    text.push(line);
   }
   flush();
   return out;
@@ -110,6 +173,35 @@ function formatBody(text: string, me: string[]): string {
     .join("");
 }
 
+/** Telegram and Google Chat both refuse texts over 4096 characters. */
+export const MAX_SEND = 4000;
+
+/** A long message as several, cut at line breaks (then spaces) so each fits `limit`.
+ *  `wire` is the same text with mentions encoded (ComposerExtras): both are cut on the same
+ *  lines, so a mention never straddles two messages. */
+export function splitMessage(shown: string, wire = shown, limit = MAX_SEND): { shown: string; wire: string }[] {
+  const a = shown.split("\n"), b = wire.split("\n");
+  if (wire.length <= limit || a.length !== b.length) return [{ shown, wire }];
+  const out: { shown: string; wire: string }[] = [];
+  let cur = { shown: "", wire: "" };
+  const push = () => { if (cur.wire.trim()) out.push(cur); cur = { shown: "", wire: "" }; };
+  for (let i = 0; i < a.length; i++) {
+    let s = a[i], w = b[i];
+    // ponytail: an over-long single line is cut at the same index in both forms; a mention
+    // right there would break, long lines without line breaks rarely carry one
+    while (w.length > limit) {
+      const at = Math.max(w.lastIndexOf(" ", limit), limit >> 1);
+      if (cur.wire) push();
+      out.push({ shown: s.slice(0, at), wire: w.slice(0, at) });
+      s = s.slice(at).trimStart(); w = w.slice(at).trimStart();
+    }
+    if (cur.wire.length + w.length + 1 > limit) push();
+    cur = { shown: cur.shown + (cur.shown || i ? "\n" : "") + s, wire: cur.wire + (cur.wire || i ? "\n" : "") + w };
+  }
+  push();
+  return out.map(c => ({ shown: c.shown.trim(), wire: c.wire.trim() }));
+}
+
 /** One line for previews, quotes, notifications and search snippets. */
 export function plain(text: string): string {
   return text
@@ -117,8 +209,13 @@ export function plain(text: string): string {
     .replace(/@\{([^}]+)\}/g, "@$1")
     .replace(/`/g, "")
     .replace(/\*\*(?=[^\s\u200B])([^*\n]*?\S[^\S\r\n]*)\*\*/g, "$1")
+    .replace(/~~(?=[^\s\u200B])([^~\n]*?\S)~~/g, "$1")
+    .replace(/__(?=[^\s\u200B])([^_\n]*?\S)__/g, "$1")
+    .replace(/\|\|(?=[^\s\u200B])([^|\n]*?\S)\|\|/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
     .replace(/(^|[^\w*_~])[*_~](?=[^\s\u200B])([^*_~\n]*?\S)[*_~](?![\w*_~])/g, "$1$2")
-    .replace(/^\s*[*-]\s+/gm, "• ")
+    .replace(/^\s*[*\-•]\s+/gm, "• ")
+    .replace(/^>\s?/gm, "")
     .replace(/\u200B/g, "")
     .replace(/\s+/g, " ")
     .trim();

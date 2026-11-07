@@ -1989,6 +1989,16 @@ fn to_msg(account_id: &str, me: &str, m: &Value) -> Msg {
             "MISSED" => "📞 Cuộc gọi nhỡ".into(),
             _ => "📞 Cuộc gọi đã kết thúc".into(),
         };
+    } else if text.trim().is_empty() {
+        // a Meet / Drive link shared from the "+" menu: no text, only its RICH_LINK
+        if let Some(uri) = m["annotations"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find_map(|a| a["richLinkMetadata"]["uri"].as_str())
+        {
+            text = uri.to_string();
+        }
     }
     let media = m["attachment"].as_array().and_then(|a| a.first()).map(|a| {
         let mime = a["contentType"].as_str().unwrap_or_default();
@@ -2362,13 +2372,30 @@ fn chat_markup(ft: &str, names: &HashMap<String, String>) -> String {
             Some(name.to_string()) // custom emoji: its :name:, the image isn't in the API
         } else if tok == "/chat-user" || tok == "/chat-emoji" {
             Some(String::new())
+        } else if tok.starts_with("!--") {
+            // "<!-- end list -->" between a bullet and a numbered list: not text, and it must
+            // not reach keep_line_breaks, which then fails to align and keeps Google's wraps
+            rest = &tail[j + 1..];
+            if out.ends_with('\n') && rest.starts_with('\n') {
+                out.pop();
+                rest = &rest[1..];
+            }
+            continue;
         } else if tok.starts_with("http://") || tok.starts_with("https://") {
             Some(match tok.split_once('|') {
-                Some((url, label)) => format!("[{}]({url})", label.replace(['[', ']'], "")),
+                // a GIF picked from the "+" menu is a link with an empty label
+                Some((url, label)) if !label.trim().is_empty() => format!("[{}]({url})", label.replace(['[', ']'], "")),
+                Some((url, _)) => url.to_string(),
                 None => tok.to_string(),
             })
         } else if let Some((_, label)) = tok.split_once('|') {
             Some(label.to_string()) // mailto: and friends: the label reads fine on its own
+        } else if tok.contains('@') && !tok.contains(char::is_whitespace) {
+            // <name@host>, also written "\<name@host\>": `text` has the bare address
+            if out.ends_with('\\') {
+                out.pop();
+            }
+            Some(tok.trim_end_matches('\\').to_string())
         } else if tok.starts_with("customEmojis/") {
             Some(String::new())
         } else {
@@ -2391,8 +2418,9 @@ fn chat_markup(ft: &str, names: &HashMap<String, String>) -> String {
 
 /// A ``` block in `formattedText` is its lines glued together without newlines behind
 /// four spaces; `text` has the lines but no fence. Each such run that matches a stretch of
-/// `text` (newlines ignored) is replaced by that stretch inside a fence. Single lines that
-/// match without a line break stay as they are: an indented line is not a code block.
+/// `text` (newlines ignored) is replaced by that stretch inside a fence. A single line is a
+/// block only when `text` has it unindented at a line start: an indented line in `text`
+/// (a wrapped list item) is not a code block.
 fn restore_code_blocks(formatted: &str, text: &str) -> String {
     if !formatted.contains("    ") {
         return formatted.to_string();
@@ -2419,7 +2447,8 @@ fn restore_code_blocks(formatted: &str, text: &str) -> String {
             // `at` holds char starts: the last char may be multi-byte ("ạ", "│")
             let to = last + text[last..].chars().next().map_or(1, char::len_utf8);
             let orig = &text[from..to];
-            orig.contains('\n').then(|| format!("```\n{orig}\n```"))
+            let line_start = from == 0 || text.as_bytes()[from - 1] == b'\n';
+            (orig.contains('\n') || line_start).then(|| format!("```\n{orig}\n```"))
         });
         match restored {
             Some(r) => out.push_str(&r),
@@ -2435,6 +2464,46 @@ fn restore_code_blocks(formatted: &str, text: &str) -> String {
 /// count and indentation; its bold/italic markers stay put. Text that doesn't line up (links or mentions
 /// written differently) keeps `markup` as it is.
 fn keep_line_breaks(markup: &str, text: &str) -> String {
+    // `text` is the flat rendering: no "- ", "1. " or "> " at line starts and no ``` fence
+    // lines. Each such piece of `markup` becomes one private-use char that aligns as a
+    // marker and is put back afterwards; a bullet typed into `text` just goes.
+    static PREFIX: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        // a prefix may sit inside a bold run ("**1. Tested games: **"); a custom emoji is
+        // its :name: here and one placeholder character in `text`
+        regex::Regex::new(r"(?m)^[ \t]*\**(?:[-*\u{2022}] |\d{1,3}[.)][ \t]+|> )|\n?```[^\n]*\n?|:[a-z][a-z0-9_]+:|@\{all\}").unwrap()
+    });
+    // what `text` has instead: nothing, or "@all" for the group mention
+    static FLAT: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?m)^[ \t]*(?:[-*\u{2022}] |\d{1,3}[.)][ \t]+|> )|@all\b").unwrap()
+    });
+    // U+E010.. holds a line prefix (with_breaks starts a line before it), U+E100.. the rest
+    let mut held: Vec<(char, String)> = Vec::new();
+    let mut in_fence = false;
+    let markup = PREFIX.replace_all(markup, |m: &regex::Captures| {
+        if held.len() >= 200 {
+            return m[0].to_string();
+        }
+        let piece = &m[0];
+        let line_start = piece.trim_start().starts_with(|c: char| matches!(c, '-' | '*' | '\u{2022}' | '>') || c.is_ascii_digit());
+        let piece = if piece.contains("```") {
+            // the fence keeps the newline on its code side; the other one is the typed break
+            in_fence = !in_fence;
+            if in_fence { piece.trim_start_matches('\n') } else { piece.trim_end_matches('\n') }
+        } else {
+            piece
+        };
+        let c = char::from_u32(if line_start { 0xe010 } else { 0xe100 } + held.len() as u32).unwrap();
+        held.push((c, piece.to_string()));
+        c.to_string()
+    });
+    let mut out = keep_line_breaks_inner(&markup, &FLAT.replace_all(text, ""));
+    for (c, piece) in held.iter().rev() {
+        out = out.replace(*c, piece);
+    }
+    out
+}
+
+fn keep_line_breaks_inner(markup: &str, text: &str) -> String {
     // Compare links as atoms: Google can put either their label or URL in `text`.
     // Otherwise a single link makes the whole message fail alignment.
     if markup.contains('\u{e000}') || text.contains('\u{e000}') {
@@ -2456,14 +2525,27 @@ fn keep_line_breaks(markup: &str, text: &str) -> String {
             rest = &rest[1..];
             continue;
         }
+        // `text` has the label without markers, without Google's 80-column wrap, and with
+        // its own spacing ("1  - Mark" for "1 - Mark")
+        let words: Vec<String> = label.replace(['*', '_', '~'], "").split_whitespace().map(regex::escape).collect();
+        let loose = (!words.is_empty())
+            .then(|| regex::Regex::new(&words.join(r"\s+")).ok())
+            .flatten()
+            .and_then(|re| re.find(original).map(|m| (m.start(), m.end() - m.start())));
         let found = [label, url]
             .into_iter()
             .filter(|s| !s.is_empty())
             .filter_map(|s| original.find(s).map(|at| (at, s.len())))
+            .chain(loose)
             .min_by_key(|&(at, _)| at);
-        let Some((at, len)) = found else {
+        let Some((at, mut len)) = found else {
             return align_line_breaks(markup, text);
         };
+        // a labelled link is "label (url)" in `text`
+        let with_url = format!(" ({url})");
+        if original[at + len..].starts_with(&with_url) {
+            len += with_url.len();
+        }
         let token = format!("\u{e000}{}\u{e001}", links.len());
         raw.push_str(&original[..at]);
         raw.push_str(&token);
@@ -2482,10 +2564,19 @@ fn keep_line_breaks(markup: &str, text: &str) -> String {
 }
 
 fn align_line_breaks(markup: &str, text: &str) -> String {
-    const MARK: [char; 4] = ['*', '_', '~', '`'];
-    let gap_char = |c: &char| c.is_whitespace() || MARK.contains(c);
+    // '-': a nested "- item" that `text` renders inline after the previous line
+    const MARK: [char; 5] = ['*', '_', '~', '`', '-'];
+    // U+FFFC / U+FFFD: a custom emoji in `text`; U+FE0F: emoji presentation `text` may drop
+    let gap_char = |c: &char| {
+        c.is_whitespace() || MARK.contains(c) || matches!(c, '\u{fe0f}' | '\u{fffc}' | '\u{fffd}') || ('\u{e010}'..='\u{e1ff}').contains(c)
+    };
     let bare = |s: &str| s.chars().filter(|c| !gap_char(c)).collect::<String>();
-    if bare(markup) != bare(text) {
+    let (bm, bt) = (bare(markup), bare(text));
+    if bm != bt {
+        // the 80 characters around the first difference: what to teach this function next
+        let at = bm.chars().zip(bt.chars()).take_while(|(a, b)| a == b).count().saturating_sub(20);
+        let near = |s: &str| s.chars().skip(at).take(80).collect::<String>();
+        eprintln!("[gchat] lines unaligned, keeping Google's: {:?} vs {:?}", near(&bm), near(&bt));
         return markup.to_string();
     }
     let t: Vec<char> = text.chars().collect();
@@ -2508,6 +2599,7 @@ fn align_line_breaks(markup: &str, text: &str) -> String {
             continue;
         }
         if t.get(j) != Some(&c) {
+            eprintln!("[gchat] lines unaligned at {i}, keeping Google's");
             return markup.to_string();
         }
         out += &spacing(&gap, i, j);
@@ -2521,6 +2613,16 @@ fn align_line_breaks(markup: &str, text: &str) -> String {
 
 /// Preserve markup markers while replacing Google's whitespace with what was typed.
 fn with_breaks(gap: &str, spacing: &str) -> String {
+    // a held line prefix ("- ", "1. ", "> ") starts a line even where `text` ran the item on
+    if let Some(at) = gap.find(|c: char| ('\u{e010}'..='\u{e0ff}').contains(&c)) {
+        let (head, tail) = gap.split_at(at);
+        let mut out = with_breaks(head, spacing).trim_end_matches(' ').to_string();
+        if !out.ends_with('\n') && !(head.is_empty() && spacing.is_empty()) {
+            out.push('\n');
+        }
+        out.push_str(tail);
+        return out;
+    }
     if gap
         .chars()
         .filter(|c| c.is_whitespace())
@@ -2543,6 +2645,10 @@ fn with_breaks(gap: &str, spacing: &str) -> String {
             run.push(w);
         }
         if placed {
+            // a marker between two runs ("  - ", "** **") keeps one space after it
+            if out.ends_with(|c: char| !c.is_whitespace()) {
+                out.push(' ');
+            }
             continue;
         }
         if prefer_newline && !run.contains('\n') {
@@ -2790,13 +2896,78 @@ mod tests {
             restore_code_blocks(formatted, text),
             "see:\n```\n{\n  \"a\": 1,\n  \"b\": [2]\n}\n```\nthanks"
         );
-        // one indented line is not a block; unmatched runs and plain text pass through
+        // one line is a block when `text` has it at a line start; a wrapped list item is not
         assert_eq!(
             restore_code_blocks("    x = 1\nok", "x = 1\nok"),
-            "    x = 1\nok"
+            "```\nx = 1\n```\nok"
+        );
+        assert_eq!(
+            restore_code_blocks("  - item\n    wrapped\nok", "- item\n  wrapped\nok"),
+            "  - item\n    wrapped\nok"
         );
         assert_eq!(restore_code_blocks("    gone", "other"), "    gone");
         assert_eq!(restore_code_blocks("*bold* é", "bold é"), "*bold* é");
+    }
+
+    #[test]
+    fn list_end_comments_vanish_and_lines_still_align() {
+        let names = HashMap::new();
+        assert_eq!(chat_markup("* a\n\n<!-- end list -->\n\n1. b", &names), "* a\n\n1. b");
+        let m = json!({
+            "name": "spaces/A/messages/F", "createTime": "2026-11-07T00:00:00Z", "sender": {"name": "users/1"},
+            "text": "bullet a\nbullet b wrapped\none\nstrike ok",
+            "formattedText": "  - bullet a\n  - bullet b wrapped\n\n<!-- end list -->\n\n1. one\n\n~~strike~~ ok\n",
+        });
+        assert_eq!(to_msg("gc", "users/1", &m).text, "  - bullet a\n  - bullet b wrapped\n1. one\n~~strike~~ ok");
+    }
+
+    #[test]
+    fn flat_text_without_list_markers_still_aligns() {
+        // a real pair from app.log: Google's `text` drops "- ", "1. ", "> " and the fence
+        let markup = "head *b*\n\n  - bullet a\n\n  - bullet b\n\n1.  one\n\n2.  two\n\n> quoted *q*\n\n```\nlet x = 1;\n```\n";
+        let text = "head b\nbullet a\nbullet b\none\ntwo\nquoted q\nlet x = 1;";
+        assert_eq!(
+            keep_line_breaks(markup, text),
+            "head *b*\n  - bullet a\n  - bullet b\n1.  one\n2.  two\n> quoted *q*\n```\nlet x = 1;\n```"
+        );
+    }
+
+    #[test]
+    fn real_test_message_aligns() {
+        let markup = "ChatMin format test *bold* *italic* ~~strike~~ `code` *double* user_id 2*3\n~/path\n\n  - bullet a\n\n  - bullet b wrapped line\n\n  - bullet c\n\n1.  one\n\n2.  two\n\n> quoted *q* https://meet.google.com/abc-defg-hij (link) end.\n\n```\nlet x = 1;\n```\n";
+        let text = "ChatMin format test bold italic strike code double user_id 2*3 ~/path\nbullet a\nbullet b wrapped line\nbullet c\none\ntwo\nquoted q https://meet.google.com/abc-defg-hij (link) end.\nlet x = 1;";
+        assert_eq!(
+            keep_line_breaks(markup, text),
+            "ChatMin format test *bold* *italic* ~~strike~~ `code` *double* user_id 2*3 ~/path\n  - bullet a\n  - bullet b wrapped line\n  - bullet c\n1.  one\n2.  two\n> quoted *q* https://meet.google.com/abc-defg-hij (link) end.\n```\nlet x = 1;\n```"
+        );
+    }
+
+    #[test]
+    fn bold_prefixes_mentions_and_custom_emoji_align() {
+        assert_eq!(
+            keep_line_breaks("**1. Tested: **6 games\n\n****Dear** **@{all}**, :ok:\nbye", "Tested: 6 games\nDear @all, \u{fffc}\nbye"),
+            "**1. Tested: **6 games\n****Dear** **@{all}**, :ok:\nbye"
+        );
+    }
+
+    #[test]
+    fn bold_wrapped_link_labels_align() {
+        assert_eq!(
+            keep_line_breaks("see [**Open\nPositions**](https://x.io)**\n**now", "see Open Positions (https://x.io)** **now"),
+            "see [**Open\nPositions**](https://x.io)** **now"
+        );
+        assert_eq!(
+            keep_line_breaks("docs: [1 - Mark Game as\nCancelled](https://x.io/w)\n\nend", "docs: 1  - Mark Game as Cancelled \nend"),
+            "docs: [1 - Mark Game as\nCancelled](https://x.io/w) \nend"
+        );
+    }
+
+    #[test]
+    fn nested_bullet_rendered_inline_aligns() {
+        assert_eq!(
+            keep_line_breaks("Note:\n\n  - A - Ticket\n    - B done\n", "Note:\nA - Ticket - B done"),
+            "Note:\n  - A - Ticket\n    - B done"
+        );
     }
 
     #[test]
@@ -2818,6 +2989,12 @@ mod tests {
             chat_markup("Hi <chat-user data-user=\"users/7\"></chat-user> or <chat-user data-user=\"users/9\"></chat-user> <chat-emoji data-emoji-name=\":ok:\"></chat-emoji>", &names),
             "Hi @{Minh} or @{?} :ok:"
         );
+        assert_eq!(
+            chat_markup("mail <career@x.io> now", &names),
+            "mail career@x.io now"
+        );
+        assert_eq!(chat_markup("<https://media.tenor.com/a.gif|>", &names), "https://media.tenor.com/a.gif");
+        assert_eq!(chat_markup("at \\<career@x.io\\>", &names), "at career@x.io");
         assert_eq!(
             chat_markup("a < b and <mailto:a@b.c|mail> <unclosed", &names),
             "a < b and mail <unclosed"
@@ -2906,6 +3083,18 @@ mod tests {
         let msg = to_msg("gc", "users/1", &m);
         assert_eq!(msg.text, "📞 Cuộc gọi đã kết thúc");
         assert!(!msg.edited);
+    }
+
+    #[test]
+    fn shared_meet_link_without_text_shows_its_url() {
+        let m = json!({
+            "name": "spaces/A/messages/E", "createTime": "2026-10-23T12:33:58Z",
+            "sender": {"name": "users/2", "displayName": "Kamen"}, "formattedText": "\n",
+            "annotations": [{"type": "RICH_LINK", "startIndex": 0, "richLinkMetadata": {
+                "uri": "https://meet.google.com/abc-defg-hij", "richLinkType": "MEET_SPACE",
+                "meetSpaceLinkData": {"meetingCode": "abc-defg-hij", "type": "MEETING"}}}]
+        });
+        assert_eq!(to_msg("gc", "users/1", &m).text, "https://meet.google.com/abc-defg-hij");
     }
 
     /// A "<" with no ">" after it used to return before `unescape` ran: "\\>" stayed literal.

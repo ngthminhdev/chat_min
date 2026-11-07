@@ -26,7 +26,7 @@ import { Wizard, startWizard } from "./views/Wizard";
 import { Inbox } from "./views/Inbox";
 import { MessageSearch } from "./views/MessageSearch";
 import { Settings } from "./views/Settings";
-import { TodoView } from "./views/Todo";
+import { TodoCapture, TodoView } from "./views/Todo";
 import { watchTodos } from "./todo-state";
 import { Icon } from "./ui/Icon";
 import { isMobile } from "./lib/mobile";
@@ -235,6 +235,7 @@ export default function App() {
         </footer>
       </div>
       <Overlays />
+      <TodoCapture />
       <Viewer />
       {!isMobile && <HoverPeek />}
     </MotionConfig>

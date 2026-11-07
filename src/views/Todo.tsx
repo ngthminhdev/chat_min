@@ -6,6 +6,7 @@ import { confirmDialog, fail, key, openAt, openChat, toast, useApp } from "../st
 import { refreshTodos, useTodoData } from "../todo-state";
 import { Icon } from "../ui/Icon";
 import { FormattedText } from "../components/FormattedText";
+import { DateTimeModal } from "../ui/DateTimeModal";
 import "../styles/todo.css";
 
 type Filter = "open" | "today" | "overdue" | "done" | "week" | "all";
@@ -104,6 +105,7 @@ function TodoEditor({ editor, busy, error, onClose, onSubmit, aiMessage, generat
   const [due, setDue] = useState(toDateField(editor.draft.dueAt));
   const [reminder, setReminder] = useState(toDateField(editor.draft.remindAt));
   const [validation, setValidation] = useState("");
+  const [picker, setPicker] = useState<"due" | "remind" | null>(null);
   const form = useRef<HTMLFormElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const deadline = fromDateField(due);
@@ -140,15 +142,17 @@ function TodoEditor({ editor, busy, error, onClose, onSubmit, aiMessage, generat
           <FormattedText text={notes} />
         </details>}
         <div className="todo-form-dates">
-          <label>
-            <span className="todo-date-label">Hạn chót {!due && <small>Chưa đặt</small>}</span>
-            <input type="datetime-local" value={due} onChange={e => setDue(e.target.value)} />
-          </label>
-          <label>
-            <span className="todo-date-label">Nhắc lúc {!reminder && <small>Chưa đặt</small>}</span>
-            <input type="datetime-local" value={reminder} onChange={e => setReminder(e.target.value)} />
-          </label>
+          {([["due", "Hạn chót", "clock", due], ["remind", "Nhắc lúc", "bell", reminder]] as const).map(([k, label, icon, value]) => (
+            <div className="todo-date-label" key={k}>
+              <span>{label} {!value && <small>Chưa đặt</small>}</span>
+              <button type="button" className="tool-btn todo-date-btn" onClick={() => setPicker(k)}>
+                <Icon name={icon} /> {value ? DATE.format(fromDateField(value) ?? 0) : "Chọn ngày giờ"}
+              </button>
+            </div>
+          ))}
         </div>
+        {picker && <DateTimeModal title={picker === "due" ? "Hạn chót" : "Nhắc lúc"} value={picker === "due" ? due : reminder}
+          onClose={() => setPicker(null)} onApply={value => { (picker === "due" ? setDue : setReminder)(value); setPicker(null); }} />}
         <div className="todo-form-hint">
           <button type="button" className="tool-btn" disabled={quickReminder === null} onClick={() => setReminder(toDateField(quickReminder))}>
             <Icon name="bell" /> {nearDeadline ? "Nhắc sát hạn" : "Nhắc trước hạn 30 phút"}
@@ -166,6 +170,45 @@ function TodoEditor({ editor, busy, error, onClose, onSubmit, aiMessage, generat
       </div>
     </form>
   );
+}
+
+/** "Tạo việc từ tin nhắn": the AI draft opens over the chat, so the reader never leaves it. */
+export function TodoCapture() {
+  const intent = useTodoData(s => s.intent);
+  const items = useTodoData(s => s.items);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const open = !!intent && "transcript" in intent;
+  const close = () => useTodoData.setState({ intent: null });
+  // Escape closes every state, including "AI đang đọc…" where focus is still in the chat
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !busy) { e.stopPropagation(); close(); } };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [open, busy]);
+  if (!intent || !("transcript" in intent)) return null;
+  const { source, transcript } = intent;
+  const match = items.find(t => t.source?.accountId === source.accountId && t.source.chatId === source.chatId && t.source.messageId === source.messageId);
+  // The excerpt stays as the title when AI is unset or fails, like the plain capture before AI.
+  const editor: Editor = match ? editTodo(match) : { id: null, source, draft: { ...blankTodo(), title: Array.from(source.excerpt).slice(0, 160).join("") } };
+  const props: EditorProps = {
+    editor, busy, error, onClose: close,
+    onSubmit: draft => {
+      setBusy(true);
+      setError("");
+      api.todoSave(editor.id, draft, editor.id === null ? editor.source : null)
+        .then(() => { close(); toast("Đã thêm việc · xem ở Việc cần làm"); void refreshTodos(); }, e => setError(String(e)))
+        .finally(() => setBusy(false));
+    },
+  };
+  return <div className="modal" onMouseDown={e => { if (e.target === e.currentTarget && !busy) close(); }}>
+    <div className="prompt-dialog todo-capture" role="dialog" aria-modal="true" aria-label="Tạo việc từ tin nhắn">
+      {match && match.status !== "suggested"
+        ? <TodoEditor key={match.id} {...props} />
+        : <DraftFromChat key={source.messageId} {...props} editor={{ ...editor, transcript }} />}
+    </div>
+  </div>;
 }
 
 export function TodoView() {
@@ -197,26 +240,14 @@ export function TodoView() {
     setEditor(value);
   };
 
+  // a reminder click lands on its task; "Tạo việc từ tin nhắn" opens TodoCapture over the chat instead
   useEffect(() => {
-    if (!intent || !loaded) return;
+    if (!intent || !loaded || !("id" in intent)) return;
     useTodoData.setState({ intent: null });
-    if ("id" in intent) {
-      setFilter("all");
-      setQuery("");
-      setFocused(intent.id);
-      return;
-    }
-    const source = intent.source;
-    const match = items.find(t => t.source?.accountId === source.accountId && t.source.chatId === source.chatId && t.source.messageId === source.messageId);
-    if (match && match.status !== "suggested") {
-      openEditor(editTodo(match));
-      return;
-    }
-    openEditor({
-      ...(match ? editTodo(match) : { id: null, source, draft: blankTodo() }),
-      transcript: intent.transcript,
-    });
-  }, [intent, items, loaded]);
+    setFilter("all");
+    setQuery("");
+    setFocused(intent.id);
+  }, [intent, loaded]);
 
   useEffect(() => {
     if (focused === null) return;
@@ -295,9 +326,7 @@ export function TodoView() {
         ))}
       </div>
 
-      {editor && editorProps && (editor.transcript
-        ? <DraftFromChat key={JSON.stringify(editor.source && [editor.source.accountId, editor.source.chatId, editor.source.messageId])} {...editorProps} editor={{ ...editor, transcript: editor.transcript }} />
-        : <TodoEditor key={editor.id ?? "new"} {...editorProps} />)}
+      {editor && editorProps && <TodoEditor key={editor.id ?? "new"} {...editorProps} />}
 
       {suggestions.length > 0 && (
         <section className="todo-suggestions" aria-labelledby="todo-suggestions-title">

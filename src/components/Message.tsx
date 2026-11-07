@@ -548,7 +548,7 @@ function ThreadLink({ k, m, replies, open }: { k: string; m: Msg; replies?: Msg[
 
 /** Copies what the message says, line breaks kept and markup flattened. */
 function copyMsg(m: Msg) {
-  const text = m.text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, l, u) => (l === u ? u : `${l} (${u})`)).replace(/@\{([^}]+)\}/g, "@$1").replace(/`/g, "");
+  const text = m.text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, l, u) => (l === u ? u : `${l} (${u})`)).replace(/@\{([^}]+)\}/g, "@$1").replace(/[`\u200B]/g, "");
   void navigator.clipboard.writeText(text.trim() || m.media?.name || "").then(() => toast("Đã sao chép"));
 }
 

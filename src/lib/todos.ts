@@ -44,8 +44,9 @@ export function todoTranscript(selected: Msg, messages: Msg[], threaded: boolean
 
 export function aiTodoDraft(result: AiTodo, transcript: TodoTranscriptLine[]): TodoDraft {
   const title = result.title.trim().slice(0, 160);
-  const deadline = result.deadline ?? "";
-  const dueAt = fromDateField(/^\d{4}-\d{2}-\d{2}$/.test(deadline) ? `${deadline}T23:59` : deadline);
+  // Models add seconds, "Z" or a space despite the prompt: keep only the local date[Thh:mm] part.
+  const deadline = (result.deadline ?? "").match(/^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2})?/)?.[0].replace(" ", "T") ?? "";
+  const dueAt = fromDateField(/^\d{4}-\d{2}-\d{2}$/.test(deadline) ? `${deadline}T18:00` : deadline);
   const link = result.link.trim();
   const sourceUrls = transcript.flatMap(line => `${line.text} ${line.quote ?? ""}`.match(/https?:\/\/[^\s<>"')\]]+/g) ?? []);
   return {

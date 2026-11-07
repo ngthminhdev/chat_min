@@ -106,11 +106,13 @@ body:is([data-background="glass"], [data-background="clear"]) .page-view.todo-vi
 .todo-list-head input { width: min(48%, 230px); }
 .todo-editor textarea { resize: vertical; }
 .todo-form-dates { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-.todo-date-label { display: flex; justify-content: space-between; gap: 6px; }
+.todo-date-label { display: grid; gap: 4px; font-size: 12px; color: var(--text-2); min-width: 0; }
+.todo-date-label > span { display: flex; justify-content: space-between; gap: 6px; }
+.todo-date-btn { justify-content: flex-start; width: 100%; height: 34px; }
 .todo-date-label small { color: var(--text-3); font-size: inherit; }
 .todo-form-hint { display: flex; flex-wrap: wrap; gap: 4px; }
 .todo-editor .todo-actions { justify-content: flex-end; margin-top: 12px; }
-.todo-page .todo-error { margin-top: 8px; color: var(--status-warning); }
+:is(.todo-page, .todo-capture) .todo-error { margin-top: 8px; color: var(--status-warning); }
 @container (max-width: 440px) {
   .todo-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .todo-stats button:nth-child(2) { border-inline-end: 0; }
@@ -127,8 +129,31 @@ body:is([data-background="glass"], [data-background="clear"]) .page-view.todo-vi
 .todo-note-preview { color: var(--text-2); font-size: 12px; }
 .todo-note-preview summary { cursor: pointer; }
 .todo-note-preview .tx { margin-top: 6px; }
-.todo-page .tx { line-height: 1.5; overflow-wrap: anywhere; }
-.todo-page .tx ul { list-style: disc; padding-inline-start: 1.4em; }
-.todo-page .tx strong { color: var(--text); }
-.todo-page .tx code { color: var(--accent-secondary); }
-.todo-page .tx pre { max-width: 100%; overflow: auto; }
+:is(.todo-page, .todo-capture) .tx { line-height: 1.5; overflow-wrap: anywhere; }
+:is(.todo-page, .todo-capture) .tx ul { list-style: disc; padding-inline-start: 1.4em; }
+:is(.todo-page, .todo-capture) .tx strong { color: var(--text); }
+:is(.todo-page, .todo-capture) .tx code { color: var(--accent-secondary); }
+:is(.todo-page, .todo-capture) .tx pre { max-width: 100%; overflow: auto; }
+
+/* date-time picker modal, same look as the other *_min apps */
+.dtp { gap: 10px; }
+.dtp-nav { display: flex; align-items: center; gap: 8px; }
+.dtp-title { flex: 1; text-align: center; font-weight: 650; }
+.dtp-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.dtp-head { text-align: center; color: var(--text-3); font: var(--fs-xs)/2.4 var(--font-mono); letter-spacing: 0.08em; }
+.dtp-day { height: 36px; padding: 0; border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--text-2); font: var(--fs-md) var(--font-mono); cursor: pointer; }
+.dtp-day:hover { background: var(--pane-2); color: var(--text); }
+.dtp-day.muted { color: var(--text-3); opacity: 0.5; }
+.dtp-day.today { border-color: color-mix(in oklab, var(--accent), transparent 55%); }
+.dtp-day.selected { background: color-mix(in oklab, var(--accent), transparent 72%); border-color: color-mix(in oklab, var(--accent), transparent 40%); color: var(--text); }
+.dtp-time { display: flex; align-items: center; gap: 6px; border-top: 1px solid var(--line); padding-top: 10px; }
+.dtp-time > span { flex: 1; }
+.dtp-time input { height: 32px; padding: 0 8px; color: var(--text); background: var(--pane-2); border: 1px solid var(--line); border-radius: var(--radius-md); font: var(--fs-md) var(--font-mono); }
+
+/* "Tạo việc từ tin nhắn": the editor as a dialog over the chat */
+.todo-capture { width: min(600px, calc(100vw - 48px)); max-height: calc(100vh - 64px); overflow: auto; padding: 0; }
+.todo-capture .todo-editor { border: 0; background: transparent; padding: 18px; }
+.todo-capture :is(h2, p) { margin: 0; }
+.todo-capture h2 { font-size: 16px; }
+.todo-capture .todo-subtle { color: var(--text-2); font-size: 13px; margin-top: 8px; }
+.todo-capture .todo-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }

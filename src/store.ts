@@ -261,7 +261,7 @@ export const useApp = create<State>(() => ({
   tr: {},
   trAuto: saved.trAuto ?? {},
   aiLang: saved.aiLang ?? {},
-  plainSend: saved.plainSend ?? false,
+  plainSend: false, // per message, never restored: a forgotten toggle broke every later send
 }));
 
 const get = useApp.getState;

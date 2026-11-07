@@ -413,7 +413,7 @@ fn due_time(text: &str, sent_at: i64) -> Option<i64> {
     });
     let at = match time {
         Some(value) => value?,
-        None => NaiveTime::from_hms_opt(23, 59, 0)?,
+        None => NaiveTime::from_hms_opt(18, 0, 0)?,
     };
     let date = match DATE.captures(text) {
         Some(parts) if parts.name("tomorrow").is_some() => day.checked_add_days(Days::new(1))?,

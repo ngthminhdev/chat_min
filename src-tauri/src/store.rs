@@ -812,7 +812,8 @@ fn search_body(m: &Msg) -> String {
     if m.deleted || m.kind == "service" {
         return String::new();
     }
-    let mut body = m.text.replace("@{", "@").replace('}', "").replace('`', "");
+    // U+200B keeps literal markers from rendering (tg::soft_markup); "user_id" must still match
+    let mut body = m.text.replace("@{", "@").replace('}', "").replace('`', "").replace('\u{200b}', "");
     if let Some(media) = &m.media {
         body.push(' ');
         body.push_str(&media.name);

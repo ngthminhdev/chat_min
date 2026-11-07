@@ -70,5 +70,4 @@ export function addTodoFromMessage(m: Msg) {
     excerpt: (plain(m.text) || m.media?.name || "Tin nhắn").slice(0, 600),
     sentAt: m.ts, preview: false,
   } } });
-  useApp.setState({ route: "todo" });
 }

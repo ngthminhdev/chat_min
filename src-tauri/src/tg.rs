@@ -4,6 +4,8 @@
 use crate::model::{Account, Chat, LinkCard, Media, Member, Msg, MsgPeople, Reaction, Topic};
 use crate::Core;
 use base64::Engine;
+use regex::Regex;
+use std::sync::LazyLock;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use tdlib_rs::enums::{self, AuthorizationState, ChatType, MessageContent, MessageSender, Update};
@@ -1129,6 +1131,11 @@ fn to_tg_markdown(text: &str) -> String {
             continue;
         }
         let (prev, next) = (chars.get(i.wrapping_sub(1)).filter(|_| i > 0), chars.get(i + 1));
+        // __underline__ and ~~strike~~ are TDLib's own markdown: leave doubled markers alone
+        if prev == Some(&c) || next == Some(&c) {
+            out.push(c);
+            continue;
+        }
         let closes_at = |j: usize| chars[j] == c && j > i + 1 && !chars[j - 1].is_whitespace() && chars[j - 1] != c && boundary(chars.get(j + 1));
         // an opener needs its closer on the same line (like the frontend's renderer): ~/path stays
         let has_closer = || (i + 1..chars.len()).take_while(|&j| chars[j] != '\n' && chars[j] != '`').any(closes_at);
@@ -1519,21 +1526,31 @@ fn render(ft: &t::FormattedText) -> String {
             continue;
         }
         let inner = slice(s, end);
+        let before = slice(pos, s);
         let rendered = match &e.r#type {
+            enums::TextEntityType::BlockQuote | enums::TextEntityType::ExpandableBlockQuote => {
+                // a quote is a block: "> " lines of their own (format.ts renders them)
+                let at_line_start = before.ends_with('\n') || (before.is_empty() && (out.is_empty() || out.ends_with('\n')));
+                let closed = units.get(end).map_or(true, |&u| u == '\n' as u16);
+                let lines = inner.trim_matches('\n').split('\n').map(|l| format!("> {}", soft_markup(l))).collect::<Vec<_>>().join("\n");
+                format!("{}{lines}{}", if at_line_start { "" } else { "\n" }, if closed { "" } else { "\n" })
+            }
             enums::TextEntityType::Code => format!("`{}`", inner.replace('`', "ʼ")),
             enums::TextEntityType::Pre => format!("```\n{}\n```", inner.trim_matches('\n').replace("```", "ʼʼʼ")),
             // the language rides on the fence, like markdown: ```cpp
             enums::TextEntityType::PreCode(p) => format!("```{}\n{}\n```", p.language, inner.trim_matches('\n').replace("```", "ʼʼʼ")),
-            enums::TextEntityType::Bold => wrap(&inner, '*'),
-            enums::TextEntityType::Italic => wrap(&inner, '_'),
-            enums::TextEntityType::Strikethrough => wrap(&inner, '~'),
+            enums::TextEntityType::Bold => wrap(&inner, "*"),
+            enums::TextEntityType::Italic => wrap(&inner, "_"),
+            enums::TextEntityType::Strikethrough => wrap(&inner, "~"),
+            enums::TextEntityType::Underline => wrap(&inner, "__"),
+            enums::TextEntityType::Spoiler => wrap(&inner, "||"),
             enums::TextEntityType::Mention | enums::TextEntityType::MentionName(_) => {
                 format!("@{{{}}}", inner.trim_start_matches('@'))
             }
             enums::TextEntityType::TextUrl(u) => format!("[{}]({})", inner.replace(['[', ']'], ""), u.url),
             _ => continue,
         };
-        out.push_str(&soft_markup(&slice(pos, s)));
+        out.push_str(&soft_markup(&before));
         out.push_str(&rendered);
         pos = end;
     }
@@ -1546,14 +1563,19 @@ fn render(ft: &t::FormattedText) -> String {
 /// `_` inside URLs is left alone: a zero-width space would break the link.
 pub fn soft_markup(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 8);
-    let mut word = String::new();
-    let flush = |word: &mut String, out: &mut String| {
-        if word.contains("://") {
-            out.push_str(word);
+    let mut word: Vec<char> = Vec::new();
+    let flush = |word: &mut Vec<char>, out: &mut String| {
+        if word.iter().collect::<String>().contains("://") {
+            out.extend(word.iter());
         } else {
-            for c in word.chars() {
+            for (i, &c) in word.iter().enumerate() {
                 out.push(c);
-                if matches!(c, '*' | '_' | '~' | '`') {
+                // a marker between two letters ("user_id", "2*3") can neither open nor close a
+                // span, so it needs no break: fewer invisible characters in copies and search
+                let inside = i > 0
+                    && word[i - 1].is_alphanumeric()
+                    && word.get(i + 1).is_some_and(|n| n.is_alphanumeric());
+                if matches!(c, '*' | '_' | '~' | '`') && !inside && word.get(i + 1) != Some(&'\u{200B}') {
                     out.push('\u{200B}');
                 }
             }
@@ -1572,9 +1594,31 @@ pub fn soft_markup(text: &str) -> String {
     out
 }
 
+/// `**bold**` typed out of Markdown habit → `*bold*`, the marker both Telegram's parser and
+/// Google Chat take. Code spans and fences are left alone.
+pub fn fold_double_stars(text: &str) -> String {
+    static RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?m)(^|[^\w*])\*\*(\S(?:[^*\n]*\S)?)\*\*($|[^*])").unwrap());
+    text.split('`')
+        .enumerate()
+        .map(|(i, part)| {
+            let mut s = part.to_string();
+            while i % 2 == 0 {
+                let next = RE.replace(&s, "${1}*${2}*${3}").into_owned();
+                if next == s {
+                    break;
+                }
+                s = next;
+            }
+            s
+        })
+        .collect::<Vec<_>>()
+        .join("`")
+}
+
 /// *bold* / _italic_ / ~strike~ hug their words: markers go inside surrounding spaces and
 /// on every line, since the frontend only matches them within one line (format.ts).
-pub fn wrap(inner: &str, mark: char) -> String {
+pub fn wrap(inner: &str, mark: &str) -> String {
     inner
         .split('\n')
         .map(|l| {
@@ -1625,13 +1669,32 @@ mod tests {
         assert_eq!(to_tg_markdown("tele app:\n`32900283`"), "tele app:\n`32900283`");
         assert_eq!(to_tg_markdown("*a*b* c"), "**a*b** c"); // same lazy span as the frontend renderer
         assert_eq!(to_tg_markdown("*open\nline* x"), "*open\nline* x");
+        assert_eq!(to_tg_markdown("__u__ ~~s~~ ||sp||"), "__u__ ~~s~~ ||sp||");
+    }
+
+    #[test]
+    fn double_stars_fold_to_one() {
+        assert_eq!(fold_double_stars("**a** and **b c**, a**b**"), "*a* and *b c*, a**b**");
+        assert_eq!(fold_double_stars("`**x**` ```\n**y**\n```"), "`**x**` ```\n**y**\n```");
+        assert_eq!(fold_double_stars("2 ** 3 **"), "2 ** 3 **");
+    }
+
+    #[test]
+    fn quotes_become_quote_lines() {
+        let text = "said:\nhi *there*\nok";
+        let ft = t::FormattedText {
+            text: text.into(),
+            entities: vec![t::TextEntity { offset: 6, length: 10, r#type: enums::TextEntityType::BlockQuote }],
+        };
+        assert_eq!(render(&ft), "said:\n> hi *\u{200B}there*\u{200B}\nok");
     }
 
     #[test]
     fn markers_hug_words() {
-        assert_eq!(wrap(" bold words ", '*'), " *bold words* ");
-        assert_eq!(wrap("line one\n\nline two", '_'), "_line one_\n\n_line two_");
-        assert_eq!(wrap("   ", '~'), "   ");
+        assert_eq!(wrap(" bold words ", "*"), " *bold words* ");
+        assert_eq!(wrap("line one\n\nline two", "_"), "_line one_\n\n_line two_");
+        assert_eq!(wrap("   ", "~"), "   ");
+        assert_eq!(wrap("u", "__"), "__u__");
     }
 
     #[test]
@@ -1656,7 +1719,9 @@ mod tests {
     #[test]
     fn soft_markup_breaks_literal_markers_but_not_urls() {
         let z = '\u{200B}';
-        assert_eq!(soft_markup("*abc* 2*3"), format!("*{z}abc*{z} 2*{z}3"));
+        assert_eq!(soft_markup("*abc* 2*3"), format!("*{z}abc*{z} 2*3"));
+        assert_eq!(soft_markup("user_id a_"), format!("user_id a_{z}"));
+        assert_eq!(soft_markup(&soft_markup("*a*")), soft_markup("*a*"));
         assert_eq!(soft_markup("see https://x.io/a_b_c now_"), format!("see https://x.io/a_b_c now_{z}"));
         assert_eq!(soft_markup("`code` ~x~\nnext"), format!("`{z}code`{z} ~{z}x~{z}\nnext"));
     }

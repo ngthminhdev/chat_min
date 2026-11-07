@@ -61,7 +61,8 @@ fn guide(c: &AiConfig) -> String {
     if g.is_empty() { String::new() } else { format!("Follow this translation guide: {g}\n") }
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Default)]
+#[serde(default)]
 struct TodoDraft {
     title: String,
     notes: String,
@@ -110,7 +111,7 @@ pub async fn run(c: &AiConfig, task: &str, texts: &[String], me: &str, to: &str)
             if transcript.len() > 80_000 {
                 return Err("Ngữ cảnh việc cần làm quá dài".into());
             }
-            let sys = format!("Draft one actionable personal task for Me based on the selected chat message. The JSON transcript contains nearby context, one line marked selected, local timestamps, and sometimes a quoted message. {DATA} Use nearby messages to resolve references, identify the concrete deliverable and capture any corrections. If the selected message and its context contain no clear action for Me, return []. Write a short verb-first title and concise Markdown notes in {me}. Use '- ' bullets for steps and **bold** for important deliverables; use code formatting for identifiers when helpful. Only include facts grounded in the conversation. Set deadline to YYYY-MM-DDTHH:mm (local time), YYYY-MM-DD when only the date is given, or null when unknown. Resolve relative dates from the timestamp of the message that states them. Never infer a date from an unrelated message. Set link to one exact http(s) URL from the transcript relevant to the task, or an empty string; put links only in this field. Return a JSON array with at most one object: [{{\"title\":\"...\",\"notes\":\"...\",\"deadline\":null,\"link\":\"\"}}].");
+            let sys = format!("Draft one actionable personal task for Me based on the selected chat message. The JSON transcript contains nearby context, one line marked selected, local timestamps, and sometimes a quoted message. {DATA} Use nearby messages to resolve references, identify the concrete deliverable and capture any corrections. If the selected message and its context contain no clear action for Me, return []. Write a verb-first title of at most 12 words and concise Markdown notes in {me}: one line of context first (who asked, why), then '- ' bullets with the concrete steps, **bold** for the deliverable, code formatting for identifiers. Do not paste the message back; rewrite it as the task. Only include facts grounded in the conversation. Set deadline to YYYY-MM-DDTHH:mm (local time), YYYY-MM-DD when only the date is given, or null when unknown. Resolve relative dates from the timestamp of the message that states them. Never infer a date from an unrelated message. Set link to one exact http(s) URL from the transcript relevant to the task, or an empty string; put links only in this field. Return a JSON array with at most one object: [{{\"title\":\"...\",\"notes\":\"...\",\"deadline\":null,\"link\":\"\"}}].");
             let out = complete(c, &sys, transcript).await?;
             let mut drafts: Vec<TodoDraft> = parse_array(&out)?;
             drafts.truncate(1);
@@ -216,6 +217,14 @@ mod tests {
         let v: Vec<String> = parse_array("```json\n[\"a\", \"b\"]\n```").unwrap();
         assert_eq!(v, ["a", "b"]);
         assert!(parse_array::<String>("no json").is_err());
+    }
+
+    #[test]
+    fn todo_draft_tolerates_missing_fields() {
+        let v: Vec<TodoDraft> = parse_array(r#"[{"title":"Review PR"}]"#).unwrap();
+        assert_eq!(v[0].title, "Review PR");
+        assert_eq!(v[0].notes, "");
+        assert_eq!(v[0].deadline, None);
     }
 
     #[test]

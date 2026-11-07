@@ -2,7 +2,7 @@
 const FIELDS = [
   'tabs', 'active', 'drafts', 'collapsed', 'leftCollapsed', 'rightCollapsed', 'prefs', 'notif',
   'threadTabs', 'lastTopic', 'folders', 'favorites', 'accountOrder', 'trAuto', 'aiLang',
-  'plainSend', 'hidden', 'chatOrder', 'inboxSeen', 'inboxRead',
+  'hidden', 'chatOrder', 'inboxSeen', 'inboxRead',
 ] as const;
 export function persistedUiChanged(current: object, previous: object): boolean {
   const a = current as Record<string, unknown>, b = previous as Record<string, unknown>;

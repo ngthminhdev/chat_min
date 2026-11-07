@@ -1430,6 +1430,8 @@ async fn send(
 ) -> Res<Msg> {
     let core = core.inner().clone();
     let plain = plain.unwrap_or(false);
+    // **bold** out of Markdown habit reaches Telegram and Google Chat as *bold*
+    let text = if plain || core.platform(&account_id) == "zalo" { text } else { tg::fold_double_stars(&text) };
     if core.platform(&account_id) == "zalo" {
         if voice.is_some() {
             return Err("Gửi ghi âm Zalo chưa hỗ trợ".into());
@@ -1479,6 +1481,7 @@ async fn edit(
 ) -> Res<()> {
     let core = core.inner().clone();
     let plain = plain.unwrap_or(false);
+    let text = if plain { text } else { tg::fold_double_stars(&text) };
     if core.platform(&account_id) == "telegram" {
         core.tg
             .edit(&account_id, &chat_id, &msg_id, text, plain)

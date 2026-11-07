@@ -9,7 +9,7 @@ test('incoming messages and transient UI events do not schedule localStorage wri
 });
 test('drafts, account notification settings and saved tab state still persist', () => {
   const before = { drafts: {}, tabs: [], prefs: {}, notif: {} };
-  for (const field of ['drafts', 'tabs', 'prefs', 'notif', 'favorites', 'plainSend']) {
+  for (const field of ['drafts', 'tabs', 'prefs', 'notif', 'favorites']) {
     assert.equal(persistedUiChanged({ ...before, [field]: { changed: true } }, before), true, field);
   }
   assert.equal(persistedUiChanged(before, before), false);

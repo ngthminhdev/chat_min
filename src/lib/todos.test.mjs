@@ -45,4 +45,8 @@ test("AI Todo uses nearby messages in the selected thread and keeps quoted conte
   assert.equal(draft.dueAt, null);
   assert.equal(draft.link, "");
   assert.equal(aiTodoDraft({ title: "Review release", notes: "", deadline: "2026-11-30", link: "https://example.test/ticket" }, transcript).link, "https://example.test/ticket");
+  const { toDateField } = await import("./todos.ts");
+  for (const deadline of ["2026-11-07T18:00:00", "2026-11-07T18:00:00Z", "2026-11-07 18:00"])
+    assert.equal(toDateField(aiTodoDraft({ title: "x", notes: "", deadline, link: "" }, transcript).dueAt), "2026-11-07T18:00");
+  assert.equal(toDateField(aiTodoDraft({ title: "x", notes: "", deadline: "2026-11-07", link: "" }, transcript).dueAt), "2026-11-07T18:00");
 });
