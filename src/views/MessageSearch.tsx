@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/bridge";
 import { hm, norm, plain } from "../lib/format";
 import type { Msg } from "../lib/types";
-import { key, openChat, splitKey, useApp } from "../store";
+import { key, openMessage, splitKey, useApp } from "../store";
 import { ChatAvatar, PersonAvatar } from "../ui/Avatar";
 import { Glyph, Icon } from "../ui/Icon";
 import { PLATFORMS } from "../lib/platforms";
@@ -23,16 +23,18 @@ export function MessageSearch() {
   const results = useRef<HTMLDivElement>(null);
   const q = query.trim();
   useEffect(() => { input.current?.focus(); }, [scope]);
+  // Editing the query keeps the previous results on screen (dimmed) until the new ones arrive,
+  // so the list doesn't blink empty on every keystroke; a too-short query clears it.
+  const [hitsFor, setHitsFor] = useState("");
   useEffect(() => {
     let cancelled = false;
-    setHits([]);
     setError("");
     setLoading(q.length >= 2);
-    if (q.length < 2) return;
+    if (q.length < 2) { setHits([]); setHitsFor(""); return; }
     const timer = setTimeout(() => {
       const [a, c] = scope ? splitKey(scope) : [account || undefined, undefined];
       api.search(q, 100, a, c)
-        .then((msgs) => { if (!cancelled) setHits(msgs); })
+        .then((msgs) => { if (!cancelled) { setHits(msgs); setHitsFor(q); } })
         .catch((e) => { if (!cancelled) setError(String(e)); })
         .finally(() => { if (!cancelled) setLoading(false); });
     }, 220);
@@ -43,8 +45,8 @@ export function MessageSearch() {
     if (opening) return;
     setOpening(m.id);
     try {
-      await openChat(key(m.accountId, m.chatId));
-      useApp.setState((s) => ({ convTab: { ...s.convTab, [key(m.accountId, m.chatId)]: "msgs" }, jumpTo: m.id }));
+      useApp.setState((s) => ({ convTab: { ...s.convTab, [key(m.accountId, m.chatId)]: "msgs" } }));
+      await openMessage(m);
     } catch (e) { setError(String(e)); }
     finally { setOpening(""); }
   };
@@ -57,7 +59,7 @@ export function MessageSearch() {
   return (
     <section className="message-search" aria-label="Tìm kiếm tin nhắn">
       <header className="message-search-head mobile-page-heading">
-        <div><h1>Tìm tin nhắn</h1><p>Tìm nội dung trong lịch sử đã đồng bộ trên máy.</p></div>
+        <div><h1>Tìm tin nhắn</h1><p>Tìm nội dung tin nhắn trong lịch sử đã lưu trên máy này (những tin ChatMin đã tải hoặc đồng bộ), không tìm trên máy chủ. Tìm theo tên hội thoại: ô “Lọc hội thoại” ở sidebar hoặc ⌘K.</p></div>
         <button className="tool-btn" onClick={() => useApp.setState({ route: "shell" })}><Icon name="reply" />Về hội thoại</button>
       </header>
       <div className="message-search-controls">
@@ -91,13 +93,13 @@ export function MessageSearch() {
           if (e.key === "ArrowUp" && i === 0) input.current?.focus();
           else buttons[Math.min(buttons.length - 1, i + (e.key === "ArrowDown" ? 1 : -1))]?.focus();
         }}>
-        <p className="message-search-count" role="status">{loading ? "Đang tìm tin nhắn…" : q.length < 2 ? "Nhập ít nhất 2 ký tự để bắt đầu" : error ? "Không thể tìm tin nhắn" : `${hits.length === 100 ? "100 kết quả đầu tiên" : `${hits.length} kết quả`}${scope ? ` trong ${chats[scope]?.title ?? "hội thoại"}` : ""}`}</p>
+        <p className="message-search-count" role="status">{loading ? (hits.length ? `Đang cập nhật kết quả cho “${q}”…` : "Đang tìm tin nhắn…") : q.length < 2 ? "Nhập ít nhất 2 ký tự để bắt đầu" : error ? "Không thể tìm tin nhắn" : `${hits.length === 100 ? "100 kết quả đầu tiên" : `${hits.length} kết quả`}${scope ? ` trong ${chats[scope]?.title ?? "hội thoại"}` : ""}`}</p>
         {error ? <div className="message-search-empty" role="alert"><Icon name="circle-alert" /><h2>Chưa tìm được tin nhắn</h2><p>Thử lại hoặc kiểm tra kết nối tài khoản.</p><button className="tool-btn" onClick={() => setAttempt((n) => n + 1)}>Thử lại</button></div>
-          : !loading && !hits.length ? <div className="message-search-empty"><Icon name="message-square-text" /><h2>{q.length < 2 ? "Tìm lại điều bạn cần" : "Không tìm thấy tin nhắn"}</h2><p>{q.length < 2 ? "Ví dụ: tên dự án, đường link, nội dung đã trao đổi hoặc tên tệp." : "Thử từ khóa ngắn hơn hoặc mở rộng bộ lọc tài khoản và hội thoại."}</p></div> : null}
-        {!loading && !error && hits.map((m) => {
+          : (!loading && !hits.length && q.length >= 2 && hitsFor === q) || q.length < 2 ? <div className="message-search-empty"><Icon name="message-square-text" /><h2>{q.length < 2 ? "Tìm lại điều bạn cần" : "Không tìm thấy tin nhắn"}</h2><p>{q.length < 2 ? "Ví dụ: tên dự án, đường link, nội dung đã trao đổi hoặc tên tệp." : "Thử từ khóa ngắn hơn hoặc mở rộng bộ lọc tài khoản và hội thoại."}</p></div> : null}
+        {!error && hits.map((m) => {
           const chat = chats[key(m.accountId, m.chatId)];
           const a = accounts.find((x) => x.id === m.accountId);
-          return <button className="message-search-hit" key={JSON.stringify([m.accountId, m.chatId, m.id])} disabled={!!opening} onClick={() => void go(m)}>
+          return <button className={`message-search-hit${loading ? " stale" : ""}`} key={JSON.stringify([m.accountId, m.chatId, m.id])} disabled={!!opening} onClick={() => void go(m)}>
             <PersonAvatar name={m.outgoing ? "Bạn" : m.senderName} size="sm" accountId={m.accountId} photo={m.senderPhoto} />
             <span className="message-search-content"><span className="message-search-meta"><strong>{m.outgoing ? "Bạn" : m.senderName || "Người gửi"}</strong><span>{chat?.title ?? "Hội thoại"}</span><span>{a?.name}</span></span>
               <span className="message-search-text">{highlight(plain(m.text) || m.media?.name || "Tin nhắn")}</span>
@@ -106,7 +108,7 @@ export function MessageSearch() {
             <time dateTime={new Date(m.ts).toISOString()}>{new Date(m.ts).toLocaleDateString("vi-VN")}<span>{hm(m.ts)}</span></time><Icon name="chevron-right" />
           </button>;
         })}
-        {!loading && hits.length === 100 && <p className="message-search-count">Thu hẹp từ khóa hoặc chọn hội thoại để tìm chính xác hơn.</p>}
+        {hits.length === 100 && <p className="message-search-count">Thu hẹp từ khóa hoặc chọn hội thoại để tìm chính xác hơn.</p>}
       </div>
     </section>
   );

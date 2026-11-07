@@ -126,6 +126,9 @@ export const api = {
   topics: (accountId: string, chatId: string) => call<Topic[]>("topics", { accountId, chatId }),
   topicHistory: (accountId: string, chatId: string, topic: string, before: number, limit: number) =>
     call<Msg[]>("topic_history", { accountId, chatId, topic, before, limit }),
+  /** History around one message (search hit, bell, todo source), joined to the loaded list at `connectTo` */
+  messageContext: (accountId: string, chatId: string, msgId: string, threadId = "", connectTo = 0) =>
+    call<Msg[]>("message_context", { accountId, chatId, msgId, threadId, connectTo }),
   forward: (accountId: string, chatId: string, fromChatId: string, msgId: string, topic?: string) => call<void>("forward", { accountId, chatId, fromChatId, msgId, topic }),
   deleteChat: (accountId: string, chatId: string, revoke: boolean) => call<void>("delete_chat", { accountId, chatId, revoke }),
   download: (accountId: string, fileRef: string, name: string, refresh = false) => call<string>("download", { accountId, fileRef, name, refresh }),

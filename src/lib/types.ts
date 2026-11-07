@@ -37,6 +37,13 @@ export interface Chat {
   photoRef: string;
   /** Telegram supergroup with topics */
   forum?: boolean;
+  /** LeftDock: the message the preview shows and where it lives (from the cache / chat events) */
+  previewMsg?: string;
+  previewThread?: string;
+  /** "" unknown · "main" timeline · "reply" Google Chat thread reply · "topic" Telegram forum topic */
+  previewKind?: "" | "main" | "reply" | "topic";
+  /** thread title / topic name for the "↳ …" / "# …" label */
+  previewContext?: string;
 }
 
 export interface Media {
@@ -68,6 +75,9 @@ export interface Msg {
   /** Frontend-only identity and retired provider IDs; never sent to a provider. */
   uiKey?: string;
   uiPreviousIds?: string[];
+  /** Frontend-only: exactly what an optimistic send asked for, so a retry repeats it
+   *  (file, caption wire text, plain/asFile mode, reply and thread/topic context). */
+  uiSend?: SendRequest;
   senderId: string;
   senderName: string;
   /** local path, https URL, or TDLib file id */
@@ -143,3 +153,15 @@ export interface Topic {
 }
 export interface StickerView { id: number; thumb: string; thumbKind: "img" | "video"; emoji: string; width: number; height: number }
 export interface StickerPack { id: string; title: string; stickers: StickerView[] }
+
+/** What the composer asked `send` to deliver; kept on the optimistic bubble for retry. */
+export interface SendRequest {
+  text: string;
+  wire?: string;
+  replyTo?: string;
+  threadId?: string;
+  file?: string;
+  voice?: number;
+  plain?: boolean;
+  asFile?: boolean;
+}

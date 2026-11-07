@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { dayLabel, fmtCount } from "../lib/format";
 import type { Msg } from "../lib/types";
-import { capsOf, healthOf, loadLatest, loadOlder, markRead, splitKey, threadTabKey, threadUnread, toast, useApp, openSearch } from "../store";
+import { capsOf, healthOf, jumpDone, loadLatest, loadOlder, markRead, splitKey, threadTabKey, threadUnread, toast, useApp, openSearch } from "../store";
 import { api, openUrl } from "../lib/bridge";
 import { createWebviewLifecycle } from "../lib/webview-lifecycle";
 import { startWizard } from "../views/Wizard";
@@ -21,7 +21,10 @@ import { showMobileList } from "../mobile";
 import { layoutMessages } from "../lib/message-layout";
 import { MobileActions } from "../ui/MobileActions";
 
-const mountWebview = createWebviewLifecycle(api, (e) => toast(String(e), "circle-alert"));
+/** The last native webview failure, shown in place with a retry (not only as a passing toast). */
+let webError: { text: string; listeners: Set<() => void> } = { text: "", listeners: new Set() };
+const setWebError = (text: string) => { webError.text = text; webError.listeners.forEach((f) => f()); };
+const mountWebview = createWebviewLifecycle(api, (e) => { toast(String(e), "circle-alert"); setWebError(String(e)); });
 
 const HEALTH_MSG: Record<string, string> = {
   offline: "Tài khoản đang mất kết nối. Nháp vẫn được giữ trên máy.",
@@ -38,6 +41,7 @@ export function Conversation() {
   const accountName = useApp((s) => s.accounts.find((a) => a.id === chat?.accountId)?.name);
   const insp = useApp((s) => s.inspTab);
   const rightOff = useApp((s) => s.rightCollapsed);
+  const landing = useApp((s) => (s.active ? !!s.forumLanding[s.active] : false));
   const threadCount = useApp((s) => (s.active && chat?.threaded ? new Set((s.msgs[s.active] ?? []).filter((m) => m.threadReply).map((m) => m.threadId)).size : 0));
   // replies I haven't caught up on, across this chat's threads (same rule as "· N mới")
   const threadNew = useApp((s) => {
@@ -96,14 +100,14 @@ export function Conversation() {
         <MobileActions label="Thao tác hội thoại">
         {(chat.threaded || chat.forum) && (
           <button
-            className={`tool-btn conv-threads${insp === "threads" && !rightOff ? " active" : ""}${threadNew ? " has-new" : ""}`}
+            className={`tool-btn conv-threads conv-prio${insp === "threads" && !rightOff ? " active" : ""}${threadNew ? " has-new" : ""}`}
             aria-label={chat.forum ? "Chủ đề" : "Luồng trả lời"}
             aria-pressed={insp === "threads" && !rightOff}
             data-tip={chat.forum ? "Xem các chủ đề" : "Xem các luồng trả lời"}
             onClick={() => useApp.setState({ inspTab: "threads", rightCollapsed: false })}
           >
             <Icon name="message-circle-reply" />
-            {chat.forum ? "Chủ đề" : "Luồng trả lời"}
+            <span className="conv-threads-label">{chat.forum ? "Chủ đề" : "Luồng trả lời"}</span>
             {!chat.forum && threadCount > 0 && <small>{threadCount}</small>}
             {threadNew > 0 && <b className="thread-new">{threadNew} mới</b>}
           </button>
@@ -111,7 +115,7 @@ export function Conversation() {
         <SummaryButton tab={active} />
         <TranslateAllButton autoKey={active} />
         <button
-          className="tool-btn icon-only"
+          className="tool-btn icon-only conv-prio"
           aria-label="Tìm trong chat này"
           data-tip="Tìm trong chat này"
           data-kbd="⌘F"
@@ -131,7 +135,7 @@ export function Conversation() {
           </button>
         )}
         <button
-          className={`tool-btn icon-only${!rightOff ? " active" : ""}`}
+          className={`tool-btn icon-only conv-prio${!rightOff ? " active" : ""}`}
           aria-label="Thông tin chat"
           aria-expanded={!rightOff}
           data-tip="Thông tin chat"
@@ -157,10 +161,14 @@ export function Conversation() {
           </div>
         )}
       </div>
-      {platform === "zalo" && <div className="zalo-history-note" role="note">ChatMin lưu tin đã đồng bộ trên máy. Zalo có thể không trả đầy đủ lịch sử cũ.</div>}
       <SummaryCard tab={active} />
-      <MessageList k={active} key={active} />
-      <Composer k={active} key={`c-${active}`} />
+      {landing ? <div className="msgs"><div className="msgs-inner">
+        <p className="forum-landing" role="status"><span className="veil-spinner" /> Đang mở chủ đề gần nhất của {chat.title}…</p>
+        <TimelineSkeleton />
+      </div></div> : <>
+        <MessageList k={active} key={active} />
+        <Composer k={active} key={`c-${active}`} />
+      </>}
     </div>
   );
 }
@@ -170,6 +178,7 @@ function MessageList({ k }: { k: string }) {
   const chat = useApp((s) => s.chats[k]);
   const older = useApp((s) => s.older[k]);
   const err = useApp((s) => s.loadErr[k]);
+  const refreshing = useApp((s) => !!s.refreshing[k]);
   const mark = useApp((s) => s.unreadMark[k]);
   const typing = useApp((s) => s.typing[k]);
   const fresh = useApp((s) => s.fresh);
@@ -213,12 +222,12 @@ function MessageList({ k }: { k: string }) {
   useEffect(() => {
     if (!jumpTo) return;
     if (timeline.current?.toMessage(jumpTo)) {
-      useApp.setState({ jumpTo: null });
+      jumpDone();
     } else if (list && older !== "done" && older !== "loading") {
       void loadOlder(k);
     } else if (older === "done") {
       toast("Không tìm thấy tin nhắn trong lịch sử đã tải", "info");
-      useApp.setState({ jumpTo: null });
+      jumpDone();
     }
   }, [jumpTo, list, older, k]);
 
@@ -249,15 +258,18 @@ function MessageList({ k }: { k: string }) {
     // my newest read message carries the "seen by" avatars
     let lastSeenId: string | undefined;
     for (let i = visible.length - 1; i >= 0 && !lastSeenId; i--) if (visible[i].outgoing && visible[i].status === "seen") lastSeenId = visible[i].id;
-    return <Timeline ref={timeline} rows={rows} box={box} onTop={() => void loadOlder(k)} onBottom={onBottom}
+    return <Timeline ref={timeline} rows={rows} box={box} anchorKey={k} onTop={() => void loadOlder(k)} onBottom={onBottom}
       header={<>
-        {older === "idle" && <div className="history-start"><button className="tool-btn" onClick={() => void loadOlder(k)}>Tải tin nhắn cũ hơn</button></div>}
+        {err && <div className="history-status error" role="alert"><Icon name="wifi-off" /><span>Chưa cập nhật được tin mới — đang hiện bản lưu trên máy.</span><button className="tool-btn" onClick={() => void loadLatest(k)}><Icon name="rotate-cw" />Thử lại</button></div>}
+        {older === "idle" && <div className="history-start"><button className="tool-btn" onClick={() => void loadOlder(k)}>Tải tin nhắn cũ hơn</button>{chat?.accountId.startsWith("zalo-") && <small className="history-limit">Zalo có thể không trả đủ tin cũ</small>}</div>}
         {older === "loading" && <div className="older-loading"><span className="veil-spinner" /></div>}
-        {older === "done" && <div className="history-start">{chat?.accountId.startsWith("zalo-") ? "Đã hết tin được lưu và tin Zalo trả về" : "Đầu cuộc trò chuyện"}</div>}
+        {older === "done" && <div className="history-start" role="note">{chat?.accountId.startsWith("zalo-")
+          ? <><b>Hết phần lịch sử ChatMin có cho chat này.</b> <small className="history-limit">Gồm tin đã lưu trên máy và tin Zalo trả về; tin cũ hơn chỉ còn trên điện thoại hoặc Zalo không cung cấp.</small></>
+          : "Đầu cuộc trò chuyện"}</div>}
       </>}
-      footer={caps.typing && <div className="typing-slot" aria-live="polite">
+      footer={<>{refreshing && !err && <RefreshingNote />}{caps.typing && <div className="typing-slot" aria-live="polite">
         {typing?.until ? <><PersonAvatar name={typing.who || chat?.title || "?"} size="sm" accountId={chat?.accountId} photo={chat?.kind === "dm" ? chat.photo || chat.photoRef : ""} /><TypingIndicator label={`${typing.who || chat?.title} đang gõ`} /></> : null}
-      </div>}
+      </div>}</>}
       renderRow={({ m, album, first, last, newDay }) => <Fragment>
         {newDay && <div className="day-sep" role="separator"><span>{dayLabel(m.ts)}</span></div>}
         {mark && m.sort === mark.sort && <div className="unread-sep" role="separator"><span>{mark.count} tin chưa đọc</span></div>}
@@ -267,6 +279,13 @@ function MessageList({ k }: { k: string }) {
       </Fragment>} />;
   }
   return <div className="msgs"><div className="msgs-inner">{body}</div></div>;
+}
+
+/** The cached copy is on screen while the live page loads; shown only when that takes a while. */
+function RefreshingNote() {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setVisible(true), 600); return () => clearTimeout(t); }, []);
+  return visible ? <div className="history-status" role="status"><span className="veil-spinner" /><span>Đang hiện bản lưu trên máy · đang cập nhật tin mới…</span></div> : null;
 }
 
 /** Google Chat space as a list of threads, most recently active first. */
@@ -282,6 +301,17 @@ function WebConversation({ chatKey }: { chatKey: string }) {
   const id = chat?.accountId ?? "";
   const chatId = chat?.id ?? "web";
   const reopen = useApp((s) => s.toLatest);
+  const [attempt, setAttempt] = useState(0);
+  const [error, setError] = useState("");
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const update = () => setError(webError.text);
+    webError.listeners.add(update);
+    return () => { webError.listeners.delete(update); };
+  }, []);
+  // still on our placeholder after a while: the page may be stuck; offer a reload in place
+  useEffect(() => { setSlow(false); const t = setTimeout(() => setSlow(true), 12_000); return () => clearTimeout(t); }, [id, chatId, attempt]);
+  const retryWeb = () => { setWebError(""); setSlow(false); void api.webReload(id).catch((e) => setWebError(String(e))); setAttempt((n) => n + 1); };
   useEffect(() => {
     const el = host.current;
     if (!el || !id || isMobile) return;
@@ -303,7 +333,7 @@ function WebConversation({ chatKey }: { chatKey: string }) {
       window.removeEventListener("resize", place);
       placement.dispose();
     };
-  }, [id, chatId, covered, reopen]);
+  }, [id, chatId, covered, reopen, attempt]);
   if (!chat) return null;
   // phone: no child webview in Tauri Android — hand the site to the system (its app, if installed)
   if (isMobile) return (
@@ -336,7 +366,19 @@ function WebConversation({ chatKey }: { chatKey: string }) {
         </button>
       </div>
       <div className="web-host" ref={host}>
-        <span className="veil-spinner" /> Đang mở {chat.title}…
+        {error ? (
+          <div className="conv-empty" role="alert">
+            <span className="ring"><Icon name="wifi-off" /></span>
+            <strong>Chưa mở được {chat.title}</strong>
+            <p>{error}</p>
+            <button className="tool-btn primary" onClick={retryWeb}><Icon name="rotate-cw" /> Thử lại</button>
+          </div>
+        ) : (
+          <div className="web-loading" role="status">
+            <span><span className="veil-spinner" /> Đang mở {chat.title}…</span>
+            {slow && <span className="web-slow">Trang tải lâu hơn bình thường. <button className="tool-btn" onClick={retryWeb}><Icon name="rotate-cw" /> Tải lại</button></span>}
+          </div>
+        )}
       </div>
     </div>
   );

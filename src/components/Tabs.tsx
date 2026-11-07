@@ -59,6 +59,10 @@ export function Tabs() {
           const on = !page && k === active;
           const dot = (!meta && c.unread > 0 && !on) || !!drafts[k]?.trim();
           const why = drafts[k]?.trim() ? "có nháp chưa gửi" : "có tin chưa đọc";
+          // three kinds of tab, told apart by icon, prefix and parent: chat/space · luồng · chủ đề
+          const kind = meta?.topic ? "Chủ đề" : meta ? "Luồng" : c.kind === "space" ? "Space" : c.kind === "dm" ? "Chat riêng" : c.kind === "channel" ? "Kênh" : "Nhóm";
+          const title = meta ? (meta.topic ? `# ${meta.title}` : meta.title) : c.title;
+          const parent = meta ? `${kind} trong ${c.title}` : `${kind} · ${a?.name ?? ""}`;
           return (
             <motion.div
               key={k}
@@ -66,11 +70,12 @@ export function Tabs() {
               initial={{ opacity: 0, y: -4 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.96, transition: { duration: 0.12 } }}
-              className={`tab${on ? " active" : ""}`}
+              className={`tab${on ? " active" : ""}${meta ? (meta.topic ? " tab-topic" : " tab-thread") : ""}`}
               role="tab"
               tabIndex={on ? 0 : -1}
               data-tab-key={k}
-              data-tip={meta ? meta.title : c.title}
+              aria-label={`${title} — ${parent}`}
+              data-tip={`${title} · ${parent}`}
               data-kbd={index < 8 ? `⌘${index + 1}` : index === tabs.length - 1 ? "⌘9" : undefined}
               aria-selected={on}
               style={{ "--conn": `var(--conn-${a?.color ?? "blue"})` } as React.CSSProperties}
@@ -83,14 +88,14 @@ export function Tabs() {
               }}
             >
               <span className="conn-dot" aria-hidden="true" />
-              {meta && <Icon name="message-circle-reply" className="tab-kind" />}
+              {meta && <Icon name={meta.topic ? "hash" : "message-circle-reply"} className="tab-kind" />}
               {dot && <span className="tab-dirty-dot" role="img" aria-label={why} data-tip={why} />}
               <span className="tab-title">{meta ? meta.title : c.title}</span>
-              <span className="tab-conn">{meta ? `#${c.title}` : a?.name}</span>
+              <span className="tab-conn">{meta ? `${kind} · ${c.title}` : a?.name}</span>
               <button
                 className="tab-close"
                 tabIndex={on ? 0 : -1}
-                aria-label={`Đóng tab ${c.title}`}
+                aria-label={`Đóng tab ${title}`}
                 data-tip="Đóng tab"
                 data-kbd="⌘W"
                 onClick={(e) => {

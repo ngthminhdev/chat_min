@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { AnimatePresence, motion, Reorder, useDragControls } from "motion/react";
 import { api } from "../lib/bridge";
 import { fuzzy, hm, listTime, norm, plain } from "../lib/format";
@@ -6,7 +7,7 @@ import { EASE } from "../lib/motion";
 import { HEALTH_LABELS, PLATFORMS } from "../lib/platforms";
 import type { Account, Chat, Msg } from "../lib/types";
 import {
-  chatKeyOf, confirmDialog, fail, hideChat, key, loadTopics, openTopicTab, threadTabKey, loadLatest, markRead, openChat, openThreadTab, orderedAccounts, sortedChats, toast, toggleFavorite,
+  chatKeyOf, confirmDialog, fail, hideChat, key, loadTopics, openMainTimeline, openMessage, previewTarget, openTopicTab, threadTabKey, loadLatest, markRead, openChat, openThreadTab, orderedAccounts, sortedChats, toast, toggleFavorite,
   totalUnread, useApp, type MenuItem,
 } from "../store";
 import { ChatAvatar } from "../ui/Avatar";
@@ -19,11 +20,15 @@ import { FolderGroups, folderItems, inFolders } from "./Folders";
  *  Reorder.Item around it run a layout animation: scale-squished text, siblings jumping. */
 function useDragAnim() {
   const [on, setOn] = useState(false);
-  return { transition: { duration: 0.18, ease: EASE, layout: { duration: on ? 0.18 : 0 } }, onDragStart: () => setOn(true), onDragEnd: () => setOn(false) };
+  // stable identity: groups and rows are memoized on it
+  return useMemo(() => ({ transition: { duration: 0.18, ease: EASE, layout: { duration: on ? 0.18 : 0 } }, onDragStart: () => setOn(true), onDragEnd: () => setOn(false) }), [on]);
 }
 
-/** Each section shows its most recent chats; the rest on demand. */
+/** Each section shows its most recent chats; the rest on demand. Filtering (Chưa đọc, Nhắc tên)
+ *  and searching keep the same bound: mounting every match of a 200-chat list at once froze the
+ *  sidebar for several frames. "Xem thêm" reveals more in steps. */
 const SECTION_LIMIT = 10;
+const FILTER_STEP = 10;
 
 const FILTERS = [["all", "Tất cả"], ["unread", "Chưa đọc"], ["mention", "@ Nhắc tên"]] as const;
 
@@ -66,7 +71,7 @@ export function Sidebar() {
       <div className="sidebar-top">
         <div className="side-search-wrap">
           <Icon name="search" />
-          <input className="side-search" placeholder="Lọc hội thoại" aria-label="Lọc hội thoại" value={query} onChange={(e) => useApp.setState({ query: e.target.value })} />
+          <input className="side-search" placeholder="Lọc theo tên hội thoại" title="Lọc theo tên hội thoại. Tìm nội dung tin nhắn: ⌘⇧F" aria-label="Lọc hội thoại" value={query} onChange={(e) => useApp.setState({ query: e.target.value })} />
         </div>
       </div>
       <div className="mini-tabs" role="tablist" aria-label="Bộ lọc">
@@ -94,7 +99,7 @@ export function Sidebar() {
         {accounts.length ? (
           <Reorder.Group axis="y" as="div" values={ordered.map((a) => a.id)} onReorder={(ids) => useApp.setState({ accountOrder: ids })}>
             {ordered.map((a) => (
-              <AccountGroup key={a.id} account={a} chats={chats} filter={filter} query={query} drag={accDrag} />
+              <AccountGroup key={a.id} account={a} filter={filter} query={query} drag={accDrag} />
             ))}
           </Reorder.Group>
         ) : (
@@ -109,13 +114,12 @@ export function Sidebar() {
   );
 }
 
+/** What a group needs for its rows. Drafts, typing and the active chat are read by each row
+ *  itself, so a keystroke in a draft or a typing indicator re-renders one row, not every group. */
 export function useRowState() {
-  const active = useApp((s) => (s.route === "shell" ? chatKeyOf(s.active) : null));
-  const drafts = useApp((s) => s.drafts);
-  const typing = useApp((s) => s.typing);
   const expanded = useApp((s) => s.expanded);
   const chatOrder = useApp((s) => s.chatOrder);
-  return { active, drafts, typing, expanded, chatOrder };
+  return { expanded, chatOrder };
 }
 
 function Favorites() {
@@ -223,17 +227,13 @@ function Latest() {
   );
 }
 
-export function rowProps(k: string, c: Chat, a: Account | undefined, rs: ReturnType<typeof useRowState>) {
-  const t = rs.typing[k];
-  return {
-    active: k === rs.active,
-    draft: k !== rs.active ? rs.drafts[k] ?? "" : "",
-    typing: a?.platform === "telegram" && t?.until ? t.who || " " : "",
-    expanded: !!rs.expanded[k] && c.threaded,
-  };
+export function rowProps(k: string, c: Chat, _a: Account | undefined, rs: ReturnType<typeof useRowState>) {
+  return { expanded: !!rs.expanded[k] && c.threaded };
 }
 
-function AccountGroup({ account: a, chats, filter, query, drag: accDrag }: { account: Account; chats: Record<string, Chat>; filter: string; query: string; drag: ReturnType<typeof useDragAnim> }) {
+const AccountGroup = memo(function AccountGroup({ account: a, filter, query, drag: accDrag }: { account: Account; filter: string; query: string; drag: ReturnType<typeof useDragAnim> }) {
+  // only this account's chats: another account's unread badge or preview doesn't re-render it
+  const own = useApp(useShallow((s) => Object.values(s.chats).filter((c) => c.accountId === a.id)));
   // typing in the filter opens every group so the matches show; a click still folds it afterwards
   const collapsed = useApp((s) => !!s.collapsed[a.id]) && !norm(query);
   const health = useApp((s) => s.health[a.id]?.health ?? "ok");
@@ -243,17 +243,21 @@ function AccountGroup({ account: a, chats, filter, query, drag: accDrag }: { acc
   const rs = useRowState();
   const drag = useDragControls();
   const rowDrag = useDragAnim();
-  const [all, setAll] = useState<Record<string, boolean>>({});
+  /** per section: how many rows beyond the first ten the user asked to see */
+  const [extra, setExtra] = useState<Record<string, number>>({});
   const q = norm(query);
+  const filtering = !!q || filter !== "all";
+  // a new filter/search starts bounded again
+  useEffect(() => { setExtra({}); }, [q, filter]);
   const list = useMemo(
     () =>
-      sortedChats(chats, a.id).filter(
+      sortedChats(Object.fromEntries(own.map((c) => [key(c.accountId, c.id), c])), a.id).filter(
         (c) =>
           !favorites.includes(key(c.accountId, c.id)) && !foldered.has(key(c.accountId, c.id)) &&
           (!q || fuzzy(q, c.title) > 0) &&
           (filter === "all" || (filter === "unread" ? c.unread > 0 : c.mention)),
       ),
-    [chats, a.id, q, filter, favorites, foldered],
+    [own, a.id, q, filter, favorites, foldered],
   );
   const unread = list.filter((c) => !c.muted).reduce((s, c) => s + c.unread, 0);
   const loading = !list.length && !q && filter === "all" && (health === "reconnecting" || health === "syncing");
@@ -316,27 +320,30 @@ function AccountGroup({ account: a, chats, filter, query, drag: accDrag }: { acc
             const byKey = Object.fromEntries(items.map((c) => [key(c.accountId, c.id), c]));
             const natural = Object.keys(byKey);
             const ordered = applyOrder(natural, rs.chatOrder[id]);
-            const full = all[id] || !!q || filter !== "all";
-            const shown = full ? ordered : ordered.slice(0, SECTION_LIMIT);
-            const more = ordered.length - SECTION_LIMIT;
+            // unfiltered "Xem thêm" shows the whole section (as before); filtered views grow in steps
+            const limit = filtering ? SECTION_LIMIT + (extra[id] ?? 0) : extra[id] ? Infinity : SECTION_LIMIT;
+            const shown = ordered.length > limit ? ordered.slice(0, limit) : ordered;
+            const full = shown.length === ordered.length;
+            const more = ordered.length - shown.length;
+            const expandedAll = !filtering && !!extra[id];
             return (
-              <Section key={sec} id={id} label={label} chats={items} forceOpen={!!q || filter !== "all"}>
-                <Reorder.Group axis="y" as="div" values={shown} onReorder={(v) => setOrder(id, full ? v : [...v, ...ordered.slice(SECTION_LIMIT)], natural)}>
-                  {shown.map((k) => {
-                    const c = byKey[k];
-                    return (
-                      <Reorder.Item key={k} value={k} as="div" className="reorder-row" whileDrag={{ scale: 1.02, boxShadow: "var(--shadow)", zIndex: 5 }} {...rowDrag}>
-                        <ChatRow chat={c} k={k} {...rowProps(k, c, a, rs)} />
-                        {rs.expanded[k] && (c.threaded || c.forum) && <ThreadPeek k={k} />}
-                      </Reorder.Item>
-                    );
-                  })}
+              <Section key={sec} id={id} label={label} chats={items} forceOpen={filtering}>
+                {/* one tree in every mode: rows keep their identity when the filter changes (no remount);
+                    dragging is off while filtered, since a filtered order isn't the section's order */}
+                <Reorder.Group axis="y" as="div" values={shown} onReorder={(v) => { if (!filtering) setOrder(id, full ? v : [...v, ...ordered.slice(shown.length)], natural); }}>
+                  {shown.map((k) => (
+                    <SidebarItem key={k} k={k} chat={byKey[k]} expanded={!!rs.expanded[k]} drag={rowDrag} draggable={!filtering} />
+                  ))}
                 </Reorder.Group>
-                {more > 0 && !q && filter === "all" && (
-                  <button className="sec-more" aria-label={all[id] ? `Thu gọn ${label}` : `Xem thêm ${more} hội thoại trong ${label}`} aria-expanded={!!all[id]} data-tip={all[id] ? `Thu gọn ${label}` : `Xem thêm ${more} hội thoại trong ${label}`} onClick={() => setAll((s) => ({ ...s, [id]: !s[id] }))}>
-                    <span className="sec-more-label">{all[id] ? "Thu gọn" : `Xem thêm ${more}`}</span>
-                    {!all[id] && <span className="sec-more-count" aria-hidden="true">{more > 99 ? "99+" : `+${more}`}</span>}
-                    <Icon name="chevron-down" className={all[id] ? "up" : ""} />
+                {(more > 0 || expandedAll) && (
+                  <button className="sec-more"
+                    aria-label={expandedAll ? `Thu gọn ${label}` : `Xem thêm ${filtering ? Math.min(more, FILTER_STEP) : more} hội thoại trong ${label}`}
+                    aria-expanded={expandedAll}
+                    data-tip={expandedAll ? `Thu gọn ${label}` : filtering ? `Còn ${more} hội thoại khớp bộ lọc trong ${label}` : `Xem thêm ${more} hội thoại trong ${label}`}
+                    onClick={() => setExtra((s) => ({ ...s, [id]: filtering ? (s[id] ?? 0) + FILTER_STEP : s[id] ? 0 : 1 }))}>
+                    <span className="sec-more-label">{expandedAll ? "Thu gọn" : `Xem thêm ${filtering ? Math.min(more, FILTER_STEP) : more}`}</span>
+                    {!expandedAll && <span className="sec-more-count" aria-hidden="true">{more > 99 ? "99+" : `+${more}`}</span>}
+                    <Icon name="chevron-down" className={expandedAll ? "up" : ""} />
                   </button>
                 )}
               </Section>
@@ -350,7 +357,18 @@ function AccountGroup({ account: a, chats, filter, query, drag: accDrag }: { acc
       </AnimatePresence>
     </Reorder.Item>
   );
-}
+});
+
+/** One sidebar row in a draggable section: re-renders only when its own chat (or expansion)
+ *  changes, so the motion layout measurement stays per row. */
+const SidebarItem = memo(function SidebarItem({ k, chat: c, expanded, drag, draggable }: { k: string; chat: Chat; expanded: boolean; drag: ReturnType<typeof useDragAnim>; draggable: boolean }) {
+  return (
+    <Reorder.Item value={k} as="div" className="reorder-row" dragListener={draggable} whileDrag={{ scale: 1.02, boxShadow: "var(--shadow)", zIndex: 5 }} {...drag}>
+      <ChatRow chat={c} k={k} expanded={expanded && c.threaded} />
+      {expanded && (c.threaded || c.forum) && <ThreadPeek k={k} />}
+    </Reorder.Item>
+  );
+});
 
 // Level 2 of the tree: chats of one account split by kind; platform-pinned chats keep their own shelf.
 const SECTIONS: [string, string, (c: Chat) => boolean][] = [
@@ -417,6 +435,7 @@ export function chatMenu(k: string, c: Chat, mobile = false): MenuItem[] {
   const fav = useApp.getState().favorites.includes(k);
   const items: (MenuItem | false)[] = [
     !mobile && { icon: "external-link", label: "Mở trong tab", run: () => void openChat(k) },
+    (c.threaded || c.forum || !!previewTarget(c)) && { icon: "messages-square", label: "Mở hội thoại chính", run: () => void openMainTimeline(k) },
     { icon: fav ? "pin-off" : "pin", label: fav ? "Bỏ ghim khỏi đầu danh sách" : "Ghim lên đầu danh sách", run: () => toggleFavorite(k) },
     !mobile && (c.threaded || !!c.forum) && {
       icon: "message-circle-reply",
@@ -553,33 +572,55 @@ export function HoverPeek() {
 interface RowProps {
   chat: Chat;
   k: string;
-  active: boolean;
-  draft: string;
-  typing: string;
   expanded: boolean;
   platform?: Account["platform"];
 }
 
-export const ChatRow = memo(function ChatRow({ chat: c, k, active, draft, typing, expanded, platform }: RowProps) {
+export const ChatRow = memo(function ChatRow({ chat: c, k, expanded, platform }: RowProps) {
   const rail = useApp((s) => s.leftCollapsed);
+  // each row reads its own live bits: one draft keystroke / typing event re-renders one row
+  const active = useApp((s) => s.route === "shell" && chatKeyOf(s.active) === k);
+  const draft = useApp((s) => (active ? "" : s.drafts[k] ?? ""));
+  const typing = useApp((s) => {
+    const t = s.typing[k];
+    return t?.until && s.accounts.find((a) => a.id === c.accountId)?.platform === "telegram" ? t.who || " " : "";
+  });
   const unreadBefore = useRef(c.unread);
   const [pulse, setPulse] = useState(0);
   useEffect(() => {
     if (c.unread > unreadBefore.current) setPulse(c.unread);
     unreadBefore.current = c.unread;
   }, [c.unread]);
-  let preview: React.ReactNode =
-    (c.previewFrom && c.kind !== "dm") || c.previewFrom === "Bạn" ? `${c.previewFrom}: ${c.preview}` : c.preview || "Chưa có tin nhắn";
+  // where the previewed message lives: "↳ thread" (Google Chat reply) / "# topic" (Telegram forum)
+  const fallbackContext = useApp((s) => c.previewKind === "topic" && !c.previewContext
+    ? s.topics[k]?.find((t) => t.id === c.previewThread)?.name ?? s.threadTabs[`thread:${k}:${c.previewThread}`]?.title ?? ""
+    : c.previewKind === "reply" && !c.previewContext ? s.threadTabs[`thread:${k}:${c.previewThread}`]?.title ?? "" : "");
+  const context = c.previewKind === "reply" ? `↳ ${c.previewContext || fallbackContext || "Luồng trả lời"}`
+    : c.previewKind === "topic" ? `# ${c.previewContext || fallbackContext || "Chủ đề"}` : "";
+  const from = (c.previewFrom && c.kind !== "dm") || c.previewFrom === "Bạn" ? `${c.previewFrom}: ` : "";
+  let preview: React.ReactNode = context
+    ? <><span className="preview-context">{context}</span><span className="preview-sep" aria-hidden="true"> · </span>{from}{c.preview}</>
+    : from ? `${from}${c.preview}` : c.preview || "Chưa có tin nhắn";
+  // drafts and typing take the line: the row then opens the chat as usual
+  const showsMessage = !draft.trim() && !typing;
   if (draft.trim()) preview = <><span className="draft-label">Nháp:</span> {draft}</>;
   else if (typing) preview = <span className="typing-label"><TypingIndicator compact label={`${c.kind === "dm" || !typing.trim() ? "" : `${typing.split(" ")[0]} `}đang gõ`} /></span>;
+  const target = showsMessage ? previewTarget(c) : null;
   return (
     <div className={`chat-row-wrap${expanded ? " expanded" : ""}`}>
       <button
         className={`chat-row${active ? " active" : ""}${c.unread ? " unread" : ""}`}
-        aria-label={`${c.title}${c.unread ? `, ${c.unread} chưa đọc` : ""}${typing && !draft.trim() ? ", đang gõ" : ""}`}
+        data-account-id={c.accountId}
+        data-chat-id={c.id}
+        data-message-id={target?.id}
+        data-thread-id={target?.threadId || undefined}
+        data-preview-kind={target ? c.previewKind : undefined}
+        aria-label={`${c.title}${c.unread ? `, ${c.unread} chưa đọc` : ""}${typing && !draft.trim() ? ", đang gõ" : ""}${target && context ? `, tin mới nhất trong ${c.previewKind === "topic" ? "chủ đề" : "luồng"} ${context.slice(2)}` : ""}`}
         data-tip={rail ? `${c.title}${c.unread ? ` · ${c.unread} chưa đọc` : ""}` : undefined}
         onClick={() => {
           hoverOff();
+          // the preview names a message (thread reply, topic, threaded timeline): land on it
+          if (target) return void openMessage(target);
           // the chat already on screen: a click means "take me to the newest message"
           if (active) useApp.setState((s) => ({ toLatest: s.toLatest + 1 }));
           void openChat(k);
@@ -601,10 +642,8 @@ export const ChatRow = memo(function ChatRow({ chat: c, k, active, draft, typing
             <span className="time">{listTime(c.lastTs)}</span>
           </span>
           <span className="line">
-            <span className="preview"><AnimatePresence initial={false} mode="wait">
-              <motion.span className="preview-state" key={draft.trim() ? "draft" : typing ? "typing" : "message"}
-                initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.08 }}>{preview}</motion.span>
-            </AnimatePresence></span>
+            {/* CSS fade on state change: a motion component per row made mounting a filtered list cost ~1 ms/row */}
+            <span className="preview"><span className="preview-state" key={draft.trim() ? "draft" : typing ? "typing" : "message"}>{preview}</span></span>
             {c.mention && <Icon name="at-sign" className="mention-ic" />}
             {c.unread > 0 && (
               <span key={c.unread} className={`badge ${c.muted ? "idle" : "unread"}${pulse === c.unread ? " pop" : ""}`}>

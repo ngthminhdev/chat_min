@@ -6,7 +6,8 @@ import { CAP_LABELS, CAP_OFF_NOTE, PLATFORMS, type Cap } from "../lib/platforms"
 import type { Member, Msg, ThreadSummary } from "../lib/types";
 import { fileActionLabel, mediaSection, threadTotalLabel } from "../lib/micro-ux";
 import { useWhenVisible } from "./useWhenVisible";
-import { capsOf, chatKeyOf, fail, loadThreadList, loadTopics, openThreadTab, openTopicTab, saveMedia, threadTabKey, threadUnread, toast, useApp, wantThreadCount, type InspTab } from "../store";
+import { isMobile } from "../lib/mobile";
+import { capsOf, chatKeyOf, fail, loadThreadList, loadTopics, openMessage, openThreadTab, openTopicTab, saveMedia, threadTabKey, threadUnread, toast, useApp, wantThreadCount, type InspTab } from "../store";
 import { ChatAvatar, PersonAvatar } from "../ui/Avatar";
 import { Glyph, Icon } from "../ui/Icon";
 import { useDownload } from "./Conversation";
@@ -19,8 +20,11 @@ export function Inspector() {
   const list = useApp((s) => s.msgs[chatKeyOf(s.active) ?? ""]);
   const panelId = useId();
   const reduceMotion = useReducedMotion();
+  // Closed on desktop: render nothing inside. The thread list (remote walk), members and the
+  // files/media filters over the whole history run only while the panel is actually open.
+  const collapsed = useApp((s) => s.rightCollapsed) && !isMobile;
 
-  if (!active || !chat || !account) return <aside className="inspector" aria-label="Thông tin chat" />;
+  if (!active || !chat || !account || collapsed) return <aside className="inspector" aria-label="Thông tin chat" />;
   const conn = { "--conn": `var(--conn-${account.color})` } as React.CSSProperties;
   const head = (
     <div className="inspector-head">
@@ -89,8 +93,8 @@ export function Inspector() {
           <div className="inspector-surface">
           {tab === "info" && <InfoTab k={active} files={files} />}
           {tab === "members" && <MembersTab k={active} />}
-          {tab === "files" && <><p className="history-scope">{files.length} tệp và tin nhắn thoại trong lịch sử đã tải</p><FilesTab files={files} /></>}
-          {tab === "media" && <><p className="history-scope">{imgs.length} ảnh và video trong lịch sử đã tải</p><MediaTab imgs={imgs} /></>}
+          {tab === "files" && <><p className="history-scope">{files.length} tệp và tin nhắn thoại trong phần lịch sử đã tải của chat này · cuộn lên trong hội thoại để tải thêm</p><FilesTab files={files} /></>}
+          {tab === "media" && <><p className="history-scope">{imgs.length} ảnh và video trong phần lịch sử đã tải của chat này · cuộn lên trong hội thoại để tải thêm</p><MediaTab imgs={imgs} /></>}
           {tab === "pinned" && <PinnedTab k={active} />}
           {tab === "threads" && (chat.forum ? <TopicsTab k={active} /> : chat.threaded ? <ThreadsTab k={active} /> : null)}
           </div>
@@ -233,17 +237,20 @@ function MembersTabBody({ k }: { k: string }) {
   const [members, setMembers] = useState<Member[] | null>(null);
   const [err, setErr] = useState("");
   const [q, setQ] = useState("");
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     if (chat.kind === "dm") return;
+    setErr(""); setMembers(null);
     api.members(chat.accountId, chat.id).then(setMembers).catch((e) => setErr(String(e)));
-  }, [chat.accountId, chat.id, chat.kind]);
+  }, [chat.accountId, chat.id, chat.kind, attempt]);
   if (chat.kind === "dm") return <div className="insp-empty"><Icon name="users" />Chat 1-1 với {chat.title}</div>;
-  if (err) return <div className="insp-empty"><Icon name="circle-alert" />{err}</div>;
+  if (err) return <div className="insp-empty" role="alert"><Icon name="circle-alert" />Chưa tải được danh sách thành viên: {err}<button className="tool-btn" onClick={() => setAttempt((n) => n + 1)}><Icon name="rotate-cw" />Thử lại</button></div>;
   if (!members) return <div className="insp-empty"><span className="veil-spinner" /></div>;
   const shown = members.filter((m) => !q || norm(m.name).includes(norm(q)));
   const rest = chat.memberCount - members.length;
   return (
     <>
+      <p className="history-scope">{members.length} thành viên do nền tảng trả về{rest > 0 ? ` (trên tổng ${fmtCount(chat.memberCount)})` : ""} · ô tìm chỉ lọc trong danh sách này</p>
       <div className="side-search-wrap" style={{ marginBottom: 8 }}>
         <Icon name="search" />
         <input className="side-search" placeholder="Tìm thành viên" aria-label="Tìm thành viên" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -298,7 +305,7 @@ function FileRow({ m, recent = false }: { m: Msg; recent?: boolean }) {
           { icon: "external-link", label: "Mở", run: () => void open() },
           { icon: "download", label: "Lưu vào thư mục tải về", run: () => void ensure().then((p) => { if (p) void saveMedia(p, m.media!.name, false); }) },
           { icon: "download", label: "Lưu thành…", run: () => void ensure().then((p) => { if (p) void saveMedia(p, m.media!.name, true); }) },
-          { icon: "message-square-text", label: "Tới tin nhắn", run: () => useApp.setState({ jumpTo: m.id }) },
+          { icon: "message-square-text", label: "Tới tin nhắn", run: () => void openMessage(m) },
         ],
       },
     });
@@ -363,7 +370,7 @@ function MediaCell({ m }: { m: Msg }) {
             kind: "menu", x: e.clientX, y: e.clientY, top: e.clientY,
             items: [
               { icon: "image", label: "Xem", run: () => void view() },
-              { icon: "message-square-text", label: "Tới tin nhắn", run: () => useApp.setState({ jumpTo: m.id }) },
+              { icon: "message-square-text", label: "Tới tin nhắn", run: () => void openMessage(m) },
             ],
           },
         });
@@ -399,7 +406,7 @@ function PinnedTabBody({ k }: { k: string }) {
   return (
     <>
       {pins.map((m) => (
-        <button key={m.id} className="pin-row" onClick={() => useApp.setState({ jumpTo: m.id })}>
+        <button key={m.id} className="pin-row" onClick={() => void openMessage(m)}>
           <Icon name="pin" />
           <span style={{ minWidth: 0 }}>
             <small>

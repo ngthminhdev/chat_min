@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api, openUrl } from "../lib/bridge";
 import { norm, plain } from "../lib/format";
 import { aiTodoDraft, blankTodo, fromDateField, reminderFor, summarizeTodos, todoPeriod, toDateField, type Todo, type TodoDraft, type TodoSource, type AiTodo, type TodoTranscriptLine } from "../lib/todos";
-import { confirmDialog, fail, key, openAt, openChat, toast, useApp } from "../store";
+import { confirmDialog, fail, key, openMessage, toast, useApp } from "../store";
 import { refreshTodos, useTodoData } from "../todo-state";
 import { Icon } from "../ui/Icon";
 import { FormattedText } from "../components/FormattedText";
@@ -34,12 +34,8 @@ function SourceDetails({ source }: { source: TodoSource }) {
   const exists = useApp(s => !!s.chats[chatKey]);
   const open = async () => {
     if (!exists) return;
-    if (source.preview || source.threadId) {
-      openAt(chatKey, source.messageId, source.threadId);
-      return;
-    }
-    await openChat(chatKey);
-    if (useApp.getState().active === chatKey) useApp.setState({ jumpTo: source.messageId });
+    // same landing as search and the bell: the right chat/thread/topic, scrolled to the message
+    await openMessage({ accountId: source.accountId, chatId: source.chatId, id: source.messageId, threadId: source.threadId, threadReply: !!source.threadId && !useApp.getState().chats[chatKey]?.forum });
   };
   return (
     <details className="todo-source">

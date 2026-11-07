@@ -1,0 +1,10 @@
+{
+  "productName": "ChatMin Audit",
+  "identifier": "com.chatmin.audit",
+  "build": { "beforeBuildCommand": "node scripts/performance/build-audit.mjs", "frontendDist": "../dist-audit" },
+  "app": {
+    "windows": [
+      { "title": "ChatMin Audit", "url": "audit.html?provider=telegram&auto=1&next=gchat", "width": 1280, "height": 900, "resizable": true, "titleBarStyle": "Overlay", "hiddenTitle": true }
+    ]
+  }
+}

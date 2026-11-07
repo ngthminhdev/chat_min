@@ -69,6 +69,7 @@ export function Settings() {
           <p>Giao diện, tài khoản, thông báo và bộ nhớ</p>
         </div>
       </header>
+      <SettingsNav />
       <div className="settings-shell">
         <section className="settings-card">
           <h3>Giao diện</h3>
@@ -456,5 +457,42 @@ function StorageCard() {
         <button className="tool-btn danger" disabled={busy} onClick={() => confirmDialog("Xoá hết bộ nhớ đệm?", "Ảnh, video, tệp đã tải sẽ bị xoá khỏi máy; mở lại sẽ tải lại. Tin nhắn không bị ảnh hưởng.", "Xoá", () => void clean(true))}>Xoá hết bộ nhớ đệm</button>
       </Row>
     </section>
+  );
+}
+
+/** Jump links to the main settings groups, built from the cards' own headings so the list never
+ *  drifts from the page. Each jump moves focus to the heading (keyboard and screen readers). */
+function SettingsNav() {
+  const [groups, setGroups] = useState<{ id: string; label: string }[]>([]);
+  const [current, setCurrent] = useState("");
+  useEffect(() => {
+    const seen = new IntersectionObserver((entries) => {
+      const top = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+      if (top) setCurrent(top.target.id);
+    }, { rootMargin: "0px 0px -70% 0px" });
+    let n = 0;
+    // cards that render later (AI, browser, storage load their data) join the list when they appear
+    const scan = () => {
+      const heads = [...document.querySelectorAll<HTMLElement>(".settings-shell .settings-card > h3")];
+      heads.forEach((h) => { if (!h.id) h.id = `settings-group-${n++}`; h.tabIndex = -1; seen.observe(h); });
+      const next = heads.map((h) => ({ id: h.id, label: h.textContent?.split(" · ")[0] ?? "" }));
+      setGroups((cur) => (JSON.stringify(cur) === JSON.stringify(next) ? cur : next));
+    };
+    scan();
+    const shell = document.querySelector(".settings-shell");
+    const changes = new MutationObserver(scan);
+    if (shell) changes.observe(shell, { childList: true, subtree: true });
+    return () => { seen.disconnect(); changes.disconnect(); };
+  }, []);
+  if (groups.length < 3) return null;
+  return (
+    <nav className="settings-nav" aria-label="Nhóm cài đặt">
+      {groups.map((g) => (
+        <button key={g.id} type="button" className={`tool-btn${current === g.id ? " active" : ""}`} aria-current={current === g.id ? "true" : undefined}
+          onClick={() => { const h = document.getElementById(g.id); h?.scrollIntoView({ block: "start", behavior: "smooth" }); h?.focus({ preventScroll: true }); setCurrent(g.id); }}>
+          {g.label}
+        </button>
+      ))}
+    </nav>
   );
 }

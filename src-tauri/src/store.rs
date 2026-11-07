@@ -666,6 +666,59 @@ impl Store {
         Ok(msgs)
     }
 
+    /// Cached history around one message, for jumping to it: up to 20 earlier messages, the
+    /// target and what follows, up to `connect_to` (the oldest message the view already holds;
+    /// 0 = a 60-message window) so the result joins the loaded list without a gap. `thread`
+    /// limits it to one thread/topic. Bounded to 500 rows. Empty when the target is not cached.
+    pub fn context(
+        &self,
+        account_id: &str,
+        chat_id: &str,
+        msg_id: &str,
+        thread: &str,
+        connect_to: i64,
+    ) -> R<Vec<Msg>> {
+        let target: Option<i64> = self
+            .db
+            .query_row(
+                "SELECT sort FROM messages WHERE account_id = ?1 AND chat_id = ?2 AND id = ?3",
+                [account_id, chat_id, msg_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(e)?;
+        let Some(target) = target else { return Ok(vec![]) };
+        let start: i64 = self
+            .db
+            .query_row(
+                "SELECT coalesce(min(sort), ?4) FROM (SELECT sort FROM messages
+                 WHERE account_id = ?1 AND chat_id = ?2 AND sort < ?4
+                 AND (?3 = '' OR json_extract(data, '$.threadId') = ?3)
+                 ORDER BY sort DESC LIMIT 20)",
+                params![account_id, chat_id, thread, target],
+                |r| r.get(0),
+            )
+            .map_err(e)?;
+        let (end, limit) = if connect_to > target { (connect_to, 500) } else { (i64::MAX, 60) };
+        let mut st = self
+            .db
+            .prepare(
+                "SELECT data FROM messages WHERE account_id = ?1 AND chat_id = ?2
+                 AND sort >= ?4 AND sort < ?5 AND (?3 = '' OR json_extract(data, '$.threadId') = ?3)
+                 ORDER BY sort ASC LIMIT ?6",
+            )
+            .map_err(e)?;
+        let rows = st
+            .query_map(params![account_id, chat_id, thread, start, end, limit], |r| {
+                r.get::<_, String>(0)
+            })
+            .map_err(e)?;
+        Ok(rows
+            .filter_map(|r| r.ok())
+            .filter_map(|s| serde_json::from_str(&s).ok())
+            .collect())
+    }
+
     /// Threads of a space by latest reply, independent of which messages the timeline holds.
     /// `before`: the previous page's last `last_sort` (0 = newest). The count walks the
     /// `messages_thread` index; starters and newest replies are index lookups per thread.
@@ -878,6 +931,34 @@ mod tests {
             text: text.into(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn context_joins_an_old_cached_reply_to_the_loaded_thread_tail() {
+        let mut s = Store::memory();
+        let rows: Vec<Msg> = (1..=300)
+            .map(|i| {
+                let mut m = msg(&format!("r-{i}"), i, "reply");
+                m.thread_id = if i % 3 == 0 { "other".into() } else { "t".into() };
+                m.thread_reply = true;
+                m
+            })
+            .collect();
+        s.put_msgs(&rows).unwrap();
+        // the thread view holds replies from sort 280 on; the hit is r-40, far outside that page
+        let v = s.context("a", "c", "r-40", "t", 280).unwrap();
+        assert!(v.iter().any(|m| m.id == "r-40"));
+        assert!(v.iter().all(|m| m.thread_id == "t"), "only the thread's own replies");
+        assert_eq!(v.iter().filter(|m| m.sort < 40).count(), 20, "20 replies of context before the hit");
+        assert_eq!(v.last().unwrap().sort, 278, "reaches up to the loaded tail: no hidden gap");
+        assert!(v.windows(2).all(|w| w[0].sort < w[1].sort));
+        // no connect point: a bounded window
+        let w = s.context("a", "c", "r-40", "t", 0).unwrap();
+        assert!(w.len() <= 60 && w.iter().any(|m| m.id == "r-40"));
+        assert!(s.context("a", "c", "missing", "t", 0).unwrap().is_empty());
+        // whole-chat scope (no thread) includes every message
+        let all = s.context("a", "c", "r-40", "", 0).unwrap();
+        assert!(all.iter().any(|m| m.thread_id == "other"));
     }
 
     #[test]

@@ -150,10 +150,16 @@ body:is([data-background="glass"], [data-background="clear"]) .page-view.todo-vi
 .dtp-time > span { flex: 1; }
 .dtp-time input { height: 32px; padding: 0 8px; color: var(--text); background: var(--pane-2); border: 1px solid var(--line); border-radius: var(--radius-md); font: var(--fs-md) var(--font-mono); }
 
-/* "Tạo việc từ tin nhắn": the editor as a dialog over the chat */
-.todo-capture { width: min(600px, calc(100vw - 48px)); max-height: calc(100vh - 64px); overflow: auto; padding: 0; }
-.todo-capture .todo-editor { border: 0; background: transparent; padding: 18px; }
+/* "Tạo việc từ tin nhắn": the editor as a dialog over the chat.
+   Doubled class on purpose: todo.css is imported via App (before components.css in main.tsx), so a
+   bare `.todo-capture` loses to `.prompt-dialog { width: 420px; padding: 16px }` at equal specificity. */
+.prompt-dialog.todo-capture { width: min(640px, calc(100vw - 48px)); max-height: calc(100dvh - 64px); overflow: auto; padding: 0; font-size: 14px; }
+.todo-capture .todo-editor { border: 0; background: transparent; padding: 20px 22px; }
 .todo-capture :is(h2, p) { margin: 0; }
-.todo-capture h2 { font-size: 16px; }
-.todo-capture .todo-subtle { color: var(--text-2); font-size: 13px; margin-top: 8px; }
+.todo-capture h2 { font-size: 18px; }
+.todo-capture .todo-editor label, .todo-capture .todo-date-label { font-size: 13px; gap: 5px; }
+.todo-capture .todo-editor :is(input, textarea) { font-size: 14px; padding: 8px 10px; }
+.todo-capture .todo-date-btn { height: 36px; font-size: 14px; }
+.todo-capture :is(.todo-note-preview, .todo-source) { font-size: 13px; }
+.todo-capture .todo-subtle { color: var(--text-2); font-size: 14px; margin-top: 8px; }
 .todo-capture .todo-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }

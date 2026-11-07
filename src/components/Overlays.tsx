@@ -6,7 +6,7 @@ import { quickReactions, reactionChoices, nextEmojiIndex, searchEmoji } from "..
 import { COLORS, COLOR_LABELS } from "../lib/platforms";
 import { IconPicker } from "./Folders";
 import type { Chat, Msg } from "../lib/types";
-import { dismissToast, forwardMsg, key, loadLatest, loadTopics, openChat, splitKey, useApp, openSearch, setTheme, toggleTheme, type Pop, type Toast } from "../store";
+import { dismissToast, forwardMsg, key, loadLatest, loadTopics, openChat, openMessage, splitKey, useApp, openSearch, setTheme, toggleTheme, type Pop, type Toast } from "../store";
 import { removeAccount, renameAccount } from "../App";
 import { startWizard } from "../views/Wizard";
 import { ChatAvatar, PersonAvatar } from "../ui/Avatar";
@@ -137,10 +137,10 @@ function PaletteBody({ mode, scope, forward }: { mode: "chats" | "msgs"; scope?:
     if (mode !== "msgs") return;
     let cancelled = false;
     const query = q.trim();
-    setHits(null);
+    // keep the previous hits while the edited query runs: no empty flash per keystroke
     setSearchError(false);
     setSearching(query.length >= 2);
-    if (query.length < 2) return;
+    if (query.length < 2) { setHits(null); return; }
     const t = setTimeout(() => {
       const [a, c] = scope ? splitKey(scope) : [undefined, undefined];
       api.search(query, 40, a, c)
@@ -213,10 +213,7 @@ function PaletteBody({ mode, scope, forward }: { mode: "chats" | "msgs"; scope?:
         const snip = at < 0 ? esc(t.slice(0, 120)) : `${at > 30 ? "…" : ""}${esc(t.slice(from, at))}<mark>${esc(t.slice(at, at + len))}</mark>${esc(t.slice(at + len, at + len + 90))}`;
         out.push({
           group: i === 0 ? `${hits!.length} kết quả` : undefined,
-          run: () => {
-            void openChat(k);
-            setTimeout(() => useApp.setState({ jumpTo: m.id }), 60);
-          },
+          run: () => void openMessage(m),
           node: (
             <>
               <PersonAvatar name={m.senderName || "Bạn"} size="sm" accountId={m.accountId} photo={m.senderPhoto} />

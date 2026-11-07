@@ -47,6 +47,18 @@ pub struct Chat {
     /// Telegram supergroup with topics
     #[serde(default)]
     pub forum: bool,
+    /// LeftDock: the message the preview shows (opened and highlighted on click)
+    #[serde(default)]
+    pub preview_msg: String,
+    /// its Google Chat thread / Telegram forum topic id ("" = none)
+    #[serde(default)]
+    pub preview_thread: String,
+    /// "" (unknown: open the chat normally) | "main" | "reply" (Google Chat thread reply) | "topic"
+    #[serde(default)]
+    pub preview_kind: String,
+    /// thread title (start of the root message) or topic name, for the "↳ …" / "# …" label
+    #[serde(default)]
+    pub preview_context: String,
 }
 
 /// A topic of a Telegram forum supergroup.

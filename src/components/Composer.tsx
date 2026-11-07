@@ -27,14 +27,16 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
   const replyId = useApp((s) => s.replyTo[k] ?? "");
   const editId = useApp((s) => s.editing[k] ?? "");
   const ref = useApp((s) => s.msgs[chatKey]?.find((m) => m.id === (editId || replyId)));
-  const blocked = useApp((s) => BLOCKING.includes(s.health[accountId]?.health ?? "ok"));
+  const health = useApp((s) => s.health[accountId]?.health ?? "ok");
+  const blocked = BLOCKING.includes(health);
   const canSend = useApp((s) => s.chats[chatKey]?.canSend ?? true);
   const caps = capsOf(chatKey);
   const ta = useRef<HTMLTextAreaElement>(null);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const lang = useApp((s) => s.aiLang[chatKey] || s.prefs.aiTo);
-  const plainSend = useApp((s) => s.plainSend);
+  const plainSend = useApp((s) => !!s.plainSend[k]);
+  const setPlainSend = (on: boolean) => useApp.setState((s) => ({ plainSend: { ...s.plainSend, [k]: on } }));
   const [sug, setSug] = useState<ReplySuggestionsState | null>(null);
   const suggestionId = useId();
   const stickerId = useId();
@@ -50,20 +52,28 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
   const [aiBusy, setAiBusy] = useState(false);
   const [stickers, setStickers] = useState(false);
   const recorder = useRecorder();
-  /** pasted / dropped files waiting for Enter; the draft goes out as the first one's caption */
-  const [files, setFiles] = useState<Staged[]>([]);
+  /** pasted / dropped files waiting for Enter, kept per tab in the store so switching tabs and
+   *  coming back finds them; the draft goes out as the first one's caption */
+  const files = useApp((s) => s.staged[k] ?? NO_FILES);
+  const setFiles = (next: (f: Staged[]) => Staged[]) => useApp.setState((s) => {
+    const list = next(s.staged[k] ?? NO_FILES);
+    return { staged: { ...s.staged, [k]: list }, stagedAsFile: list.length ? s.stagedAsFile : { ...s.stagedAsFile, [k]: false } };
+  });
   /** Telegram: photos/videos go out uncompressed, as documents (Telegram's "send as file") */
-  const [asFile, setAsFile] = useState(false);
-  useEffect(() => { if (!files.length) setAsFile(false); }, [files.length]);
+  const asFile = useApp((s) => !!s.stagedAsFile[k]);
+  const setAsFile = (next: boolean | ((v: boolean) => boolean)) => useApp.setState((s) => {
+    const v = typeof next === "function" ? next(!!s.stagedAsFile[k]) : next;
+    return { stagedAsFile: { ...s.stagedAsFile, [k]: v } };
+  });
   const [dropping, setDropping] = useState(false);
   const [attaching, setAttaching] = useState(false);
   const attachmentPending = useRef(false);
-  const attachmentRun = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const stage = async (paths: string[]) => {
-    if (!paths.length || editId || blocked || !canSend || recorder.recording) return;
-    const run = attachmentRun.current;
+    if (!paths.length || editId || !canSend || recorder.recording) return;
+    // the files belong to this tab (store, keyed by k): a reply after switching still lands here
     const add = await api.stageFiles(paths);
-    if (run !== attachmentRun.current) return;
     if (add.length < paths.length) toast("Thư mục không gửi được, chỉ đính kèm file", "info");
     setFiles((f) => [...f, ...add.filter((a) => !f.some((x) => x.path === a.path))]);
     if (!isMobile) ta.current?.focus();
@@ -71,7 +81,6 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
   // the drop listener lives across renders: it must see today's blocked/canSend, not launch's
   const stageRef = useRef(stage);
   stageRef.current = stage;
-  useEffect(() => () => { attachmentRun.current++; }, [k]);
   // Tauri owns file drops (dragDropEnabled): the composer of the visible tab takes them
   useEffect(() => {
     if (!isTauri || isMobile) return;
@@ -119,9 +128,10 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
 
   useTextareaSize(ta, draft, canSend && !recorder.recording);
 
+  // offline still focuses: the user can keep writing, Send explains why it waits
   useEffect(() => {
-    if (!blocked && !isMobile) ta.current?.focus();
-  }, [k, blocked]);
+    if (!isMobile) ta.current?.focus();
+  }, [k]);
 
   const setDraft = (v: string) => useApp.setState((s) => ({ drafts: { ...s.drafts, [k]: v } }));
   const mentions = useMentions(chatKey, ta, draft, setDraft);
@@ -225,8 +235,11 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
     if (files.length && !editId && !blocked && canSend) {
       const { wire, shown } = mentions.encode(text);
       files.forEach((f, i) => void send(chatKey, i ? "" : shown, { file: f.path, replyTo: i ? undefined : replyId || undefined, threadId, wire: i ? undefined : wire, plain: plainSend, asFile }));
-      setFiles([]);
-      useApp.setState((s) => ({ drafts: { ...s.drafts, [k]: "" }, replyTo: { ...s.replyTo, [k]: "" }, plainSend: false }));
+      useApp.setState((s) => ({ drafts: { ...s.drafts, [k]: "" }, replyTo: { ...s.replyTo, [k]: "" }, plainSend: { ...s.plainSend, [k]: false }, staged: { ...s.staged, [k]: [] }, stagedAsFile: { ...s.stagedAsFile, [k]: false } }));
+      return;
+    }
+    if (blocked && (text || files.length)) {
+      toast(sendBlockedReason(health), "info");
       return;
     }
     if (!text || blocked || !canSend || savingRef.current) return;
@@ -258,22 +271,28 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
     setOrig(null);
     dismissSuggestions();
     // plain text is per message: a forgotten toggle used to break *every* later send
-    useApp.setState((s) => editId && (s.editing[k] !== editId || s.drafts[k] !== draft) ? { plainSend: false } : ({ drafts: { ...s.drafts, [k]: "" }, replyTo: { ...s.replyTo, [k]: "" }, editing: { ...s.editing, [k]: "" }, plainSend: false }));
+    useApp.setState((s) => editId && (s.editing[k] !== editId || s.drafts[k] !== draft) ? { plainSend: { ...s.plainSend, [k]: false } } : ({ drafts: { ...s.drafts, [k]: "" }, replyTo: { ...s.replyTo, [k]: "" }, editing: { ...s.editing, [k]: "" }, plainSend: { ...s.plainSend, [k]: false } }));
   };
 
   const attach = async (media = false) => {
-    if (blocked || saving || editId || !canSend || recorder.recording || attachmentPending.current) return;
+    if (saving || editId || !canSend || recorder.recording || attachmentPending.current) return;
     attachmentPending.current = true;
     setAttaching(true);
-    const run = attachmentRun.current;
     try {
       const paths = await (media ? pickMedia() : pickFiles());
-      if (run !== attachmentRun.current) return;
       if (isMobile && paths.length) setAsFile(!media);
       await stage(paths);
-    } catch (e) { if (run === attachmentRun.current) fail(e); }
-    finally { attachmentPending.current = false; setAttaching(false); }
+    } catch (e) { fail(e); }
+    finally { attachmentPending.current = false; if (mounted.current) setAttaching(false); }
   };
+
+  const sendTip = blocked ? sendBlockedReason(health)
+    : saving ? "Đang lưu chỉnh sửa…"
+    : recorder.recording ? "Gửi tin thoại"
+    : !draft.trim() && !files.length ? "Nhập nội dung hoặc đính kèm tệp để gửi"
+    : editId ? "Lưu chỉnh sửa"
+    : files.length ? `Gửi ${files.length} tệp${draft.trim() ? " kèm chú thích" : ""}`
+    : "Gửi";
 
   if (!canSend) {
     return (
@@ -382,10 +401,11 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
             id="composer-input"
             ref={ta}
             rows={1}
-            placeholder={blocked ? "Chưa gửi được lúc này…" : placeholder ?? "Viết tin nhắn…"}
+            placeholder={blocked ? "Vẫn soạn được — nháp sẽ gửi khi có kết nối lại…" : placeholder ?? "Viết tin nhắn…"}
             aria-label="Soạn tin nhắn"
+            aria-describedby={blocked ? `${suggestionId}-send-state` : undefined}
             value={draft}
-            disabled={blocked || saving}
+            disabled={saving}
             onChange={(e) => {
               setDraft(e.target.value);
               mentions.detect(e.target.value, e.target.selectionStart);
@@ -425,15 +445,15 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
               <span className="composer-platform">{PLATFORMS[account?.platform ?? "telegram"].name}</span>
             </label>
             <span className="composer-sep" aria-hidden="true" />
-            <MobileActions label="Thêm vào tin nhắn" icon="plus" disabled={blocked || saving || recorder.recording}>
-            <button className="tool-btn icon-only" aria-label="Đính kèm tệp" data-tip={editId ? "Chỉ sửa nội dung tin nhắn" : "Đính kèm tệp"} disabled={blocked || saving || !!editId || attaching || recorder.recording} onClick={() => void attach()}>
+            <MobileActions label="Thêm vào tin nhắn" icon="plus" disabled={saving || recorder.recording}>
+            <button className="tool-btn icon-only" aria-label="Đính kèm tệp" data-tip={editId ? "Chỉ sửa nội dung tin nhắn" : "Đính kèm tệp"} disabled={saving || !!editId || attaching || recorder.recording} onClick={() => void attach()}>
               <Icon name="paperclip" />
             </button>
             <button
               className="tool-btn icon-only"
               aria-label="Emoji"
               data-tip="Emoji"
-              disabled={blocked || saving}
+              disabled={saving}
               onClick={(e) => {
                 // the app: macOS's full emoji picker types into the focused textarea; demo: quick set
                 if (isTauri && !isMobile) {
@@ -491,7 +511,7 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
                 aria-label="Gửi văn bản thuần"
                 data-tip={plainSend ? "Tin này gửi y như gõ, tự tắt sau khi gửi · Bấm để bật định dạng lại" : "Gửi tin này dạng văn bản thuần: *abc* không in đậm, `x` không thành code"}
                 disabled={blocked || saving}
-                onClick={() => { useApp.setState((s) => ({ plainSend: !s.plainSend })); toast(plainSend ? "Định dạng *đậm* _nghiêng_ `code` bật lại" : "Tin này gửi y như gõ, không định dạng"); }}
+                onClick={() => { setPlainSend(!plainSend); toast(plainSend ? "Định dạng *đậm* _nghiêng_ `code` bật lại" : "Tin này gửi y như gõ, không định dạng"); }}
               >
                 <Icon name="remove-formatting" />
               </button>
@@ -534,7 +554,8 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
             <button
               className="tool-btn primary icon-only composer-send"
               aria-label={editId ? "Lưu chỉnh sửa" : "Gửi"}
-              data-tip={recorder.recording ? "Gửi tin thoại" : editId ? "Lưu chỉnh sửa" : "Gửi"}
+              aria-describedby={`${suggestionId}-send-state`}
+              data-tip={sendTip}
               data-kbd="↵"
               disabled={blocked || saving || (!draft.trim() && !recorder.recording && !files.length)}
               onClick={() => (recorder.recording ? void sendVoice() : void submit())}
@@ -545,6 +566,9 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
           </div>
         </div>
         <div className="composer-hint">
+          <span id={`${suggestionId}-send-state`} className={`composer-send-state${blocked ? " blocked" : ""}`} role={blocked ? "status" : undefined}>
+            {blocked ? sendBlockedReason(health) : saving ? "Đang lưu chỉnh sửa…" : ""}
+          </span>
           <span>
             {orig !== null ? (
               <button
@@ -563,6 +587,19 @@ export function Composer({ k, chatKey = k, threadId, placeholder }: { k: string;
       </div>
     </div>
   );
+}
+
+const NO_FILES: Staged[] = [];
+
+/** Why Send is off while the account cannot deliver; the draft and files stay put. */
+export function sendBlockedReason(health: string) {
+  switch (health) {
+    case "offline": return "Chưa gửi được: tài khoản đang mất kết nối. Nháp và tệp vẫn được giữ.";
+    case "reconnecting": return "Chưa gửi được: đang kết nối lại. Nháp và tệp vẫn được giữ.";
+    case "expired": return "Chưa gửi được: phiên đăng nhập đã hết hạn. Đăng nhập lại để gửi.";
+    case "rate": return "Chưa gửi được: nền tảng đang giới hạn tốc độ. Thử lại sau ít phút.";
+    default: return "";
+  }
 }
 
 const IMG = /\.(jpe?g|png|gif|webp|heic)$/i;

@@ -10,7 +10,8 @@ import { isMobile } from "./lib/mobile";
 import { mobileConversationVisible } from "./lib/mobile-navigation";
 import { PLATFORMS, type Cap } from "./lib/platforms";
 import { themeBase } from "./lib/themes";
-import type { Account, Chat, CoreEvent, Folder, Health, Media, Msg, ThreadSummary, Topic, WindowPresence } from "./lib/types";
+import type { Account, Chat, CoreEvent, Folder, Health, Media, Msg, SendRequest, ThreadSummary, Topic, WindowPresence } from "./lib/types";
+import type { Staged } from "./lib/bridge";
 import type { IconName } from "./ui/Icon";
 
 export type Route = "shell" | "inbox" | "settings" | "search" | "todo" | "welcome" | "wizard";
@@ -81,6 +82,8 @@ interface State {
   msgs: Record<string, Msg[]>;
   older: Record<string, "idle" | "loading" | "done">;
   loadErr: Record<string, string>;
+  /** chats showing their cached copy while the live page loads in the background */
+  refreshing: Record<string, true>;
   /** sort key of the first unread message when the chat was opened → "N tin chưa đọc" line */
   unreadMark: Record<string, { sort: number; count: number }>;
   /** ids that arrived live (not from history), also used by thread unread */
@@ -173,8 +176,14 @@ interface State {
   trAuto: Record<string, boolean>;
   /** per-chat language to write in, overrides prefs.aiTo */
   aiLang: Record<string, string>;
-  /** composer toggle: send text as typed, *abc* is not bold (persisted) */
-  plainSend: boolean;
+  /** forum chats waiting for their topic list to land in a topic (instant click feedback) */
+  forumLanding: Record<string, true>;
+  /** composer toggle per tab (chat/thread/topic): send the next message as typed, *abc* not bold */
+  plainSend: Record<string, boolean>;
+  /** composer attachments waiting for Enter, per tab; survive switching tabs (session only) */
+  staged: Record<string, Staged[]>;
+  /** Telegram "send as file" for the staged photos/videos, per tab */
+  stagedAsFile: Record<string, boolean>;
 }
 
 const PERSIST = "chatmin.ui";
@@ -198,6 +207,7 @@ export const useApp = create<State>(() => ({
   msgs: {},
   older: {},
   loadErr: {},
+  refreshing: {},
   unreadMark: {},
   fresh: {},
   threadSeen: {},
@@ -261,7 +271,10 @@ export const useApp = create<State>(() => ({
   tr: {},
   trAuto: saved.trAuto ?? {},
   aiLang: saved.aiLang ?? {},
-  plainSend: false, // per message, never restored: a forgotten toggle broke every later send
+  forumLanding: {},
+  plainSend: {}, // per tab and per message, never restored: a forgotten toggle broke every later send
+  staged: {},
+  stagedAsFile: {},
 }));
 
 const get = useApp.getState;
@@ -610,24 +623,42 @@ export function applyEvent(e: CoreEvent) {
 // reading older messages up the list isn't seeing the new one: it stays unread (badge + "N tin mới")
 export const isReadingWindow = () => get().windowPresence?.foreground ?? (document.hasFocus() && !document.hidden);
 const isWatching = (k: string) =>
-  (get().active === k || (!!get().active && !!get().threadTabs[get().active!]?.topic && chatKeyOf(get().active) === k)) && get().route === "shell" && (!isMobile || mobileConversationVisible(get())) && get().atBottom && isReadingWindow();
+  !(jumping && chatKeyOf(jumping) === k) && (get().active === k || (!!get().active && !!get().threadTabs[get().active!]?.topic && chatKeyOf(get().active) === k)) && get().route === "shell" && (!isMobile || mobileConversationVisible(get())) && get().atBottom && isReadingWindow();
 
 // ── chats & messages ────────────────────────────────────────────────────────
 const PAGE = 50;
 
-export async function openChat(k: string) {
+/** Every navigation takes a number; work that resumes after an await checks it, so a slow
+ *  response for an earlier click can never take the tab back from a newer choice. */
+let navSeq = 0;
+export const navigationCurrent = (seq: number) => seq === navSeq;
+
+export async function openChat(k: string, _landed = false): Promise<void> {
+  const seq = ++navSeq;
+  // a plain navigation ends any pending jump (its suppression of read receipts too)
+  if (!_landed) jumping = null;
   const s = get();
   const prevChat = chatKeyOf(s.active);
   // not when coming back out of one of its topic tabs (that shows the forum itself)
-  if (s.chats[k]?.forum && !(isThreadTab(s.active) && prevChat === k)) {
-    const landing = await forumLanding(k);
-    if (landing) return openChat(landing);
+  if (!_landed && s.chats[k]?.forum && !(isThreadTab(s.active) && prevChat === k)) {
+    const quick = forumLandingCached(k);
+    if (quick) return openChat(quick, true);
+    if (quick === undefined) {
+      // Topics not cached yet: answer the click at once (the forum's tab is selected and shows
+      // "opening the latest topic"), then land when the list arrives — unless the user moved on.
+      const wasOpen = s.tabs.includes(k);
+      set((st) => ({ ...withTab(st, k), forumLanding: { ...st.forumLanding, [k]: true } }));
+      const landing = await forumLanding(k);
+      set((st) => { const { [k]: _, ...forumLanding } = st.forumLanding; return { forumLanding }; });
+      if (!navigationCurrent(seq)) return;
+      if (landing) {
+        // the forum tab only stood in for the topic: the topic takes its place
+        if (!wasOpen) set((st) => ({ tabs: st.tabs.includes(landing) ? st.tabs.filter((t) => t !== k) : st.tabs.map((t) => (t === k ? landing : t)) }));
+        return openChat(landing, true);
+      }
+    }
   }
-  const tabs = s.tabs.includes(k) ? s.tabs : (() => {
-    const t = s.tabs.slice();
-    t.splice(s.active ? t.indexOf(s.active) + 1 : t.length, 0, k);
-    return t;
-  })();
+  const tabs = withTab(get(), k).tabs;
   set({ tabs, active: k, route: "shell", inspTab: s.active === k ? s.inspTab : (() => { const c = s.chats[chatKeyOf(k) ?? k]; return c?.threaded || c?.forum ? "threads" : "info"; })(), ...(isMobile ? { leftCollapsed: true, rightCollapsed: true } : window.matchMedia("(max-width: 760px)").matches ? { leftCollapsed: true } : {}) });
   const chatKey = chatKeyOf(k);
   if (!chatKey) return;
@@ -642,7 +673,16 @@ export async function openChat(k: string) {
   // An explicitly opened thread is its own bounded read, not another whole-space refresh.
   if (isThreadTab(k) && !get().threadTabs[k]?.topic) {
     if (!get().msgs[chatKey]) set(st => ({ msgs: { ...st.msgs, [chatKey]: [] } }));
-    return void loadThread(k);
+    return loadThread(k);
+  }
+  // A topic is its own history too: its page starts at once, never behind the forum's newest
+  // page (that network read used to delay every topic open). The cached forum page paints first.
+  if (isThreadTab(k)) {
+    const cached = get().msgs[chatKey] ? null : showCached(chatKey);
+    const loading = loadThread(k);
+    await cached;
+    if (!get().msgs[chatKey]) set(st => ({ msgs: { ...st.msgs, [chatKey]: st.msgs[chatKey] ?? [] } }));
+    return loading;
   }
   if (!get().msgs[chatKey]) await showCached(chatKey);
   if (!get().msgs[chatKey]) await loadLatest(chatKey);
@@ -657,22 +697,126 @@ export async function openChat(k: string) {
   if (c?.unread || c?.mention) void markRead(k, true);
 }
 
-/** Opens a Google Chat thread as its own workspace tab, next to its space. */
-/** Opens the chat holding `msg`, or its thread tab when it's a reply in a threaded space. */
+/** Opens the chat holding `msg`, or its thread tab when it's a reply in a threaded space.
+ *  (Notification clicks, the bell, todo sources and search all land the same way.) */
 export function openAt(k: string, msg: string, thread: string) {
+  const [accountId, chatId] = splitKey(k);
+  const known = get().msgs[k]?.find((x) => x.id === msg) ?? get().inbox.find((x) => x.id === msg && key(x.accountId, x.chatId) === k);
+  return openMessage({ accountId, chatId, id: msg, threadId: thread || known?.threadId || "", threadReply: known ? known.threadReply : !!thread });
+}
+
+/** The tab a message lives in: its forum topic, its Google Chat thread (replies), or the chat. */
+export function tabForMessage(m: { accountId: string; chatId: string; threadId?: string; threadReply?: boolean }): string | null {
+  const k = key(m.accountId, m.chatId), chat = get().chats[k];
+  if (!chat) return null;
+  if (m.threadId && chat.forum) return threadTabKey(k, m.threadId);
+  if (m.threadId && chat.threaded && m.threadReply) return threadTabKey(k, m.threadId);
+  return k;
+}
+
+/** A jump in progress: until the view has scrolled to the target, opening the chat must not
+ *  count its newest messages as read (the reader is about to look at an older one). */
+let jumping: string | null = null;
+export function jumpDone() {
+  jumping = null;
+  if (get().jumpTo) set({ jumpTo: null });
+}
+
+/** What clicking a sidebar row opens: the preview's own message in its thread/topic (or in the
+ *  parent timeline of a threaded space / forum), else null → open the chat as usual. */
+export function previewTarget(c: Chat): { accountId: string; chatId: string; id: string; threadId: string; threadReply: boolean } | null {
+  if (!c.previewMsg || !c.previewKind || c.kind === "web") return null;
+  if (c.previewKind === "main" && !c.threaded && !c.forum) return null;
+  return { accountId: c.accountId, chatId: c.id, id: c.previewMsg, threadId: c.previewKind === "main" ? "" : c.previewThread ?? "", threadReply: c.previewKind === "reply" };
+}
+
+/** "Mở hội thoại chính": the parent timeline itself — a space's main stream, a forum's own
+ *  timeline rather than its last topic. */
+export function openMainTimeline(k: string) {
+  return openChat(k, true);
+}
+
+/** One way to open a message from anywhere (search, bell, todo source, notification): the right
+ *  chat / thread / topic tab, history around it loaded when it's outside the loaded pages, then
+ *  scrolled to and highlighted. A newer navigation cancels an older one at every await. */
+export async function openMessage(m: { accountId: string; chatId: string; id: string; threadId?: string; threadReply?: boolean }) {
+  const k = key(m.accountId, m.chatId);
   const chat = get().chats[k];
-  if (!chat) return toast("Chat này không còn trong danh sách", "info");
-  set((s) => ({ toLatest: s.toLatest + 1 })); // land on the newest message (useStickyScroll)
-  if (thread && chat.forum) {
-    const topic = get().topics[k]?.find((t) => t.id === thread);
-    return openTopicTab(k, topic ?? ({ id: thread, name: get().threadTabs[threadTabKey(k, thread)]?.title || "Chủ đề" } as Topic));
+  const tab = tabForMessage(m);
+  if (!chat || !tab) return toast("Chat này không còn trong danh sách", "info");
+  if (isThreadTab(tab) && !get().threadTabs[tab]) {
+    const topic = chat.forum ? get().topics[k]?.find((t) => t.id === m.threadId) : undefined;
+    const root = chat.forum ? undefined : get().msgs[k]?.find((x) => x.threadId === m.threadId && !x.threadReply);
+    set((s) => ({ threadTabs: { ...s.threadTabs, [tab]: { chatKey: k, threadId: m.threadId!, rootId: root?.id ?? "", title: topic?.name ?? (root ? plain(root.text).slice(0, 60) : "") ?? "", topic: !!chat.forum } } }));
+    if (!get().threadTabs[tab].title) set((s) => ({ threadTabs: { ...s.threadTabs, [tab]: { ...s.threadTabs[tab], title: chat.forum ? "Chủ đề" : "Thread" } } }));
   }
-  if (!thread || !chat.threaded) return void openChat(k);
-  const m = get().msgs[k]?.find((x) => x.id === msg);
-  if (m) return openThreadTab(k, m);
-  const t = threadTabKey(k, thread);
-  set((s) => ({ threadTabs: { ...s.threadTabs, [t]: s.threadTabs[t] ?? { chatKey: k, threadId: thread, rootId: msg, title: "Thread" } } }));
-  void openChat(t);
+  jumping = tab;
+  // landing in a forum topic makes it the forum's "last topic", as opening it by hand does
+  set((s) => ({ jumpTo: null, ...(chat.forum && m.threadId ? { lastTopic: { ...s.lastTopic, [k]: m.threadId } } : {}) }));
+  const opening = openChat(tab, true);
+  const seq = navSeq;
+  const abandoned = () => { if (jumping === tab && !navigationCurrent(seq)) jumping = null; };
+  await opening;
+  if (!navigationCurrent(seq)) return abandoned();
+  const found = await revealMessage(tab, m);
+  if (!navigationCurrent(seq)) return abandoned();
+  if (!found) {
+    jumping = null;
+    // the thread/topic stays the one the message belongs to; say what happened
+    const where = isThreadTab(tab) ? `${get().threadTabs[tab]?.topic ? "chủ đề" : "luồng"} “${get().threadTabs[tab]?.title ?? ""}”` : "hội thoại";
+    toast(`Tin này đã bị xoá hoặc chưa tải được — đang hiện ${where}, tới tin mới nhất`, "info");
+    set((s) => ({ toLatest: s.toLatest + 1 }));
+    return;
+  }
+  set({ jumpTo: m.id });
+}
+
+/** Makes sure `m` is in the loaded list of `tab`: fetches the history around it when needed and
+ *  joins it to what is loaded (no hidden gap), widening a thread's reply window to include it. */
+async function revealMessage(tab: string, m: { accountId: string; chatId: string; id: string; threadId?: string }): Promise<boolean> {
+  const meta = isThreadTab(tab) ? get().threadTabs[tab] : undefined;
+  const k = key(m.accountId, m.chatId);
+  const inScope = (x: Msg) => !meta || (x.threadId === meta.threadId && (meta.topic || x.threadReply || x.id === meta.rootId));
+  const scoped = () => (get().msgs[k] ?? []).filter(inScope);
+  const visibleNow = () => {
+    const list = scoped();
+    const i = list.findIndex((x) => x.id === m.id);
+    if (i < 0) return false;
+    if (!meta || meta.topic) return true;
+    // a Google Chat thread shows its newest `limit` replies (or the root)
+    if (list[i].id === meta.rootId || !list[i].threadReply) return true;
+    const replies = list.filter((x) => x.threadReply);
+    return replies.length - replies.findIndex((x) => x.id === m.id) <= (get().threadPages[tab]?.limit ?? 20);
+  };
+  if (visibleNow()) return true;
+  const have = scoped();
+  const connectTo = meta ? have.filter((x) => !meta || x.threadReply || meta.topic).reduce((a, x) => Math.min(a, x.sort), Infinity)
+    : cursor.get(k) ?? have.reduce((a, x) => Math.min(a, x.sort), Infinity);
+  let context: Msg[] = [];
+  try {
+    context = await api.messageContext(m.accountId, m.chatId, m.id, meta?.threadId ?? "", Number.isFinite(connectTo) ? connectTo : 0);
+  } catch { return false; }
+  if (!context.some((x) => x.id === m.id)) return false;
+  const oldest = context.reduce((a, x) => Math.min(a, x.sort), Infinity);
+  set((s) => {
+    let list = s.msgs[k] ?? [];
+    for (const x of context) list = upsert(list, x);
+    const msgs = { ...s.msgs, [k]: list };
+    if (!meta) return { msgs };
+    const page = s.threadPages[tab];
+    if (meta.topic) {
+      // older paging continues below the context window
+      return { msgs, threadPages: { ...s.threadPages, [tab]: { token: s.older[tab] === "done" ? "" : String(oldest), limit: page?.limit ?? 20 } } };
+    }
+    const replies = list.filter((x) => x.threadId === meta.threadId && x.threadReply);
+    const reveal = replies.length - replies.findIndex((x) => x.sort >= oldest);
+    return { msgs, threadPages: { ...s.threadPages, [tab]: { token: page?.token ?? "", limit: Math.max(page?.limit ?? 20, reveal) } } };
+  });
+  if (!meta) {
+    cursor.set(k, Math.min(cursor.get(k) ?? Infinity, oldest));
+    if (get().chats[k]?.threaded) primaryCursor.set(k, Math.min(primaryCursor.get(k) ?? Infinity, oldest));
+  }
+  return visibleNow();
 }
 
 /** Incoming replies the user hasn't caught up on: past the chat's unread line or arrived
@@ -716,24 +860,61 @@ export function openTopicTab(chatKey: string, topic: Topic) {
 }
 
 /** Opening a forum from the list lands in the topic opened last (or the most recent one), not General.
- *  Back from a topic tab still shows the plain chat: `prevChat` is the forum itself then. */
-async function forumLanding(k: string): Promise<string | null> {
+ *  Back from a topic tab still shows the plain chat: `prevChat` is the forum itself then.
+ *  Synchronous answer: a tab, `null` (known: no topic to land in), or `undefined` (topics unknown yet). */
+function forumLandingCached(k: string): string | null | undefined {
   const s = get();
   const id = s.lastTopic[k];
   const tab = id ? threadTabKey(k, id) : "";
   if (tab && s.threadTabs[tab]) return tab;
-  const topics = s.topics[k] ?? (await api.topics(...splitKey(k)).catch(() => [] as Topic[]));
-  if (!s.topics[k] && topics.length) set((st) => ({ topics: { ...st.topics, [k]: topics } }));
+  const topics = s.topics[k];
+  if (!topics) return undefined;
+  return landOnNewest(k, topics);
+}
+function landOnNewest(k: string, topics: Topic[]): string | null {
   const newest = [...topics].sort((a, b) => b.lastTs - a.lastTs)[0];
   if (!newest) return null;
   const t = threadTabKey(k, newest.id);
-  set((st) => ({ threadTabs: { ...st.threadTabs, [t]: { chatKey: k, threadId: newest.id, rootId: "", title: newest.name, topic: true } }, lastTopic: { ...st.lastTopic, [k]: newest.id } }));
+  set((st) => ({ threadTabs: { ...st.threadTabs, [t]: st.threadTabs[t] ?? { chatKey: k, threadId: newest.id, rootId: "", title: newest.name, topic: true } }, lastTopic: { ...st.lastTopic, [k]: newest.id } }));
   return t;
+}
+/** One topics request per forum at a time, however many clicks ask for it. */
+const topicsPending = new Map<string, Promise<Topic[]>>();
+async function forumLanding(k: string): Promise<string | null> {
+  const cached = forumLandingCached(k);
+  if (cached !== undefined) return cached;
+  let request = topicsPending.get(k);
+  if (!request) {
+    request = api.topics(...splitKey(k)).catch(() => [] as Topic[]).finally(() => topicsPending.delete(k));
+    topicsPending.set(k, request);
+  }
+  const topics = await request;
+  if (!get().topics[k] && topics.length) set((st) => ({ topics: { ...st.topics, [k]: topics } }));
+  return topics.length ? landOnNewest(k, topics) : null;
+}
+
+/** The tab strip with `k` opened next to the active tab, and `k` selected. */
+function withTab(s: Pick<State, "tabs" | "active">, k: string) {
+  const tabs = s.tabs.includes(k) ? s.tabs : (() => {
+    const t = s.tabs.slice();
+    t.splice(s.active && t.includes(s.active) ? t.indexOf(s.active) + 1 : t.length, 0, k);
+    return t;
+  })();
+  return { tabs, active: k, route: "shell" as Route };
 }
 
 export async function loadOlderThread(t: string) {
   if (!get().threadPages[t]?.token || get().older[t] === "loading" || get().older[t] === "done") return;
   return loadThread(t, true);
+}
+
+/** Telegram topic history in pages of TOPIC_PAGE, older ones from the oldest loaded message id.
+ *  A short page means the topic has no more history; the token is the next `before` id. */
+const TOPIC_PAGE = 50;
+async function topicPage(accountId: string, chatId: string, topic: string, before: number) {
+  const messages = await api.topicHistory(accountId, chatId, topic, before, TOPIC_PAGE);
+  const oldest = messages.reduce((min, m) => Math.min(min, m.sort), Infinity);
+  return { messages, nextPageToken: messages.length >= TOPIC_PAGE && Number.isFinite(oldest) ? String(oldest) : "" };
 }
 
 async function loadThread(t: string, older = false) {
@@ -757,7 +938,7 @@ async function loadThread(t: string, older = false) {
   }
   try {
     const page = meta.topic
-      ? { messages: await api.topicHistory(accountId, chatId, meta.threadId, 0, 50), nextPageToken: "" }
+      ? await topicPage(accountId, chatId, meta.threadId, older ? Number(token) : 0)
       : await api.thread(accountId, chatId, meta.threadId, token, 20);
     set(st => {
       if (!st.threadTabs[t] || (older && st.threadPages[t] !== previous)) return {};
@@ -765,7 +946,7 @@ async function loadThread(t: string, older = false) {
       for (const m of page.messages) list = upsert(list, m);
       const root = list.find(m => m.threadId === meta.threadId && !m.threadReply);
       const current = st.threadPages[t];
-      const known = (st.msgs[meta.chatKey] ?? []).filter(m => m.threadId === meta.threadId && m.threadReply);
+      const known = (st.msgs[meta.chatKey] ?? []).filter(m => m.threadId === meta.threadId && (meta.topic || m.threadReply));
       const gap = !older && known.length > 0 && page.messages.length > 0
         && page.messages[0].sort > known[known.length - 1].sort;
       // Refreshing a tab preserves its older-page cursor and already revealed history.
@@ -858,11 +1039,23 @@ const cursor = new Map<string, number>();
 // Primary history never advances from a thread reply or thread page token.
 const primaryCursor = new Map<string, number>();
 
+/** Where the reader was in each tab (chat, thread or topic): the first message on screen and
+ *  its offset from the top of the list, or `bottom` when following the newest message.
+ *  Restored when the tab comes back; session only. */
+export type ReadingAnchor = { id: string; offset: number; bottom: boolean };
+export const readingAnchors = new Map<string, ReadingAnchor>();
+
 /** Leaving a chat drops the older pages it scrolled through: every loaded message is a
  *  mounted row (no virtualization), and nothing else ever shrank the list. */
 function trimLoaded(k: string) {
   const list = get().msgs[k];
-  const keep = pageSize(k) * 2;
+  // never drop the page the reader left this chat (or one of its threads/topics) on
+  let keep = pageSize(k) * 2;
+  for (const [tab, at] of readingAnchors) {
+    if (at.bottom || (tab !== k && chatKeyOf(tab) !== k)) continue;
+    const i = list?.findIndex((m) => m.id === at.id || `m-${m.id}` === at.id) ?? -1;
+    if (i >= 0) keep = Math.max(keep, list!.length - i + 30);
+  }
   if (!list || list.length <= keep) return;
   const tail = list.slice(-keep);
   let next = tail;
@@ -901,6 +1094,8 @@ async function refreshLatest(k: string) {
   const [accountId, chatId] = splitKey(k);
   const unread = get().chats[k]?.unread ?? 0;
   const size = pageSize(k);
+  if (get().msgs[k]?.length) set((s) => ({ refreshing: { ...s.refreshing, [k]: true } }));
+  const done = () => { if (get().refreshing[k]) set((s) => { const { [k]: _, ...refreshing } = s.refreshing; return { refreshing }; }); };
   try {
     const fetched = await api.messages(accountId, chatId, 0, size);
     // Publish the primary page first. Missing thread starters are small background reads.
@@ -932,7 +1127,7 @@ async function refreshLatest(k: string) {
     void fillRoots(k);
   } catch (e) {
     set((s) => ({ loadErr: { ...s.loadErr, [k]: String(e) }, msgs: { ...s.msgs, [k]: s.msgs[k] ?? [] } }));
-  }
+  } finally { done(); }
 }
 
 /** Recover only missing starters after the main page is visible; never fetch thread bodies. */
@@ -1214,9 +1409,11 @@ export async function forwardMsg(m: Msg, to: string, { comment = "", threadId }:
 }
 
 /** `wire`: the text the platform gets when it differs from the one shown (mentions) */
-export async function send(k: string, text: string, { wire, ...opts }: { replyTo?: string; threadId?: string; file?: string; voice?: number; wire?: string; plain?: boolean; asFile?: boolean } = {}) {
+export async function send(k: string, text: string, { wire, ...opts }: Omit<SendRequest, "text"> = {}) {
   const [accountId, chatId] = splitKey(k);
+  const request: SendRequest = { text, ...(wire !== undefined ? { wire } : {}), ...Object.fromEntries(Object.entries(opts).filter(([, v]) => v !== undefined)) };
   const temp: Msg = {
+    uiSend: request,
     accountId, chatId, id: `local-${++localId}`, sort: Number.MAX_SAFE_INTEGER - 1000 + localId, senderId: accountOf(accountId)?.selfId ?? "", senderName: "", senderPhoto: "",
     outgoing: true, ts: Date.now(), edited: false, deleted: false, kind: opts.file ? "media" : "text", text,
     media: opts.file ? { kind: opts.voice !== undefined ? "voice" : "file", name: opts.file.split("/").pop() ?? "file", size: 0, mime: "", width: 0, height: 0, fileRef: "", localPath: opts.file, thumb: "", url: "" } : null, // localPath: the upload progress key
@@ -1253,10 +1450,29 @@ export async function send(k: string, text: string, { wire, ...opts }: { replyTo
   }
 }
 
+/** The request a failed bubble stood for: what the composer asked, or for a bubble from
+ *  elsewhere (provider echo, older build) the closest reconstruction from the message. */
+export function retryRequest(m: Msg): SendRequest {
+  if (m.uiSend) return m.uiSend;
+  const file = m.media?.localPath || undefined;
+  return {
+    text: m.text,
+    ...(m.replyTo ? { replyTo: m.replyTo } : {}),
+    ...(m.threadId ? { threadId: m.threadId } : {}),
+    ...(file ? { file } : {}),
+    ...(file && m.media?.kind === "voice" ? { voice: 0 } : {}),
+  };
+}
+
+/** Send a failed message again exactly as it was asked: same file and caption, same
+ *  plain/asFile mode, same reply and thread/topic. One click → one new attempt. */
 export function retry(k: string, m: Msg) {
+  const current = get().msgs[k]?.find((x) => x.id === m.id);
+  if (!current || current.status !== "failed") return;
+  const { text, ...opts } = retryRequest(current);
   set((s) => ({ msgs: { ...s.msgs, [k]: (s.msgs[k] ?? []).filter((x) => x.id !== m.id) } }));
   if (!m.id.startsWith("local-")) void api.deleteMsg(m.accountId, m.chatId, m.id).catch(() => {});
-  void send(k, m.text, { replyTo: m.replyTo || undefined, threadId: m.threadId || undefined });
+  return send(k, text, opts);
 }
 
 /** Reaction picker limited to what the platform accepts (Telegram chats restrict reactions). */

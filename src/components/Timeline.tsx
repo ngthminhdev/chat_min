@@ -5,7 +5,7 @@ import { messageRenderKey } from '../lib/message-identity';
 import { preferredScrollBehavior } from '../lib/motion';
 import type { layoutMessages } from '../lib/message-layout';
 import type { Msg } from '../lib/types';
-import { useApp } from '../store';
+import { readingAnchors, useApp } from '../store';
 import { api, isTauri } from '../lib/bridge';
 import { JumpBottom } from './Conversation';
 
@@ -21,6 +21,8 @@ type Props = {
   onTop?: () => void;
   onBottom?: (bottom: boolean) => void;
   headerMessage?: Msg;
+  /** The tab whose reading position this list saves and restores (chat, thread or topic). */
+  anchorKey?: string;
 };
 
 export function TimelineSkeleton() {
@@ -43,7 +45,7 @@ function useEdgeHeight(ref: MutableRefObject<HTMLDivElement | null>, enabled: bo
 
 /** The virtualizer owns measurement, reading anchors and following output.
  * A single prepend snapshot also preserves replies visible below a thread header. */
-export const Timeline = forwardRef<TimelineHandle, Props>(function Timeline({ rows, box, renderRow, header, footer, empty, onTop, onBottom, headerMessage }, ref) {
+export const Timeline = forwardRef<TimelineHandle, Props>(function Timeline({ rows, box, renderRow, header, footer, empty, onTop, onBottom, headerMessage, anchorKey }, ref) {
   const [ready, setReady] = useState(false);
   useEffect(() => afterPaint(() => setReady(true)), []);
   const keys = useMemo(() => rows.map(row => messageRenderKey(row.m)), [rows]);
@@ -82,7 +84,62 @@ export const Timeline = forwardRef<TimelineHandle, Props>(function Timeline({ ro
     }
   });
   const setScroller = useCallback((el: HTMLDivElement | null) => { box.current = el; }, [box]);
-  useLayoutEffect(() => { if (ready) virtual.scrollToEnd(); }, [ready, virtual]);
+  // Opening a tab: back to where the reader left it (message anchor + offset), else the newest
+  // message. Explicit navigation (a jump to a message, "newest", my own send) overrides this.
+  const restoring = useRef<{ id: string; offset: number; until: number } | null>(null);
+  /** a saved anchor whose page hasn't loaded yet (thread/topic tabs fill in after opening) */
+  const awaiting = useRef<{ id: string; offset: number; until: number } | null>(null);
+  const restoreTo = (saved: { id: string; offset: number }) => {
+    const index = rows.findIndex(r => `m-${r.m.id}` === saved.id || (r.album ?? []).some(x => `m-${x.id}` === saved.id));
+    if (index < 0) return false;
+    awaiting.current = null;
+    stick.current = false; setAway(true); onBottom?.(false);
+    restoring.current = { id: saved.id, offset: saved.offset, until: performance.now() + 320 };
+    virtual.scrollToIndex(index, { align: 'start', behavior: 'auto' });
+    settleRestore();
+    return true;
+  };
+  useLayoutEffect(() => {
+    if (!ready) return;
+    const saved = anchorKey ? readingAnchors.get(anchorKey) : undefined;
+    if (saved && !saved.bottom && restoreTo(saved)) return;
+    if (saved && !saved.bottom) awaiting.current = { id: saved.id, offset: saved.offset, until: Date.now() + 3000 };
+    virtual.scrollToEnd();
+  }, [ready, virtual]);
+  useLayoutEffect(() => {
+    const a = awaiting.current;
+    if (!a || !ready) return;
+    if (Date.now() > a.until) { awaiting.current = null; return; }
+    restoreTo(a);
+  }, [rows, ready]);
+  // Rows measure in after the first scroll: re-align the anchor for ~300 ms, until the
+  // reader scrolls on their own.
+  const settleRestore = () => {
+    const r = restoring.current, el = box.current;
+    if (!r || !el) return;
+    const node = document.getElementById(r.id);
+    if (node) {
+      const delta = node.getBoundingClientRect().top - el.getBoundingClientRect().top - r.offset;
+      if (Math.abs(delta) > 1) el.scrollTop += delta;
+    }
+    // by time, not frames: at 120 Hz eight frames ended before late rows were measured
+    if (performance.now() < r.until) requestAnimationFrame(settleRestore); else restoring.current = null;
+  };
+  /** Remember the first message on screen (or "bottom") for when this tab comes back. */
+  const saveAnchor = useCallback(() => {
+    const el = box.current;
+    // still waiting for the saved page: leaving now must not overwrite where the reader was
+    if (!anchorKey || !el || awaiting.current || restoring.current) return;
+    if (el.scrollHeight - el.clientHeight - el.scrollTop <= 2) { readingAnchors.set(anchorKey, { id: '', offset: 0, bottom: true }); return; }
+    const top = el.getBoundingClientRect().top;
+    for (const node of el.querySelectorAll<HTMLElement>('[data-index] .msg')) {
+      const r = node.getBoundingClientRect();
+      if (r.bottom > top + 1) { readingAnchors.set(anchorKey, { id: node.id, offset: r.top - top, bottom: false }); return; }
+    }
+  }, [anchorKey, box]);
+  const anchorFrame = useRef(0);
+  // layout cleanup: runs before the scroller's ref is detached, while rows are still measurable
+  useLayoutEffect(() => () => { cancelAnimationFrame(anchorFrame.current); saveAnchor(); }, [saveAnchor]);
 
   const [away, setAway] = useState(false), [fresh, setFresh] = useState(0);
   const [target, setTarget] = useState('');
@@ -92,13 +149,13 @@ export const Timeline = forwardRef<TimelineHandle, Props>(function Timeline({ ro
   const probeScope = useApp(s => s.active);
   const seenLatest = useRef(toLatest), seenSent = useRef(sent);
   const toBottom = () => {
-    stick.current = true; setFresh(0); setTarget('');
+    restoring.current = null; awaiting.current = null; stick.current = true; setFresh(0); setTarget('');
     virtual.scrollToEnd({ behavior: preferredScrollBehavior() === 'smooth' ? 'smooth' : 'auto' });
   };
   useImperativeHandle(ref, () => ({
     toMessage(id) {
       if (timelineTarget(rows, id) < 0 && (!headerMessage || timelineTarget([{ m: headerMessage }], id) < 0)) return false;
-      virtual.cancelScroll(); stick.current = false; setTarget(id); requestJump(n => n + 1); setAway(true); onBottom?.(false); return true;
+      virtual.cancelScroll(); restoring.current = null; awaiting.current = null; stick.current = false; setTarget(id); requestJump(n => n + 1); setAway(true); onBottom?.(false); return true;
     },
   }), [rows, onBottom, headerMessage, virtual]);
   useEffect(() => {
@@ -117,18 +174,19 @@ export const Timeline = forwardRef<TimelineHandle, Props>(function Timeline({ ro
   }, [keys]);
   useEffect(() => {
     if (!ready || seenLatest.current === toLatest) return;
-    seenLatest.current = toLatest; stick.current = true; setFresh(0); setTarget(''); virtual.scrollToEnd();
+    seenLatest.current = toLatest; restoring.current = null; awaiting.current = null; stick.current = true; setFresh(0); setTarget(''); virtual.scrollToEnd();
   }, [toLatest, ready, virtual]);
   // my own send lands on the bottom wherever I had scrolled; incoming keeps the position
   useEffect(() => {
     if (!ready || seenSent.current === sent) return;
-    seenSent.current = sent; stick.current = true; setFresh(0); setTarget(''); virtual.scrollToEnd();
+    seenSent.current = sent; restoring.current = null; awaiting.current = null; stick.current = true; setFresh(0); setTarget(''); virtual.scrollToEnd();
   }, [sent, ready, virtual]);
 
-  const userGesture = () => { gesture.current = Date.now() + 800; };
+  const userGesture = () => { gesture.current = Date.now() + 800; restoring.current = null; awaiting.current = null; };
   const onScroll = () => {
     const el = box.current;
     if (!el) return;
+    if (anchorKey && !anchorFrame.current) anchorFrame.current = requestAnimationFrame(() => { anchorFrame.current = 0; saveAnchor(); });
     const distance = el.scrollHeight - el.clientHeight - el.scrollTop;
     const bottom = distance <= 2;
     stick.current = bottom; setAway(distance > 80);

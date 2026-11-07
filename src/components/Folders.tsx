@@ -81,8 +81,8 @@ function FolderGroup({ f }: { f: Folder }) {
     .filter((c) => (!q || fuzzy(q, c.title) > 0) && (filter === "all" || (filter === "unread" ? c.unread > 0 : c.mention)))
     .sort((a, b) => b.lastTs - a.lastTs);
   const unread = live.filter((c) => !c.muted).reduce((n, c) => n + c.unread, 0);
-  // ten like the other groups; filtering or searching shows every match
-  const full = all || !!q || filter !== "all";
+  // ten like the other groups, also while filtering/searching (mounting every match stalled the list)
+  const full = all;
   const rows = full ? shown : shown.slice(0, LIMIT);
   const more = shown.length - LIMIT;
   const menu = (e: React.MouseEvent) => {
@@ -129,7 +129,7 @@ function FolderGroup({ f }: { f: Folder }) {
           }) : (
             <div className="side-empty">{live.length ? "Không có hội thoại khớp bộ lọc." : <>Trống. Chuột phải một hội thoại → "Thêm vào {f.name}".</>}</div>
           )}
-          {more > 0 && !q && filter === "all" && (
+          {more > 0 && (
             <button className="sec-more" aria-label={all ? `Thu gọn ${f.name}` : `Xem thêm ${more} hội thoại trong ${f.name}`} aria-expanded={all} onClick={() => setAll((v) => !v)}>
               <span className="sec-more-label">{all ? "Thu gọn" : `Xem thêm ${more}`}</span>
               {!all && <span className="sec-more-count" aria-hidden="true">{more > 99 ? "99+" : `+${more}`}</span>}

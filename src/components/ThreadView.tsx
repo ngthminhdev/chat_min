@@ -1,6 +1,6 @@
-import { Fragment, useEffect, useMemo, useRef } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { dayLabel, fmtCount, plain } from "../lib/format";
-import { capsOf, loadOlderThread, muteThread, openChat, seenThread, toast, useApp } from "../store";
+import { capsOf, jumpDone, loadOlderThread, muteThread, openChat, seenThread, toast, useApp } from "../store";
 import { ChatAvatar } from "../ui/Avatar";
 import { Icon } from "../ui/Icon";
 import { Composer } from "./Composer";
@@ -42,17 +42,25 @@ export function ThreadView({ tab }: { tab: string }) {
   const shown = useMemo(() => (root && !meta?.topic ? [root, ...replies] : replies), [root, replies, meta?.topic]);
   useViewportTranslate(box, tab, meta?.chatKey ?? "", shown);
   const last = replies[replies.length - 1]?.sort;
+  // Read follows what is on screen: reading older replies up the thread leaves the newer ones
+  // unread ("N mới") until the reader comes back down to them.
+  const [atBottom, setAtBottom] = useState(true);
+  const onBottom = useCallback((bottom: boolean) => {
+    setAtBottom(bottom);
+    if (useApp.getState().atBottom !== bottom) useApp.setState({ atBottom: bottom });
+  }, []);
+  useEffect(() => () => useApp.setState({ atBottom: true }), [tab]);
   useEffect(() => {
-    const read = () => { if (meta && last !== undefined) seenThread(meta.chatKey, meta.threadId, last); };
+    const read = () => { if (meta && last !== undefined && atBottom) seenThread(meta.chatKey, meta.threadId, last); };
     read();
     window.addEventListener("focus", read);
     return () => window.removeEventListener("focus", read);
-  }, [meta?.chatKey, meta?.threadId, last, windowForeground]);
+  }, [meta?.chatKey, meta?.threadId, last, windowForeground, atBottom]);
   const rows = useMemo(() => layoutMessages(replies), [replies]);
   useEffect(() => {
     if (!jumpTo) return;
-    if (!timeline.current?.toMessage(jumpTo)) toast("Tin gốc không có trong luồng trả lời đã tải", "info");
-    useApp.setState({ jumpTo: null });
+    if (!timeline.current?.toMessage(jumpTo)) toast(meta?.topic ? "Tin này không có trong phần chủ đề đã tải" : "Tin này không có trong luồng trả lời đã tải", "info");
+    jumpDone();
   }, [jumpTo, rows]);
 
   if (!meta || !chat) {
@@ -94,17 +102,17 @@ export function ThreadView({ tab }: { tab: string }) {
         </MobileActions></div>
       </div>
       <SummaryCard tab={tab} />
-      <Timeline ref={timeline} rows={rows} box={box} headerMessage={meta.topic ? undefined : root} onTop={meta.topic ? undefined : () => void loadOlderThread(tab)}
+      <Timeline ref={timeline} rows={rows} box={box} anchorKey={tab} headerMessage={meta.topic ? undefined : root} onTop={() => void loadOlderThread(tab)} onBottom={onBottom}
         header={<>
           {meta.error && <div className="empty-note" role="alert">Chưa tải được luồng trả lời: {meta.error} <button className="tool-btn" onClick={() => void (meta.errorOlder ? loadOlderThread(tab) : openChat(tab))}>Thử lại</button></div>}
           {!meta.topic && root && <><div className="day-sep" role="separator"><span>{dayLabel(root.ts)}</span></div><div className="thread-root"><MessageItem k={meta.chatKey} tab={tab} m={root} chat={chat} caps={caps} first last fresh={false} threadOpen={false} /></div></>}
           {!meta.topic && !root && !meta.error && !pageLoaded && <TimelineSkeleton />}
           {!meta.topic && <div className="day-sep" role="separator"><span>{replies.length ? `${replies.length} trả lời` : "Chưa có trả lời"}</span></div>}
-          {!meta.topic && older === "loading" && <div className="older-loading"><span className="veil-spinner" /></div>}
-          {!meta.topic && older === "idle" && pageLoaded && !meta.error && <button className="tool-btn" onClick={() => void loadOlderThread(tab)}>Tải trả lời cũ hơn</button>}
-          {!meta.topic && older === "done" && <div className="history-start">Đã tải hết trả lời trong luồng</div>}
+          {older === "loading" && <div className="older-loading" role="status" aria-label={meta.topic ? "Đang tải tin cũ hơn của chủ đề" : "Đang tải trả lời cũ hơn"}><span className="veil-spinner" /></div>}
+          {older === "idle" && pageLoaded && !meta.error && <div className="history-start"><button className="tool-btn" onClick={() => void loadOlderThread(tab)}>{meta.topic ? "Tải tin cũ hơn trong chủ đề" : "Tải trả lời cũ hơn"}</button></div>}
+          {older === "done" && <div className="history-start">{meta.topic ? "Đầu chủ đề — đã tải hết lịch sử" : "Đã tải hết trả lời trong luồng"}</div>}
         </>}
-        empty={!meta.error && !pageLoaded ? <TimelineSkeleton /> : <div className="empty-note">Chưa có trả lời</div>}
+        empty={!meta.error && !pageLoaded ? <TimelineSkeleton /> : <div className="empty-note">{meta.topic ? "Chủ đề chưa có tin nhắn" : "Chưa có trả lời"}</div>}
         renderRow={({m,album,first,last,newDay}) => <Fragment>
           {newDay && <div className="day-sep" role="separator"><span>{dayLabel(m.ts)}</span></div>}
           <div className={!meta.topic && root?.id === m.id ? "thread-root" : undefined}>

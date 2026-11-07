@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { fromDateField, toDateField } from "../lib/todos";
 import { Icon } from "./Icon";
 
@@ -36,18 +36,60 @@ export function DateTimeModal({ title, value, onApply, onClose }: {
 
   const shiftMonth = (delta: number) => setView(dayOf(new Date(view.y, view.m + delta, 1)));
   const pick = (day: Day) => { setSelected(day); setView(day); };
-  const apply = () => {
+  const apply = (day: Day = selected) => {
     const [h = "0", mi = "0"] = time.split(":");
-    onApply(toDateField(new Date(selected.y, selected.m, selected.d, Number(h), Number(mi)).getTime()));
+    onApply(toDateField(new Date(day.y, day.m, day.d, Number(h), Number(mi)).getTime()));
   };
+  const dialog = useRef<HTMLDivElement>(null);
+  const focusDay = useRef(false);
 
-  // Capture phase: the editor form behind closes on Escape and submits on Enter.
+  // Focus lands on the selected day; closing returns it to whatever opened the picker.
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    dialog.current?.querySelector<HTMLElement>(".dtp-day.selected")?.focus();
+    return () => { if (opener?.isConnected) opener.focus(); };
+  }, []);
+  // keyboard moves keep focus on the newly selected day (also across months)
+  useEffect(() => {
+    if (!focusDay.current) return;
+    focusDay.current = false;
+    dialog.current?.querySelector<HTMLElement>(".dtp-day.selected")?.focus();
+  }, [selected, view]);
+
+  // Capture phase, so the editor form behind neither closes on Escape nor submits on Enter.
+  //  Escape: close (focus goes back to the field that opened the picker).
+  //  Enter on a day: choose that day. Enter on another button: that button (Huỷ, tháng trước…).
+  //  Enter elsewhere (time field): choose the selected day and time.
+  //  Arrows / PageUp / PageDown / Home / End on the grid move the selection; Tab stays inside.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Enter" && e.key !== "Escape") return;
-      e.preventDefault();
-      e.stopPropagation();
-      if (e.key === "Escape") onClose(); else apply();
+      const target = e.target as HTMLElement | null;
+      const inside = !!target && !!dialog.current?.contains(target);
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); onClose(); return; }
+      if (e.key === "Tab" && dialog.current) {
+        const items = [...dialog.current.querySelectorAll<HTMLElement>("button:not([disabled]):not([tabindex='-1']), input")];
+        const first = items[0], last = items[items.length - 1];
+        if (!inside) { e.preventDefault(); first?.focus(); }
+        else if (e.shiftKey && target === first) { e.preventDefault(); last?.focus(); }
+        else if (!e.shiftKey && target === last) { e.preventDefault(); first?.focus(); }
+        return;
+      }
+      if (e.key === "Enter") {
+        e.stopPropagation();
+        if (inside && target!.classList.contains("dtp-day")) { e.preventDefault(); const i = Number(target!.dataset.index); apply(cells[i] ?? selected); return; }
+        if (inside && target!.tagName === "BUTTON") return; // its own click runs
+        e.preventDefault(); apply(); return;
+      }
+      if (!inside || !target!.classList.contains("dtp-day")) return;
+      const step: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 };
+      let next: Date | null = null;
+      if (e.key in step) next = new Date(selected.y, selected.m, selected.d + step[e.key]);
+      else if (e.key === "PageUp" || e.key === "PageDown") next = new Date(selected.y, selected.m + (e.key === "PageUp" ? -1 : 1), Math.min(selected.d, 28));
+      else if (e.key === "Home" || e.key === "End") { const wd = (new Date(selected.y, selected.m, selected.d).getDay() + 6) % 7; next = new Date(selected.y, selected.m, selected.d + (e.key === "Home" ? -wd : 6 - wd)); }
+      if (!next) return;
+      e.preventDefault(); e.stopPropagation();
+      focusDay.current = true;
+      pick(dayOf(next));
     };
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
@@ -58,17 +100,20 @@ export function DateTimeModal({ title, value, onApply, onClose }: {
 
   return (
     <div className="modal" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="prompt-dialog dtp" role="dialog" aria-modal="true" aria-label={title}>
+      <div className="prompt-dialog dtp" role="dialog" aria-modal="true" aria-label={title} ref={dialog}>
         <h3>{title}</h3>
         <div className="dtp-nav">
           <button type="button" className="tool-btn icon-only" aria-label="Tháng trước" onClick={() => shiftMonth(-1)}><Icon name="chevron-left" /></button>
           <span className="dtp-title">{MONTHS[view.m]} {view.y}</span>
           <button type="button" className="tool-btn icon-only" aria-label="Tháng sau" onClick={() => shiftMonth(1)}><Icon name="chevron-right" /></button>
         </div>
-        <div className="dtp-grid">
+        <div className="dtp-grid" role="grid" aria-label={`${MONTHS[view.m]} ${view.y} — mũi tên để đổi ngày, Enter để chọn`}>
           {WEEKDAYS.map(w => <span key={w} className="dtp-head">{w}</span>)}
           {cells.map((c, i) => (
-            <button key={i} type="button" onClick={() => pick(c)}
+            <button key={i} type="button" data-index={i} onClick={() => pick(c)}
+              tabIndex={sameDay(c, selected) ? 0 : -1}
+              aria-selected={sameDay(c, selected)}
+              aria-label={`${c.d} ${MONTHS[c.m]} ${c.y}${sameDay(c, dayOf(today)) ? " (hôm nay)" : ""}`}
               className={`dtp-day${c.inMonth ? "" : " muted"}${sameDay(c, selected) ? " selected" : ""}${sameDay(c, dayOf(today)) ? " today" : ""}`}>
               {c.d}
             </button>
@@ -83,7 +128,7 @@ export function DateTimeModal({ title, value, onApply, onClose }: {
         </div>
         <div className="prompt-dialog-foot">
           <button type="button" className="tool-btn" onClick={onClose}>Huỷ</button>
-          <button type="button" className="tool-btn primary" onClick={apply}><Icon name="check" /> Chọn</button>
+          <button type="button" className="tool-btn primary" onClick={() => apply()}><Icon name="check" /> Chọn</button>
         </div>
       </div>
     </div>

@@ -40,3 +40,4 @@ gchat-credentials.json
 
 # generated bundled Zalo protocol worker and runtime
 /src-tauri/resources/zalo/
+dist-audit/

@@ -1830,6 +1830,43 @@ async fn topic_history(
         .topic_history(&core, &account_id, &chat_id, &topic, before, limit)
         .await
 }
+/// History around one message so a search hit / todo source can be scrolled to and
+/// highlighted, joined to what the view holds (`connect_to`, 0 = a window). Telegram asks the
+/// server (cached rows if offline); other providers read the local cache.
+#[tauri::command]
+async fn message_context(
+    core: C<'_>,
+    account_id: String,
+    chat_id: String,
+    msg_id: String,
+    thread_id: Option<String>,
+    connect_to: Option<i64>,
+) -> Res<Vec<Msg>> {
+    let core = core.inner().clone();
+    let thread = thread_id.unwrap_or_default();
+    let connect_to = connect_to.unwrap_or(0);
+    if core.platform(&account_id) == "telegram" {
+        if let Ok(v) = core
+            .tg
+            .context(&core, &account_id, &chat_id, &thread, &msg_id, connect_to)
+            .await
+        {
+            if v.iter().any(|m| m.id == msg_id) {
+                return Ok(v);
+            }
+        }
+    }
+    tauri::async_runtime::spawn_blocking(move || -> Res<Vec<Msg>> {
+        let mut v = core
+            .store()
+            .context(&account_id, &chat_id, &msg_id, &thread, connect_to)?;
+        gchat::hydrate_cached_media(&core.cache_dir, &mut v);
+        zalo::hydrate(&core.cache_dir, &mut v);
+        Ok(stale_refs(v))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
 #[tauri::command]
 async fn forward(
     core: C<'_>,
@@ -2403,6 +2440,7 @@ pub fn run() {
             web_translated,
             web_draft,
             topic_history,
+            message_context,
             save_file,
             open_local,
             tg_login_start,

@@ -498,11 +498,12 @@ function GoogleAuth({ setError, back, done }: AuthProps) {
   );
 }
 
-function SyncStep({ accountId, next }: { accountId: string; next: () => void }) {
+/** Exported for the UI audit harness; `lateMs`: when "still syncing" offers to continue in the background. */
+export function SyncStep({ accountId, next, lateMs = 20_000 }: { accountId: string; next: () => void; lateMs?: number }) {
   const sync = useApp((s) => s.sync[accountId]);
   const [late, setLate] = useState(false);
   useEffect(() => {
-    const t = setTimeout(() => setLate(true), 20_000);
+    const t = setTimeout(() => setLate(true), lateMs);
     return () => clearTimeout(t);
   }, []);
   const checks = sync?.checks ?? ["ok", "run", "idle"];
@@ -526,10 +527,18 @@ function SyncStep({ accountId, next }: { accountId: string; next: () => void }) 
           <span className="check-line dim">Đang đồng bộ…</span>
         )}
       </pre>
+      {/* error ≠ still syncing: say which one it is, and what continuing means in each case */}
+      {err ? (
+        <div className="wizard-sync-state err" role="alert"><Icon name="circle-alert" /><span><b>Một bước đồng bộ bị lỗi</b> (xem dòng đỏ ở trên). Tài khoản đã đăng nhập và vẫn được thêm; lịch sử có thể chưa đầy đủ cho tới khi đồng bộ lại.</span></div>
+      ) : ok ? (
+        <div className="wizard-sync-state ok" role="status"><Icon name="check" /><span>Đồng bộ xong.</span></div>
+      ) : late ? (
+        <div className="wizard-sync-state run" role="status"><span className="veil-spinner" /><span><b>Vẫn đang đồng bộ</b>, không có lỗi. Bạn có thể tiếp tục; phần còn lại chạy nền.</span></div>
+      ) : null}
       <Actions>
         {(ok || err || late) && (
           <button type="button" className="tool-btn primary" onClick={next}>
-            {ok ? "Tiếp tục" : "Tiếp tục, đồng bộ nền"}
+            {ok ? "Tiếp tục" : err ? "Tiếp tục dù có lỗi" : "Tiếp tục, đồng bộ nền"}
           </button>
         )}
       </Actions>

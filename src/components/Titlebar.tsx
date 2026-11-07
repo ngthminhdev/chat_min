@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { listTime, plain } from "../lib/format";
 import { themeBase } from "../lib/themes";
-import { inboxKey, inboxUnread, key, openAt, useApp, openSearch, toggleTheme } from "../store";
+import { inboxKey, inboxUnread, key, openMessage, useApp, openSearch, toggleTheme } from "../store";
 import { useShallow } from "zustand/react/shallow";
 import { startWizard } from "../views/Wizard";
 import { Icon } from "../ui/Icon";
@@ -113,7 +113,7 @@ export function Notifications() {
                 <button key={`${k}|${m.ts}`} className={`bell-row${isNew.has(k) ? " new" : ""}`} onClick={() => {
                   setOpen(false);
                   useApp.setState((s) => ({ inboxRead: { ...s.inboxRead, [k]: true } }));
-                  openAt(key(m.accountId, m.chatId), m.id, m.threadReply ? m.threadId : "");
+                  void openMessage(m);
                 }}>
                   {m.reacted ? <span className="avatar bell-emoji">{m.reacted}</span> : <PersonAvatar name={m.senderName} accountId={m.accountId} photo={m.senderPhoto} userId={m.senderId} />}
                   <span className="bell-main">

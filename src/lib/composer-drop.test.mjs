@@ -13,10 +13,10 @@ const compiled = ts.transpileModule(source, { compilerOptions: {
 const settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
 function composer(health = 'reconnecting') {
   const state = { accounts: [{ id: 'a', platform: 'telegram' }], drafts: {}, replyTo: {}, editing: {}, msgs: {},
-    health: { a: { health } }, chats: { 'a|c': { title: 'Test', canSend: true } }, aiLang: {}, prefs: {}, active: 'a|c' };
+    health: { a: { health } }, chats: { 'a|c': { title: 'Test', canSend: true } }, aiLang: {}, prefs: {}, active: 'a|c', staged: {}, stagedAsFile: {}, plainSend: {} };
   let cursor = 0, listener, unlistened = 0;
   const slots = [], effects = [], staged = [], errors = [];
-  const useApp = Object.assign(select => select(state), { getState: () => state });
+  const useApp = Object.assign(select => select(state), { getState: () => state, setState: v => Object.assign(state, typeof v === 'function' ? v(state) : v) });
   const react = {
     useState(initial) { const i = cursor++; slots[i] ??= { value: initial }; return [slots[i].value, v => { slots[i].value = typeof v === 'function' ? v(slots[i].value) : v; }]; },
     useRef(initial) { const i = cursor++; return slots[i] ??= { current: initial }; },
@@ -37,7 +37,7 @@ function composer(health = 'reconnecting') {
     '../store': { useApp, splitKey: k => k.split('|'), capsOf: () => ({}), fail: e => errors.push(e) },
     './ComposerExtras': { useRecorder: () => ({ recording: false }), useMentions: () => ({}) },
     '../lib/mobile': { isMobile: false },
-    '../lib/format': {}, '../lib/platforms': { CAP_OFF_NOTE: {}, PLATFORMS: { telegram: { name: 'Telegram' } } }, '../ai': { langLabel: () => 'English', langTag: () => 'EN' },
+    '../lib/format': { fileSize: () => '' }, '../lib/platforms': { CAP_OFF_NOTE: {}, PLATFORMS: { telegram: { name: 'Telegram' } } }, '../ai': { langLabel: () => 'English', langTag: () => 'EN' },
     '@tauri-apps/api/webview': { getCurrentWebview: () => ({ onDragDropEvent: async cb => { listener = cb; return () => { unlistened++; }; } }) },
   };
   const exports = {};
@@ -68,4 +68,23 @@ test('drop is rejected after send permission is revoked, despite an earlier heal
 test('a background composer does not consume the active chat file drop', async () => {
   const c = composer('ok'); await c.render(); c.state.active = 'a|other';
   await c.drop(['/tmp/other.txt']); assert.deepEqual(c.staged, []); c.dispose();
+});
+
+test('staged files live in the store per tab: switching away and back keeps them', async () => {
+  const c = composer('ok'); await c.render();
+  await c.drop(['/tmp/keep.pdf']);
+  assert.deepEqual([...c.state.staged['a|c'].map(f => f.path)], ['/tmp/keep.pdf']);
+  c.dispose();                                   // tab switched: this composer unmounts
+  c.state.active = 'a|other';
+  c.state.active = 'a|c';                        // back again: a new composer reads the same store
+  const again = composer('ok'); Object.assign(again.state, { staged: c.state.staged }); await again.render();
+  assert.deepEqual([...again.state.staged['a|c'].map(f => f.path)], ['/tmp/keep.pdf']);
+  again.dispose();
+});
+
+test('offline: files can still be attached while sending waits for the connection', async () => {
+  const c = composer('offline'); await c.render();
+  await c.drop(['/tmp/offline.png']);
+  assert.deepEqual(c.staged, ['/tmp/offline.png']);
+  c.dispose();
 });

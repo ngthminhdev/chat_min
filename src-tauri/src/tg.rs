@@ -36,6 +36,8 @@ struct Acc {
     supergroups: HashMap<i64, i64>,
     /// supergroup ids that are forums (have topics)
     forums: HashSet<i64>,
+    /// (chat, topic) → topic name, from topic lists and updateForumTopicInfo (LeftDock "# topic")
+    topic_names: HashMap<(i64, i32), String>,
     /// file id → last reported download percent
     progress: HashMap<i32, i64>,
     /// Telegram's per-kind defaults ("mute all channels"): kind ("dm"/"group"/"channel") → muted
@@ -262,9 +264,24 @@ impl Tg {
                     });
                 }
             }
+            Update::ForumTopicInfo(u) => {
+                let (chat_id, topic, name) = (u.info.chat_id, u.info.forum_topic_id, u.info.name.clone());
+                self.with(c, |a| { a.topic_names.insert((chat_id, topic), name.clone()); });
+                // a preview already pointing into this topic gets its name
+                self.patch_chat(core, c, chat_id, |ch| {
+                    if ch.preview_kind == "topic" && ch.preview_thread == topic.to_string() {
+                        ch.preview_context = name;
+                    }
+                });
+            }
             Update::ChatLastMessage(u) => {
                 let main = u.positions.iter().find(|p| matches!(p.list, enums::ChatList::Main)).map(|p| (p.order, p.is_pinned));
                 let preview = u.last_message.as_ref().map(|m| self.with(c, |a| preview_of(a, m)).unwrap_or_default());
+                let target = u.last_message.as_ref().map(|m| {
+                    let topic = match &m.topic_id { Some(enums::MessageTopic::Forum(t)) => Some(t.forum_topic_id), _ => None };
+                    let name = topic.and_then(|t| self.with(c, |a| a.topic_names.get(&(u.chat_id, t)).cloned()).flatten()).unwrap_or_default();
+                    (m.id.to_string(), topic, name)
+                });
                 let ts = u.last_message.as_ref().map(|m| m.date as i64 * 1000).unwrap_or(0);
                 self.patch_chat(core, c, u.chat_id, |ch| {
                     if let Some((order, pinned)) = main {
@@ -275,6 +292,14 @@ impl Tg {
                         ch.preview_from = from;
                         ch.preview = text;
                         ch.last_ts = ts;
+                    }
+                    if let Some((id, topic, name)) = target {
+                        ch.preview_msg = id;
+                        // only forums have topics worth naming; elsewhere the message is the timeline's
+                        match topic.filter(|_| ch.forum) {
+                            Some(t) => { ch.preview_kind = "topic".into(); ch.preview_thread = t.to_string(); ch.preview_context = name; }
+                            None => { ch.preview_kind = "main".into(); ch.preview_thread.clear(); ch.preview_context.clear(); }
+                        }
                     }
                 });
             }
@@ -606,6 +631,7 @@ impl Tg {
         let c = self.client(account_id)?;
         let chat: i64 = chat_id.parse().map_err(|_| "bad chat id")?;
         let enums::ForumTopics::ForumTopics(found) = f::get_forum_topics(chat, String::new(), 0, 0, 0, 100, c).await.map_err(err)?;
+        self.with(c, |a| for t in &found.topics { a.topic_names.insert((chat, t.info.forum_topic_id), t.info.name.clone()); });
         let out = self
             .with(c, |a| {
                 found
@@ -658,6 +684,59 @@ impl Tg {
         }
         out.reverse();
         let msgs: Vec<Msg> = out.iter().map(|m| self.msg(core, c, m)).collect();
+        core.store_mut().put_msgs(&msgs)?;
+        Ok(msgs)
+    }
+
+    /// History around one message (a search hit, a todo source), for jumping to it: up to 20
+    /// older messages, the target, and newer pages walked until they reach `connect_to` (the
+    /// oldest message the view already holds; 0 = just a window) so the list has no hidden gap.
+    /// `topic` empty = the chat timeline, otherwise that forum topic. Bounded to 12 requests.
+    pub async fn context(&self, core: &Core, account_id: &str, chat_id: &str, topic: &str, msg_id: &str, connect_to: i64) -> R<Vec<Msg>> {
+        let c = self.client(account_id)?;
+        let chat: i64 = chat_id.parse().map_err(|_| "bad chat id")?;
+        let target: i64 = msg_id.parse().map_err(|_| "bad message id")?;
+        let topic: Option<i32> = if topic.is_empty() { None } else { Some(topic.parse().map_err(|_| "bad topic id")?) };
+        let page = |from: i64, offset: i32, limit: i32| async move {
+            let enums::Messages::Messages(p) = match topic {
+                Some(t) => f::get_forum_topic_history(chat, t, from, offset, limit, c).await,
+                None => f::get_chat_history(chat, from, offset, limit, false, c).await,
+            }
+            .map_err(err)?;
+            Ok::<Vec<t::Message>, String>(p.messages.into_iter().flatten().collect())
+        };
+        let mut found: std::collections::BTreeMap<i64, t::Message> = Default::default();
+        // the target and the messages just before it (TDLib may answer a first call short)
+        for _ in 0..2 {
+            for m in page(target, -1, 22).await? {
+                found.insert(m.id, m);
+            }
+            if found.contains_key(&target) {
+                break;
+            }
+        }
+        // newer pages towards what the view holds
+        let mut from = target;
+        for _ in 0..10 {
+            let newest = found.keys().next_back().copied().unwrap_or(target);
+            if connect_to <= 0 && newest > target && found.range(target + 1..).count() >= 20 {
+                break;
+            }
+            if connect_to > 0 && newest >= connect_to {
+                break;
+            }
+            let got = page(from, -49, 50).await?;
+            let before = found.len();
+            for m in got {
+                found.insert(m.id, m);
+            }
+            let next = found.keys().next_back().copied().unwrap_or(from);
+            if found.len() == before || next == from {
+                break;
+            }
+            from = next;
+        }
+        let msgs: Vec<Msg> = found.values().filter(|m| connect_to <= 0 || m.id < connect_to || m.id == target).map(|m| self.msg(core, c, m)).collect();
         core.store_mut().put_msgs(&msgs)?;
         Ok(msgs)
     }

@@ -715,6 +715,25 @@ impl GChat {
         chat.unread = unread.len() as i32;
         chat.mention = unread.iter().any(|m| m.mentions_me);
         if let Some(last) = recent.iter().rev().find(|m| !m.deleted) {
+            // where the preview lives, so a click lands on that message (thread or timeline)
+            chat.preview_msg = last.id.clone();
+            chat.preview_thread = if last.thread_reply { last.thread_id.clone() } else { String::new() };
+            chat.preview_kind = if last.thread_reply && !last.thread_id.is_empty() { "reply".into() } else { "main".into() };
+            chat.preview_context = if chat.preview_kind == "reply" {
+                let root = recent
+                    .iter()
+                    .find(|m| m.thread_id == last.thread_id && !m.thread_reply)
+                    .cloned()
+                    .or_else(|| {
+                        core.store()
+                            .thread_page(account_id, space, &last.thread_id, 1, true)
+                            .ok()
+                            .and_then(|v| v.into_iter().next())
+                    });
+                root.map(|r| thread_title(&r)).unwrap_or_default()
+            } else {
+                String::new()
+            };
             chat.preview = crate::tg::plain(&last.text, last.media.as_ref());
             chat.preview_from = if last.outgoing {
                 "Bạn".into()
@@ -3144,4 +3163,14 @@ mod tests {
             "issue:\n```\nCược 100k\nTrừ 250k ạ\n```\n"
         );
     }
+}
+
+/// A thread's name in previews: the start of its root message (Google Chat threads have no title).
+pub fn thread_title(root: &Msg) -> String {
+    let text = crate::tg::plain(&root.text, root.media.as_ref());
+    let mut out: String = text.chars().take(40).collect();
+    if text.chars().count() > 40 {
+        out.push('…');
+    }
+    out
 }
