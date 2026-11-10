@@ -588,11 +588,16 @@ export function applyEvent(e: CoreEvent) {
     }
     case "readOutbox": {
       const k = key(e.accountId, e.chatId);
-      set((s) =>
-        s.msgs[k]
-          ? { msgs: { ...s.msgs, [k]: s.msgs[k].map((m) => (m.outgoing && m.status === "sent" && m.sort <= e.upTo ? { ...m, status: "seen" } : m)) } }
-          : {},
-      );
+      set((s) => {
+        const list = s.msgs[k];
+        if (!list) return s;
+        let next: Msg[] | undefined;
+        for (const [i, m] of list.entries()) {
+          if (!m.outgoing || m.status !== "sent" || m.sort > e.upTo) continue;
+          (next ??= list.slice())[i] = { ...m, status: "seen" };
+        }
+        return next ? { msgs: { ...s.msgs, [k]: next } } : s;
+      });
       return;
     }
     case "reacted": {
@@ -722,11 +727,15 @@ export function jumpDone() {
   if (get().jumpTo) set({ jumpTo: null });
 }
 
-/** What clicking a sidebar row opens: the preview's own message in its thread/topic (or in the
- *  parent timeline of a threaded space / forum), else null → open the chat as usual. */
-export function previewTarget(c: Chat): { accountId: string; chatId: string; id: string; threadId: string; threadReply: boolean } | null {
+/** A sidebar row can jump to its unread reply/topic preview or to a main-timeline preview. */
+export function previewTarget(c: Chat, seen = -Infinity): { accountId: string; chatId: string; id: string; threadId: string; threadReply: boolean } | null {
   if (!c.previewMsg || !c.previewKind || c.kind === "web") return null;
   if (c.previewKind === "main" && !c.threaded && !c.forum) return null;
+  if (c.previewKind === "reply" || c.previewKind === "topic") {
+    // Match the provider's message sort key used by seenThread.
+    const sort = c.previewKind === "topic" ? Number(c.previewMsg) : c.lastTs;
+    if (!c.previewThread || (c.unread <= 0 && !c.mention) || seen >= sort) return null;
+  }
   return { accountId: c.accountId, chatId: c.id, id: c.previewMsg, threadId: c.previewKind === "main" ? "" : c.previewThread ?? "", threadReply: c.previewKind === "reply" };
 }
 
@@ -1004,6 +1013,7 @@ export function toggleFavorite(k: string) {
  *  One at a time, so it never competes with the chat the user actually opens. */
 const prefetched = new Set<string>();
 async function prefetchUnread(accountId: string) {
+  const localOnly = get().accounts.some(a => a.id === accountId && a.platform === "zalo");
   const keys = Object.entries(get().chats)
     .filter(([k, c]) => c.accountId === accountId && c.unread > 0 && c.kind !== "web" && !prefetched.has(k))
     .sort(([, a], [, b]) => b.order - a.order)
@@ -1012,13 +1022,18 @@ async function prefetchUnread(accountId: string) {
   for (const k of keys) {
     prefetched.add(k);
     if (get().msgs[k]) continue;
+    // Zalo group history is a cloud call, and DM history can advance the global replay.
+    if (localOnly) {
+      await showCached(k, "warmup");
+      continue;
+    }
     const page = await api.messages(...splitKey(k), 0, PAGE).catch(() => null);
     if (page?.length && !get().msgs[k]) set((s) => ({ msgs: { ...s.msgs, [k]: page } }));
   }
 }
 
 /** First open since launch: paint the SQLite copy at once, the live page merges in after. */
-async function showCached(k: string) {
+async function showCached(k: string, phase = "cached") {
   const started = Date.now();
   const primary = !!get().chats[k]?.threaded;
   const [page, roots] = await api.cachedMessages(...splitKey(k), PAGE, primary).catch(() => [[], []] as Msg[][]);
@@ -1029,7 +1044,7 @@ async function showCached(k: string) {
   const preview = threadPreviews(k, list);
   list = preview.messages;
   set((s) => ({ msgs: { ...s.msgs, [k]: list }, threadPages: preview.pages }));
-  void api.logJs(JSON.stringify({ event: "history", phase: "cached", chat: k, messages: list.length, primary: list.filter(m => !m.threadReply).length, elapsedMs: Date.now() - started }));
+  void api.logJs(JSON.stringify({ event: "history", phase, chat: k, messages: list.length, primary: list.filter(m => !m.threadReply).length, elapsedMs: Date.now() - started }));
 }
 
 /** Where the next older page starts: the oldest message of the pages walked so far — not
@@ -1281,6 +1296,7 @@ export async function loadOlder(k: string) {
   set({ older: { ...s.older, [k]: "loading" } });
   const [accountId, chatId] = splitKey(k);
   try {
+    const started = Date.now();
     const primary = !!s.chats[k]?.threaded;
     const response = primary
       ? await api.primaryMessages(accountId, chatId, primaryCursor.get(k) ?? list.find(m => !m.threadReply)?.sort ?? cursor.get(k) ?? list[0].sort, PAGE)
@@ -1288,6 +1304,7 @@ export async function loadOlder(k: string) {
     const page = response?.messages ?? await api.messages(accountId, chatId, cursor.get(k) ?? list[0].sort, pageSize(k));
     if (response) primaryCursor.set(k, response.before);
     if (page.length) cursor.set(k, page[0].sort);
+    void api.logJs(JSON.stringify({ event: "history", phase: "older", chat: k, fetched: page.length, elapsedMs: Date.now() - started }));
     let grew = false;
     set((st) => {
       let next = st.msgs[k] ?? [];

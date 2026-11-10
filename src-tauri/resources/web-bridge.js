@@ -249,7 +249,11 @@
     if (!BUBBLE) return;
     const ed = document.querySelector(EDITOR);
     const btn = ed && pill('cm-draft', 'Dịch nháp', (b) => { const text = tx(document.querySelector(EDITOR)); if (text) { b.textContent = 'Đang dịch…'; send('draft', { text }); } });
-    if (btn) btn.style.display = tx(ed) ? 'block' : 'none';
+    if (btn) {
+      const hasDraft = base === 'Messenger' ? ed.textContent?.trim() : tx(ed);
+      const display = hasDraft ? 'block' : 'none';
+      if (btn.style.display !== display) btn.style.display = display;
+    }
   };
   let lastRows = '', lastState = '';
   const state = (value) => { if (value !== lastState) { if (value !== 'ready') lastRows = ''; lastState = value; send('state', value); } };
@@ -276,10 +280,11 @@
       }, 1000);
     } catch (_) { /* unavailable sessionStorage: leave the manual reload action */ }
   });
-  const tick = () => {
+  const tick = (scanRows) => {
     try {
-      style();
+      if (scanRows) style();
       draftUi();
+      if (!scanRows) return;
       const r = rows();
       if (r && r.length) {
         state('ready');
@@ -302,16 +307,32 @@
   };
   // A leading bounded debounce cannot starve under a continuous mutation stream.
   // The slow timer reconciles title-only changes and missed site updates.
-  let pending = 0;
-  const schedule = () => {
+  let pending = 0, rowsPending = false;
+  const schedule = (scanRows = true) => {
+    rowsPending ||= scanRows;
     if (pending) return;
-    pending = setTimeout(() => { pending = 0; tick(); }, 100);
+    pending = setTimeout(() => {
+      pending = 0;
+      const scan = rowsPending;
+      rowsPending = false;
+      tick(scan);
+    }, 100);
   };
-  const observer = new MutationObserver(schedule);
+  const observer = new MutationObserver((records) => {
+    if (base !== 'Messenger' || !parked?.isConnected || !records.length) { schedule(); return; }
+    // Timeline and editor changes in a separate Messenger pane only affect the draft button.
+    // While the parked list is missing or its layout overlaps the pane, reconcile normally.
+    const { target } = records[0];
+    const element = target.closest ? target : target.parentElement;
+    const main = element?.closest?.('[role="main"]');
+    const timelineOnly = main && !main.contains(parked) && !parked.contains(main)
+      && records.every((record) => main.contains(record.target));
+    schedule(!timelineOnly);
+  });
   observer.observe(document, { childList: true, subtree: true, characterData: true,
     attributes: true, attributeFilter: ['class', 'aria-label', 'href', 'src'] });
   document.addEventListener('visibilitychange', () => { schedule(); if (!document.hidden && focusTarget) window.__cm.focus(); });
-  window.addEventListener?.('pageshow', schedule);
-  setInterval(schedule, 15000);
+  window.addEventListener?.('pageshow', () => schedule());
+  setInterval(() => schedule(), 15000);
   schedule();
 })();

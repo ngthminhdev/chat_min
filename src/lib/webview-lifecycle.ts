@@ -8,25 +8,41 @@ type Bridge = {
  * and never let a stale resize re-open a provider over the selected conversation. */
 export function createWebviewLifecycle(bridge: Bridge, onError: (error: unknown) => void) {
   let pending = Promise.resolve();
+  let desired: { account: string } | undefined;
   const queue = (action: () => Promise<unknown> | undefined) => {
     pending = pending.then(action).then(() => {}, onError);
   };
   return (account: string, chat: string) => {
+    const owner = { account };
     let disposed = false;
-    let last = "";
+    let shown = false;
+    let last: Bounds | undefined;
     return {
       place(bounds: Bounds) {
         if (disposed) return;
-        const value = JSON.stringify(bounds);
-        if (last === value) return;
-        const navigate = !last;
-        last = value;
-        queue(() => disposed ? undefined : bridge.webShow(account, chat, bounds, navigate));
+        if (last && last.x === bounds.x && last.y === bounds.y && last.w === bounds.w && last.h === bounds.h) return;
+        last = bounds;
+        desired = owner;
+        queue(async () => {
+          if (disposed || last !== bounds) return;
+          try {
+            await bridge.webShow(account, chat, bounds, !shown);
+            shown = true;
+          } catch (error) {
+            if (disposed) return;
+            shown = false;
+            await bridge.webHide(account).catch(() => {});
+            throw error;
+          }
+        });
       },
       dispose() {
         if (disposed) return;
         disposed = true;
-        queue(() => bridge.webHide(account));
+        if (desired === owner) desired = undefined;
+        // React disposes and places the next thread in the same effect flush.
+        // Leave the shared native surface in place when that thread owns it next.
+        queue(() => desired?.account === account ? undefined : bridge.webHide(account));
       },
     };
   };

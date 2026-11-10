@@ -106,6 +106,8 @@ pub struct Core {
     pub notifier: notify::Notifier,
     /// Messenger: the thread each account's webview should be showing (None = site default)
     pub web_open: Mutex<HashMap<String, Option<String>>>,
+    #[cfg(desktop)]
+    web_visible: Mutex<Option<String>>,
 }
 
 impl Core {
@@ -552,39 +554,43 @@ fn next_color(existing: &[Account], preferred: &str) -> String {
 type Res<T> = Result<T, String>;
 type C<'a> = State<'a, Arc<Core>>;
 
+// Plain `fn` commands run on the main thread, and WKWebView presents every frame through that
+// thread: one waiting on the store mutex or the disk stalls scrolling. Commands that touch
+// SQLite or files are `command(async)` (worker thread); only AppKit/webview ones stay sync.
+
 // ── personal todos ──────────────────────────────────────────────────────────
 #[tauri::command]
 fn todo_take_open() -> Option<i64> {
     todo::take_open()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn todo_list(core: C) -> Res<Vec<todo::Todo>> {
     core.todos.lock().unwrap().list()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn todo_save(core: C, id: Option<i64>, draft: todo::Draft, source: Option<todo::Source>) -> Res<i64> {
     let id = core.todos.lock().unwrap().save(id, draft, source, now_ms())?;
     core.emit(Event::TodoChanged);
     Ok(id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn todo_set_done(core: C, id: i64, done: bool) -> Res<()> {
     core.todos.lock().unwrap().set_done(id, done, now_ms())?;
     core.emit(Event::TodoChanged);
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn todo_dismiss(core: C, id: i64) -> Res<()> {
     core.todos.lock().unwrap().dismiss(id)?;
     core.emit(Event::TodoChanged);
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn todo_delete(core: C, id: i64) -> Res<()> {
     core.todos.lock().unwrap().delete(id)?;
     core.emit(Event::TodoChanged);
@@ -603,7 +609,7 @@ struct AppState {
     muted_threads: Vec<String>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn app_state(core: C) -> Res<AppState> {
     let c = core.config.lock().unwrap().clone();
     // one guard at a time: temporaries in a struct literal live to the end of the statement
@@ -622,11 +628,11 @@ fn app_state(core: C) -> Res<AppState> {
 }
 
 /// UI preferences live beside the account database, independently of WebView data.
-#[tauri::command]
+#[tauri::command(async)]
 fn ui_state(core: C) -> Res<Option<Value>> {
     core.store().ui_state()
 }
-#[tauri::command]
+#[tauri::command(async)]
 fn ui_state_set(core: C, value: Value) -> Res<()> {
     core.store().set_ui_state(&value)
 }
@@ -956,7 +962,7 @@ async fn login_cancel(core: C<'_>, account_id: Option<String>) -> Res<()> {
     }
     Ok(())
 }
-#[tauri::command]
+#[tauri::command(async)]
 fn account_update(core: C, id: String, name: Option<String>, color: Option<String>) -> Res<()> {
     let mut a = core
         .store()
@@ -1150,7 +1156,7 @@ fn emoji_palette(app: tauri::AppHandle) {
     });
 }
 /// Webview errors (no console in release builds) land in the app's stderr log.
-#[tauri::command]
+#[tauri::command(async)]
 fn log_js(core: C, msg: String) {
     core.log_line("js.log", &msg);
 }
@@ -1276,7 +1282,7 @@ fn presence(core: C<'_>) -> Vec<String> {
     core.tg.online()
 }
 /// Mentions + DMs for the notification inbox (titlebar bell).
-#[tauri::command]
+#[tauri::command(async)]
 fn inbox(core: C<'_>, limit: i64) -> Res<Vec<Msg>> {
     let mut v = core.store().inbox(limit)?;
     v.retain(|m| !core.thread_muted(m));
@@ -1665,7 +1671,7 @@ fn set_reading_chat(core: C<'_>, key: Option<String>) {
 #[tauri::command]
 async fn set_open(core: C<'_>, account_id: String, chat_id: String, open: bool) -> Res<()> {
     if open && matches!(core.platform(&account_id), "telegram" | "gchat" | "zalo") {
-        web::hide_all(&core);
+        web::hide_active(&core);
     }
     if core.platform(&account_id) == "telegram" {
         core.tg.set_open(&account_id, &chat_id, open).await
@@ -1800,7 +1806,7 @@ async fn send_sticker(
         .await
 }
 /// A recording from the webview → a file in the cache that `send` can upload.
-#[tauri::command]
+#[tauri::command(async)]
 fn save_temp(core: C, name: String, data: String) -> Res<String> {
     use base64::Engine;
     let bytes = base64::engine::general_purpose::STANDARD
@@ -1917,7 +1923,7 @@ fn open_local(core: C, path: String, reveal: bool) -> Res<()> {
         tauri_plugin_opener::open_path(&real, None::<&str>).map_err(|e| e.to_string())
     }
 }
-#[tauri::command]
+#[tauri::command(async)]
 fn save_file(core: C, src: String, name: String, dest: Option<String>) -> Res<String> {
     let src = std::fs::canonicalize(&src).map_err(|e| e.to_string())?;
     // only files the app itself downloaded: the webview must not copy arbitrary paths
@@ -2257,6 +2263,8 @@ pub fn run() {
                 zalo: Default::default(),
                 notifier: Default::default(),
                 web_open: Default::default(),
+                #[cfg(desktop)]
+                web_visible: Default::default(),
             });
             app.manage(core.clone());
             #[cfg(desktop)]

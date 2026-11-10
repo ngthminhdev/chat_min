@@ -445,6 +445,26 @@ impl Store {
         tx.commit().map_err(e)
     }
 
+    /// Mark Zalo's recent outgoing messages seen without rewriting the full-text index.
+    pub fn zalo_read_outbox(&self, account: &str, chat: &str, id: &str) -> R<Option<i64>> {
+        let up_to: Option<i64> = self.db.query_row(
+            "SELECT sort FROM messages WHERE account_id = ?1 AND chat_id = ?2 AND id = ?3",
+            [account, chat, id],
+            |row| row.get(0),
+        ).optional().map_err(e)?;
+        let Some(up_to) = up_to else { return Ok(None) };
+        self.db.execute(
+            "UPDATE messages SET data = json_set(data, '$.status', 'seen')
+             WHERE rowid IN (
+                SELECT rowid FROM messages WHERE account_id = ?1 AND chat_id = ?2
+                ORDER BY sort DESC LIMIT 200
+             ) AND sort <= ?3 AND json_extract(data, '$.outgoing') = 1
+               AND json_extract(data, '$.status') IS NOT 'seen'",
+            params![account, chat, up_to],
+        ).map_err(e)?;
+        Ok(Some(up_to))
+    }
+
     pub fn msg(&self, account_id: &str, chat_id: &str, id: &str) -> R<Option<Msg>> {
         let s: Option<String> = self
             .db
@@ -1225,6 +1245,46 @@ mod account_chat_tests {
 #[cfg(test)]
 mod zalo_history_tests {
     use super::*;
+    #[test]
+    fn zalo_receipt_updates_only_recent_outgoing_rows_and_does_not_reindex_text() {
+        let mut s = Store::memory();
+        let message = |account: &str, chat: &str, sort: i64, outgoing: bool| Msg {
+            account_id: account.into(),
+            chat_id: chat.into(),
+            id: sort.to_string(),
+            sort,
+            text: "receipt fixture".into(),
+            outgoing,
+            status: "sent".into(),
+            ..Default::default()
+        };
+        let mut rows: Vec<_> = (1..=202)
+            .map(|sort| message("zalo-a", "g:42", sort, sort != 100))
+            .collect();
+        rows.push(message("zalo-b", "g:42", 99, true));
+        rows.push(message("zalo-a", "g:43", 99, true));
+        s.put_msgs(&rows).unwrap();
+        let read = |s: &Store, account, chat, id| s.msg(account, chat, id).unwrap().unwrap().status;
+        let changes = s.db.total_changes();
+        assert_eq!(s.zalo_read_outbox("zalo-a", "g:42", "101").unwrap(), Some(101));
+        // 3..=101 except the incoming row. The write count excludes any FTS changes.
+        assert_eq!(s.db.total_changes() - changes, 98);
+        assert_eq!(read(&s, "zalo-a", "g:42", "3"), "seen");
+        assert_eq!(read(&s, "zalo-a", "g:42", "101"), "seen");
+        for id in ["2", "100", "102"] {
+            assert_eq!(read(&s, "zalo-a", "g:42", id), "sent");
+        }
+        assert_eq!(read(&s, "zalo-a", "g:43", "99"), "sent");
+        assert_eq!(read(&s, "zalo-b", "g:42", "99"), "sent");
+        assert!(!s.search("fixture", Some(("zalo-a", "g:42")), 1).unwrap().is_empty());
+
+        let changes = s.db.total_changes();
+        assert_eq!(s.zalo_read_outbox("zalo-a", "g:42", "101").unwrap(), Some(101));
+        assert_eq!(s.zalo_read_outbox("zalo-a", "g:42", "99").unwrap(), Some(99));
+        assert_eq!(s.zalo_read_outbox("zalo-a", "g:42", "missing").unwrap(), None);
+        assert_eq!(s.db.total_changes(), changes);
+    }
+
     #[test]
     fn group_page_and_checkpoint_survive_reopen_without_cross_account_leaks() {
         let path =

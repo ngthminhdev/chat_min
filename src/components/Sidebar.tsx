@@ -591,21 +591,22 @@ export const ChatRow = memo(function ChatRow({ chat: c, k, expanded, platform }:
     if (c.unread > unreadBefore.current) setPulse(c.unread);
     unreadBefore.current = c.unread;
   }, [c.unread]);
-  // where the previewed message lives: "↳ thread" (Google Chat reply) / "# topic" (Telegram forum)
-  const fallbackContext = useApp((s) => c.previewKind === "topic" && !c.previewContext
+  const seen = useApp((s) => c.previewThread ? s.threadSeen[`${k}#${c.previewThread}`] : undefined);
+  // Draft and typing previews use the regular chat navigation.
+  const showsMessage = !draft.trim() && !typing;
+  const target = showsMessage ? previewTarget(c, seen) : null;
+  const contextual = target?.threadId;
+  const fallbackContext = useApp((s) => contextual && c.previewKind === "topic" && !c.previewContext
     ? s.topics[k]?.find((t) => t.id === c.previewThread)?.name ?? s.threadTabs[`thread:${k}:${c.previewThread}`]?.title ?? ""
-    : c.previewKind === "reply" && !c.previewContext ? s.threadTabs[`thread:${k}:${c.previewThread}`]?.title ?? "" : "");
-  const context = c.previewKind === "reply" ? `↳ ${c.previewContext || fallbackContext || "Luồng trả lời"}`
-    : c.previewKind === "topic" ? `# ${c.previewContext || fallbackContext || "Chủ đề"}` : "";
+    : contextual && c.previewKind === "reply" && !c.previewContext ? s.threadTabs[`thread:${k}:${c.previewThread}`]?.title ?? "" : "");
+  const context = contextual ? (c.previewKind === "topic" ? `# ${c.previewContext || fallbackContext || "Chủ đề"}`
+    : `↳ ${c.previewContext || fallbackContext || "Luồng trả lời"}`) : "";
   const from = (c.previewFrom && c.kind !== "dm") || c.previewFrom === "Bạn" ? `${c.previewFrom}: ` : "";
   let preview: React.ReactNode = context
     ? <><span className="preview-context">{context}</span><span className="preview-sep" aria-hidden="true"> · </span>{from}{c.preview}</>
     : from ? `${from}${c.preview}` : c.preview || "Chưa có tin nhắn";
-  // drafts and typing take the line: the row then opens the chat as usual
-  const showsMessage = !draft.trim() && !typing;
   if (draft.trim()) preview = <><span className="draft-label">Nháp:</span> {draft}</>;
   else if (typing) preview = <span className="typing-label"><TypingIndicator compact label={`${c.kind === "dm" || !typing.trim() ? "" : `${typing.split(" ")[0]} `}đang gõ`} /></span>;
-  const target = showsMessage ? previewTarget(c) : null;
   return (
     <div className={`chat-row-wrap${expanded ? " expanded" : ""}`}>
       <button
@@ -621,8 +622,9 @@ export const ChatRow = memo(function ChatRow({ chat: c, k, expanded, platform }:
           hoverOff();
           // the preview names a message (thread reply, topic, threaded timeline): land on it
           if (target) return void openMessage(target);
-          // the chat already on screen: a click means "take me to the newest message"
-          if (active) useApp.setState((s) => ({ toLatest: s.toLatest + 1 }));
+          // Only a click on the active parent timeline jumps to its newest message.
+          if (active && useApp.getState().active === k) useApp.setState((s) => ({ toLatest: s.toLatest + 1 }));
+          if (showsMessage && c.previewKind === "topic") return void openMainTimeline(k);
           void openChat(k);
         }}
         onPointerMove={(e) => e.pointerType !== "touch" && !active && !rail && hoverOn(k, e.currentTarget, e.clientX, e.clientY)}

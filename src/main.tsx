@@ -16,6 +16,15 @@ import "./styles/mobile.css";
 // keyboard hints, no status bar — see the `.mobile` rules in chatmin.css
 document.documentElement.classList.toggle("mobile", isMobile);
 
+// WebKit's page menu ("Reload", "Inspect Element") is a web tell: keep it only where a native
+// app has one — text fields and selected text. ⌥-right-click still opens it for debugging.
+// React's own onContextMenu handlers run first (root container), so custom menus are untouched.
+if (!isMobile) document.addEventListener("contextmenu", (e) => {
+  if (e.defaultPrevented || e.altKey) return;
+  const editable = (e.target as Element | null)?.closest?.("input, textarea, [contenteditable]");
+  if (!editable && getSelection()?.isCollapsed !== false) e.preventDefault();
+});
+
 const report = (what: string) => void api.logJs(what).catch(() => {});
 window.addEventListener("error", (e) => report(`${e.message}\n${e.error?.stack ?? ""}`));
 window.addEventListener("unhandledrejection", (e) => report(`unhandled: ${e.reason?.stack ?? e.reason}`));

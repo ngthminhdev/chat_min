@@ -38,7 +38,7 @@ function Face({ src, fallback, cls, title, tint, platform, online }: { src: stri
   const broken = brokenSrc === src;
   return (
     <span className={`${cls}${src && !broken ? " has-img" : ""}${online ? " online" : ""}`} title={online ? `${title ?? ""} · đang online`.replace(/^ · /, "") : title} style={{ "--av": `var(--conn-${tint})` } as React.CSSProperties}>
-      {src && !broken ? <img src={src} alt="" draggable={false} onError={() => setBrokenSrc(src)} /> : fallback}
+      {src && !broken ? <img src={src} alt="" decoding="async" draggable={false} onError={() => setBrokenSrc(src)} /> : fallback}
       {platform && (
         <span className="avatar-badge" aria-hidden="true">
           <Glyph platform={platform} />

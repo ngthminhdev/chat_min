@@ -34,3 +34,16 @@ test('album folding never hides a tile failure, progress, reaction, quote or thr
     assert.equal(layoutMessages([photo('1'), photo('2', patch)]).length, 2, JSON.stringify(patch));
   }
 });
+
+test('row height estimates follow the content instead of one flat guess', async () => {
+  const { estimateRowHeight } = await import('./message-layout.ts');
+  const base = { kind: 'text', text: 'ok', media: null, replyTo: '', reactions: [], link: null };
+  const line = estimateRowHeight({ m: base });
+  assert.ok(line > 50 && line < 90, `one line: ${line}`);
+  assert.ok(estimateRowHeight({ m: { ...base, text: 'x'.repeat(400) } }) > line + 60, 'wrapped text is taller');
+  assert.ok(estimateRowHeight({ m: base, first: true, newDay: true }) > line + 40, 'sender header and day separator add height');
+  const photo = estimateRowHeight({ m: { ...base, kind: 'media', text: '', media: { kind: 'image', name: 'a.jpg', width: 1280, height: 960 } } });
+  assert.ok(Math.abs(photo - (26 + 270)) <= 2, `4:3 photo shows 360×270: ${photo}`);
+  const unknown = estimateRowHeight({ m: { ...base, kind: 'media', text: '', media: { kind: 'video', name: 'Tệp', width: 0, height: 0 } } });
+  assert.ok(Number.isFinite(unknown) && unknown > line, 'media without dimensions still gets a finite guess');
+});

@@ -272,13 +272,11 @@ pub fn start_background(_core: &Arc<Core>, _account: &Account) {}
 #[cfg(desktop)]
 pub fn show(core: &Arc<Core>, a: &Account, chat_id: &str, x: f64, y: f64, w: f64, h: f64, navigate: bool) -> Result<(), String> {
     let (pos, size) = (LogicalPosition::new(x, y), LogicalSize::new(w.max(1.0), h.max(1.0)));
-    // Only the selected provider may occupy the conversation rectangle.
-    if x >= 0.0 && y >= 0.0 {
-        for other in core.app.webviews().keys().filter(|name| name.starts_with("web-") && **name != label(&a.id)) {
-            if let Some(wv) = core.app.get_webview(other) {
-                let _ = wv.set_position(LogicalPosition::new(-10000.0, -10000.0));
-                let _ = wv.hide();
-            }
+    let on_screen = x >= 0.0 && y >= 0.0;
+    if on_screen {
+        let previous = core.web_visible.lock().unwrap().take_if(|id| id != &a.id);
+        if let Some(wv) = previous.and_then(|id| core.app.get_webview(&label(&id))) {
+            park(&wv);
         }
     }
     let want = (chat_id != "web").then(|| chat_id.to_string());
@@ -290,6 +288,7 @@ pub fn show(core: &Arc<Core>, a: &Account, chat_id: &str, x: f64, y: f64, w: f64
             let _ = wv.eval(&open_js(id));
         }
         wv.show().map_err(|e| e.to_string())?;
+        if on_screen { *core.web_visible.lock().unwrap() = Some(a.id.clone()); }
         if navigate { let _ = wv.set_focus(); }
         return Ok(());
     }
@@ -405,35 +404,49 @@ pub fn show(core: &Arc<Core>, a: &Account, chat_id: &str, x: f64, y: f64, w: f64
             NewWindowResponse::Deny
         });
     let wv = window.add_child(builder, pos, size).map_err(|e| e.to_string())?;
+    if on_screen { *core.web_visible.lock().unwrap() = Some(a.id.clone()); }
     if navigate { let _ = wv.set_focus(); }
     Ok(())
 }
 
 #[cfg(desktop)]
+fn park(wv: &tauri::Webview) {
+    // Move the native drop destination out of the chat pane before hiding it.
+    let _ = wv.set_position(LogicalPosition::new(-10000.0, -10000.0));
+    let _ = wv.hide();
+}
+
+#[cfg(desktop)]
 pub fn hide(core: &Core, account_id: &str) {
+    let was_visible = core.web_visible.lock().unwrap().take_if(|id| id == account_id).is_some();
     if let Some(wv) = core.app.get_webview(&label(account_id)) {
-        // WebKit can retain a native drag destination after hiding. Remove its hit
-        // area as well, so background Zalo/Messenger cannot receive another chat's drop.
-        let _ = wv.set_position(LogicalPosition::new(-10000.0, -10000.0));
-        let _ = wv.hide();
+        park(&wv);
         // A hidden child must not remain the native first responder.
-        if let Some(main) = core.app.get_webview("main") { let _ = main.set_focus(); }
+        if was_visible {
+            if let Some(main) = core.app.get_webview("main") { let _ = main.set_focus(); }
+        }
     }
 }
 
-/// Native chat activation clears every provider's input surface, including stale placements.
+/// Native chat activation needs to clear only the visible provider's input surface.
 #[cfg(desktop)]
-pub fn hide_all(core: &Core) {
-    for name in core.app.webviews().keys().filter(|name| name.starts_with("web-")) {
-        hide(core, name.trim_start_matches("web-"));
-    }
+pub fn hide_active(core: &Arc<Core>) {
+    let Some(account) = core.web_visible.lock().unwrap().clone() else { return };
+    let core = core.clone();
+    let _ = core.app.clone().run_on_main_thread(move || {
+        let still_visible = core.web_visible.lock().unwrap().as_ref() == Some(&account);
+        if still_visible {
+            hide(&core, &account);
+        }
+    });
 }
 #[cfg(mobile)]
-pub fn hide_all(_core: &Core) {}
+pub fn hide_active(_core: &Arc<Core>) {}
 
 #[cfg(desktop)]
 pub fn close(core: &Core, account_id: &str) {
     core.web_open.lock().unwrap().remove(account_id);
+    core.web_visible.lock().unwrap().take_if(|id| id == account_id);
     if let Some(wv) = core.app.get_webview(&label(account_id)) {
         let _ = wv.close();
     }

@@ -1,0 +1,83 @@
+    Blocking waiting for file lock on build directory
+   1.720661500s  INFO prepare_target{force=false package_id=chatmin v0.1.0 (/Users/qc-bright/Project/chat_min/src-tauri) target="chatmin_lib"}: cargo::core::compiler::fingerprint: dependency on `build_script_build` is newer than we are 1794281588.789316886s > 1794280338.756453056s "/Users/qc-bright/Project/chat_min/src-tauri"
+   1.721237959s  INFO prepare_target{force=false package_id=chatmin v0.1.0 (/Users/qc-bright/Project/chat_min/src-tauri) target="chatmin_lib"}: cargo::core::compiler::fingerprint: fingerprint dirty for chatmin v0.1.0 (/Users/qc-bright/Project/chat_min/src-tauri)/Check { test: false }/TargetInner { ..: lib_target("chatmin_lib", ["staticlib", "cdylib", "rlib"], "/Users/qc-bright/Project/chat_min/src-tauri/src/lib.rs", Edition2021) }
+   1.721803500s  INFO prepare_target{force=false package_id=chatmin v0.1.0 (/Users/qc-bright/Project/chat_min/src-tauri) target="chatmin_lib"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDependency { name: "build_script_build", dep_mtime: FileTime { seconds: 1794281588, nanos: 789316886 }, max_mtime: FileTime { seconds: 1794280338, nanos: 756453056 } })
+   1.813007334s  INFO prepare_target{force=false package_id=chatmin v0.1.0 (/Users/qc-bright/Project/chat_min/src-tauri) target="chatmin_lib"}: cargo::core::compiler::fingerprint: fingerprint error for chatmin v0.1.0 (/Users/qc-bright/Project/chat_min/src-tauri)/Check { test: true }/TargetInner { ..: lib_target("chatmin_lib", ["staticlib", "cdylib", "rlib"], "/Users/qc-bright/Project/chat_min/src-tauri/src/lib.rs", Edition2021) }
+   1.813020542s  INFO prepare_target{force=false package_id=chatmin v0.1.0 (/Users/qc-bright/Project/chat_min/src-tauri) target="chatmin_lib"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/qc-bright/Project/chat_min/src-tauri/target/debug/.fingerprint/chatmin-3fc8cfbe506f4a21/test-lib-chatmin_lib`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   8: cargo::ops::cargo_compile::compile_ws
+   9: cargo::ops::cargo_compile::compile_with_exec
+  10: cargo::ops::cargo_compile::compile
+  11: cargo::commands::check::exec
+  12: <cargo::cli::Exec>::exec
+  13: cargo::main
+  14: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  15: std::rt::lang_start::<()>::{closure#0}
+  16: std::rt::lang_start_internal
+  17: _main
+   1.824327750s  INFO prepare_target{force=false package_id=chatmin v0.1.0 (/Users/qc-bright/Project/chat_min/src-tauri) target="chatmin"}: cargo::core::compiler::fingerprint: fingerprint dirty for chatmin v0.1.0 (/Users/qc-bright/Project/chat_min/src-tauri)/Check { test: false }/TargetInner { name: "chatmin", doc: true, ..: with_path("/Users/qc-bright/Project/chat_min/src-tauri/src/main.rs", Edition2021) }
+   1.824339375s  INFO prepare_target{force=false package_id=chatmin v0.1.0 (/Users/qc-bright/Project/chat_min/src-tauri) target="chatmin"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(StaleDepFingerprint { name: "chatmin_lib" })
+   1.827971209s  INFO prepare_target{force=false package_id=chatmin v0.1.0 (/Users/qc-bright/Project/chat_min/src-tauri) target="chatmin"}: cargo::core::compiler::fingerprint: fingerprint error for chatmin v0.1.0 (/Users/qc-bright/Project/chat_min/src-tauri)/Check { test: true }/TargetInner { name: "chatmin", doc: true, ..: with_path("/Users/qc-bright/Project/chat_min/src-tauri/src/main.rs", Edition2021) }
+   1.827977750s  INFO prepare_target{force=false package_id=chatmin v0.1.0 (/Users/qc-bright/Project/chat_min/src-tauri) target="chatmin"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/qc-bright/Project/chat_min/src-tauri/target/debug/.fingerprint/chatmin-2c082950955bfab5/test-bin-chatmin`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   8: cargo::ops::cargo_compile::compile_ws
+   9: cargo::ops::cargo_compile::compile_with_exec
+  10: cargo::ops::cargo_compile::compile
+  11: cargo::commands::check::exec
+  12: <cargo::cli::Exec>::exec
+  13: cargo::main
+  14: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  15: std::rt::lang_start::<()>::{closure#0}
+  16: std::rt::lang_start_internal
+  17: _main
+   1.829702625s  INFO prepare_target{force=false package_id=chatmin v0.1.0 (/Users/qc-bright/Project/chat_min/src-tauri) target="notification_island"}: cargo::core::compiler::fingerprint: fingerprint error for chatmin v0.1.0 (/Users/qc-bright/Project/chat_min/src-tauri)/Check { test: false }/TargetInner { kind: "example", name: "notification_island", tested: false, benched: false, ..: with_path("/Users/qc-bright/Project/chat_min/src-tauri/examples/notification_island.rs", Edition2021) }
+   1.829734667s  INFO prepare_target{force=false package_id=chatmin v0.1.0 (/Users/qc-bright/Project/chat_min/src-tauri) target="notification_island"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/qc-bright/Project/chat_min/src-tauri/target/debug/.fingerprint/chatmin-078bb4afee277f0c/example-notification_island`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: std::backtrace::Backtrace::capture
+   2: cargo_util::paths::read_bytes
+   3: cargo_util::paths::read
+   4: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   5: cargo::core::compiler::fingerprint::prepare_target
+   6: cargo::core::compiler::compile
+   7: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   8: cargo::ops::cargo_compile::compile_ws
+   9: cargo::ops::cargo_compile::compile_with_exec
+  10: cargo::ops::cargo_compile::compile
+  11: cargo::commands::check::exec
+  12: <cargo::cli::Exec>::exec
+  13: cargo::main
+  14: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  15: std::rt::lang_start::<()>::{closure#0}
+  16: std::rt::lang_start_internal
+  17: _main
+    Checking chatmin v0.1.0 (/Users/qc-bright/Project/chat_min/src-tauri)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.39s

@@ -12,27 +12,3 @@ export function timelinePosition(previous: Position | undefined, keys: string[])
 export function timelineTarget(rows: { m: Msg; album?: Msg[] }[], id: string): number {
   return rows.findIndex(({ m, album }) => [m, ...(album ?? [])].some(x => x.id === id || x.uiPreviousIds?.includes(id)));
 }
-/** Two animation frames allow the lightweight shell/skeleton to paint before list work. */
-export function afterPaint(callback: () => void, scheduler = {
-  request: (fn: FrameRequestCallback) => requestAnimationFrame(fn),
-  cancel: (id: number) => cancelAnimationFrame(id),
-}) {
-  let pending = true;
-  let frame = 0;
-  const cancel = () => {
-    pending = false;
-    clearTimeout(fallback);
-    scheduler.cancel(frame);
-  };
-  const reveal = () => {
-    if (!pending) return;
-    cancel();
-    callback();
-  };
-  // WKWebView can suspend animation frames while the window is occluded.
-  const fallback = setTimeout(reveal, 120);
-  frame = scheduler.request(() => {
-    if (pending) frame = scheduler.request(reveal);
-  });
-  return cancel;
-}

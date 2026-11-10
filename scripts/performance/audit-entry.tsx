@@ -390,6 +390,23 @@ async function leftDock() {
     return { menuItem: true };
   };
   const fillerBadge = () => document.querySelector(`.chat-row[data-chat-id="${CSS.escape(filler.split('|')[1])}"] .badge`)?.textContent ?? null;
+  // Re-arm the same unread preview when exercising independent sidebar entry points.
+  const resetSeen = async (k: string, thread: string) => {
+    useApp.setState(s => {
+      const threadSeen = { ...s.threadSeen };
+      delete threadSeen[`${k}#${thread}`];
+      return { threadSeen };
+    });
+    await frames(2);
+  };
+  const openReadPreview = async (el: HTMLButtonElement | null, k: string, thread: string, sort: number) => {
+    useApp.setState(s => ({ threadSeen: { ...s.threadSeen, [`${k}#${thread}`]: sort } }));
+    await frames(3);
+    const contextGone = !!el && !el.querySelector(".preview-context") && !el.dataset.threadId;
+    await click(el, 'read preview');
+    await waitFor(() => st().active === k, 3000);
+    return { ok: contextGone && st().active === k, contextGone, tab: st().active };
+  };
   useApp.setState({ filter: 'all', query: '', route: 'shell' } as any); await frames(4);
   const res: any = {};
   if (provider === 'gchat') {
@@ -397,7 +414,7 @@ async function leftDock() {
     useApp.setState((s: any) => ({
       favorites: [kReply], folders: [{ id: 'fold', name: 'Dự án', color: 'blue', icon: 'icon:folder', chats: [kMain] }],
       chats: { ...s.chats,
-        [kReply]: { ...s.chats[kReply], unread: 2, lastTs: 1_900_000_000_000, previewMsg: 'big-r299', previewThread: T, previewKind: 'reply', previewContext: 'Thread with 300 replies', previewFrom: 'Person', preview: 'Reply 299 in the big thread' },
+        [kReply]: { ...s.chats[kReply], unread: 2, lastTs: bigReplies.at(-1)!.sort, previewMsg: 'big-r299', previewThread: T, previewKind: 'reply', previewContext: 'Thread with 300 replies', previewFrom: 'Person', preview: 'Reply 299 in the big thread' },
         [kMain]: { ...s.chats[kMain], unread: 1, lastTs: 1_899_000_000_000, previewMsg: 'spaces/C-150', previewThread: '', previewKind: 'main', previewFrom: 'Person', preview: 'Message 150' } },
       threadSeen: {},
     }));
@@ -409,6 +426,7 @@ async function leftDock() {
     await click(rowIn('.fav-group:not(.latest-group)', kReply), 'Ghim'); res.pinnedReply = await landed(threadTab, 'big-r299');
     await click(rowIn('.latest-group', kMain), 'Mới nhất'); res.latestMainNotLoaded = await landed(kMain, 'spaces/C-150');
     await click(rowIn('.folder-group', kMain), 'folder'); res.folderMainTabOpen = await landed(kMain, 'spaces/C-150');
+    await resetSeen(kReply, T);
     await click(rowIn('.fav-group:not(.latest-group)', kReply), 'Ghim again'); res.targetTabAlreadyOpen = await landed(threadTab, 'big-r299');
     // opening it read the chat (correct): a new message makes it unread again for the filter step
     useApp.setState((s: any) => ({ chats: { ...s.chats, [kMain]: { ...s.chats[kMain], unread: 1 } } })); await frames(2);
@@ -417,12 +435,14 @@ async function leftDock() {
     await click(rowIn('.folder-group', kMain), 'Chưa đọc'); res.unreadFilterMain = await landed(kMain, 'spaces/C-150');
     tabUnread.parentElement!.querySelector<HTMLButtonElement>('[role="tab"]')!.click(); await frames(6);
     // two rows in quick succession: the newer click wins
+    await resetSeen(kReply, T);
     rowIn('.latest-group', kMain)!.click(); await frame(); rowIn('.fav-group:not(.latest-group)', kReply)!.click();
     res.rapidTwoRows = await landed(threadTab, 'big-r299');
     await sleep(400); res.rapidStillOnNewer = st().active === threadTab;
     res.otherBadgeUnchanged = fillerBadge() === badgeBefore && badgeBefore !== null;
     res.otherThreadsSeen = Object.keys(st().threadSeen).filter((x: string) => !x.endsWith('#' + T));
     res.openMain = await contextMenuOpenMain(rowIn('.fav-group:not(.latest-group)', kReply)); res.openMain.active = st().active; res.openMain.ok = st().active === kReply;
+    res.readPreviewOpensMain = await openReadPreview(rowIn('.fav-group:not(.latest-group)', kReply), kReply, T, bigReplies.at(-1)!.sort);
   } else {
     const T = '7';
     useApp.setState((s: any) => ({
@@ -433,6 +453,7 @@ async function leftDock() {
         [kF]: { ...s.chats[kF], unread: 4, lastTs: 1_900_000_000_000, previewMsg: '5100', previewThread: T, previewKind: 'topic', previewContext: 'Dev', previewFrom: 'Person', preview: 'Topic message 5100' },
         [kB]: { ...s.chats[kB], previewMsg: '2-999', previewKind: 'main' } },
     }));
+    await resetSeen(kF, T);
     await frames(6);
     const badgeBefore = fillerBadge();
     res.label = document.querySelector(`.latest-group .chat-row[data-chat-id="${CSS.escape(kF.split('|')[1])}"] .preview-context`)?.textContent ?? null;
@@ -440,19 +461,25 @@ async function leftDock() {
     const topicTab = `thread:${kF}:${T}`;
     await click(rowIn('.latest-group', kF), 'Mới nhất'); res.latestTopicOtherThanLast = await landed(topicTab, '5100');
     await click(rowIn('.fav-group:not(.latest-group)', kB), 'Ghim'); const t = await waitFor(() => st().active === kB && contentVisible(), 4000); res.pinnedPlainChatOpensNormally = { ok: t !== null, tab: st().active, jumpTo: st().jumpTo, skeleton: !!document.querySelector('.timeline-skeleton'), mounted: mounted(), firstId: document.querySelector('.virtual-scroller .msg')?.id ?? null };
+    await resetSeen(kF, T);
     await click(rowIn('.folder-group', kF), 'folder'); res.folderTopicTabOpen = await landed(topicTab, '5100');
+    await openTab(kB);
+    await resetSeen(kF, T);
     useApp.setState((s: any) => ({ chats: { ...s.chats, [kF]: { ...s.chats[kF], unread: 2 } } })); await frames(2);
     const tabUnread = [...document.querySelectorAll<HTMLButtonElement>('.sidebar .mini-tabs [role="tab"]')].find(b => b.textContent?.includes('Chưa đọc'))!;
     tabUnread.click(); await frames(6);
     await click(rowIn('.acc-group:not(.folder-group), .latest-group', kF) ?? rowIn('.folder-group', kF), 'Chưa đọc'); res.unreadFilterTopic = await landed(topicTab, '5100');
     tabUnread.parentElement!.querySelector<HTMLButtonElement>('[role="tab"]')!.click(); await frames(6);
+    await openTab(kB);
+    await resetSeen(kF, T);
     rowIn('.latest-group', kF)!.click(); await frame(); rowIn('.fav-group:not(.latest-group)', kB)!.click();
     await waitFor(() => st().active === kB, 3000); await sleep(500); res.rapidTwoRows = { ok: st().active === kB, tab: st().active };
     res.otherBadgeUnchanged = fillerBadge() === badgeBefore && badgeBefore !== null;
     res.openMain = await contextMenuOpenMain(rowIn('.folder-group', kF)); res.openMain.active = st().active; res.openMain.ok = st().active === kF;
+    res.readPreviewOpensMain = await openReadPreview(rowIn('.folder-group', kF), kF, T, 5100);
   }
   res.allOk = Object.values(res).every((v: any) => typeof v !== 'object' || v === null || !('ok' in v) || v.ok) && !!res.label && res.otherBadgeUnchanged;
-  return res;
+  return { ...res, ok: res.allOk };
 }
 
 // Native audit app (tauri.audit.conf.json): run by itself and write the result to the app's

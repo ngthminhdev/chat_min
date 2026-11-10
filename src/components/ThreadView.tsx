@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { dayLabel, fmtCount, plain } from "../lib/format";
 import { capsOf, jumpDone, loadOlderThread, muteThread, openChat, seenThread, toast, useApp } from "../store";
 import { ChatAvatar } from "../ui/Avatar";
@@ -49,7 +49,9 @@ export function ThreadView({ tab }: { tab: string }) {
     setAtBottom(bottom);
     if (useApp.getState().atBottom !== bottom) useApp.setState({ atBottom: bottom });
   }, []);
-  useEffect(() => () => useApp.setState({ atBottom: true }), [tab]);
+  useLayoutEffect(() => () => {
+    if (!useApp.getState().atBottom) useApp.setState({ atBottom: true });
+  }, [tab]);
   useEffect(() => {
     const read = () => { if (meta && last !== undefined && atBottom) seenThread(meta.chatKey, meta.threadId, last); };
     read();

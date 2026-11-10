@@ -35,7 +35,7 @@ function page(href = '/messages/e2ee/t/123/', unread = true, provider = 'messeng
   };
   vm.runInNewContext(script, context);
   const advance = (ms) => { const end = now + ms; let runs = 0; while (true) { const pair = [...timers].sort((a,b) => a[1].at-b[1].at)[0]; if (!pair || pair[1].at > end) break; assert.ok(++runs < 1000, 'timer storm'); const [id,t] = pair; now=t.at; timers.delete(id); if (t.interval) timers.set(id,{...t,at:now+t.interval}); t.fn(); } now=end; };
-  return { sent, states, navigation, translates, document, row, advance, cm: () => context.window.__cm, open: (id) => context.window.__cm.open(id), selected: () => selected, mutate: () => observer?.([]), scans: () => scans, listeners };
+  return { sent, states, navigation, translates, document, row, link, advance, cm: () => context.window.__cm, open: (id) => context.window.__cm.open(id), selected: () => selected, mutate: (records = []) => observer?.(records), scans: () => scans, listeners };
 }
 test('encrypted Messenger threads synchronize immediately with their unread preview', () => {
   const p = page(); p.advance(200);
@@ -78,6 +78,40 @@ test('idle reconciliation does not repeatedly read Messenger layout text', () =>
   Object.defineProperty(p.row, 'innerText', { get() { reads++; return 'Lan\nTin nhắn chưa đọc: Xin chào\n1 phút'; } });
   p.advance(46000);
   assert.equal(reads, 0, 'unchanged text content reuses the parsed row');
+});
+
+test('Messenger timeline and draft mutations do not rescan a separate thread list', () => {
+  const p = page();
+  const list = { isConnected: true, contains: () => false, dataset: {}, style: {} };
+  const main = { contains: (element) => element === timeline };
+  const timeline = { closest: () => main };
+  let draftLayoutReads = 0;
+  const draft = { textContent: 'Unsaved reply', get innerText() { draftLayoutReads++; return this.textContent; } };
+  const button = { style: {} };
+  p.link.parentElement = list;
+  list.parentElement = { getBoundingClientRect: () => ({ width: 1000 }) };
+  list.getBoundingClientRect = () => ({ width: 300 });
+  p.document.querySelector = (q) => q.startsWith('a[role=') ? p.link : q.includes('contenteditable') ? draft : null;
+  p.document.getElementById = (id) => id === 'cm-draft' ? button : true;
+  p.advance(200);
+  assert.equal(button.style.display, 'block');
+  assert.equal(p.sent.length, 1);
+  const before = p.scans();
+  draft.textContent = '';
+  for (let i = 0; i < 20; i++) {
+    p.mutate([{ target: timeline }]);
+    p.advance(110);
+  }
+  assert.equal(p.scans(), before);
+  assert.equal(button.style.display, 'none');
+
+  p.row.innerText = 'Lan\nTin nhắn chưa đọc: Tin mới\n1 phút';
+  p.row.textContent = 'LanTin nhắn chưa đọc: Tin mới1 phút';
+  p.mutate([{ target: timeline }]);
+  p.mutate([{ target: { closest: () => null } }]);
+  p.advance(100);
+  assert.equal(p.sent.at(-1)[0].preview, 'Tin mới', 'a mixed burst still publishes list changes');
+  assert.equal(draftLayoutReads, 0, 'draft visibility should not force layout');
 });
 
 test('inactive Zalo sessions are surfaced instead of silently claiming to be connected', () => {

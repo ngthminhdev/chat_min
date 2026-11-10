@@ -1,15 +1,20 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { afterPaint, timelineTarget } from '../lib/timeline';
+import { timelineTarget } from '../lib/timeline';
 import { messageRenderKey } from '../lib/message-identity';
 import { preferredScrollBehavior } from '../lib/motion';
-import type { layoutMessages } from '../lib/message-layout';
+import { estimateRowHeight, type layoutMessages } from '../lib/message-layout';
 import type { Msg } from '../lib/types';
 import { readingAnchors, useApp } from '../store';
 import { api, isTauri } from '../lib/bridge';
 import { JumpBottom } from './Conversation';
 
 type Row = ReturnType<typeof layoutMessages>[number];
+
+// For the frame probes: which tab the reader came from and when (a web tab hides a native webview).
+let cameFrom: string | null = null, navigatedAt = 0;
+useApp.subscribe((s, p) => { if (s.active !== p.active) { cameFrom = p.active; navigatedAt = performance.now(); } });
+const platformOf = (tab: string | null | undefined) => useApp.getState().accounts.find(a => tab?.includes(a.id))?.platform ?? 'unknown';
 export type TimelineHandle = { toMessage: (id: string) => boolean };
 type Props = {
   rows: Row[];
@@ -31,27 +36,25 @@ export function TimelineSkeleton() {
   </div>;
 }
 
-function useEdgeHeight(ref: MutableRefObject<HTMLDivElement | null>, enabled: boolean) {
+function useEdgeHeight(ref: MutableRefObject<HTMLDivElement | null>) {
   const [height, setHeight] = useState(0);
   useLayoutEffect(() => {
     const el = ref.current;
-    if (!enabled || !el) return;
+    if (!el) return;
     const measure = () => setHeight(Math.ceil(el.getBoundingClientRect().height));
     measure(); const observer = new ResizeObserver(measure); observer.observe(el);
     return () => observer.disconnect();
-  }, [ref, enabled]);
+  }, [ref]);
   return height;
 }
 
 /** The virtualizer owns measurement, reading anchors and following output.
  * A single prepend snapshot also preserves replies visible below a thread header. */
 export const Timeline = forwardRef<TimelineHandle, Props>(function Timeline({ rows, box, renderRow, header, footer, empty, onTop, onBottom, headerMessage, anchorKey }, ref) {
-  const [ready, setReady] = useState(false);
-  useEffect(() => afterPaint(() => setReady(true)), []);
   const keys = useMemo(() => rows.map(row => messageRenderKey(row.m)), [rows]);
   const getItemKey = useCallback((index: number) => keys[index], [keys]);
   const headerRef = useRef<HTMLDivElement>(null), footerRef = useRef<HTMLDivElement>(null);
-  const headerHeight = useEdgeHeight(headerRef, ready), footerHeight = useEdgeHeight(footerRef, ready);
+  const headerHeight = useEdgeHeight(headerRef), footerHeight = useEdgeHeight(footerRef);
   const stick = useRef(true), gesture = useRef(0);
   const previousKeys = useRef(keys), prependSnapshot = useRef<{ id: string; top: number }>();
   if (previousKeys.current[0] !== keys[0] && keys.includes(previousKeys.current[0]) && box.current) {
@@ -64,14 +67,13 @@ export const Timeline = forwardRef<TimelineHandle, Props>(function Timeline({ ro
     count: rows.length,
     getScrollElement: () => box.current,
     getItemKey,
-    estimateSize: () => 84,
+    estimateSize: index => rows[index] ? estimateRowHeight(rows[index]) : 84,
     paddingStart: headerHeight,
     paddingEnd: footerHeight,
     anchorTo: 'end',
     followOnAppend: true,
     scrollEndThreshold: 2,
     overscan: 3,
-    enabled: ready,
     directDomUpdates: true,
   });
   useLayoutEffect(() => {
@@ -100,18 +102,17 @@ export const Timeline = forwardRef<TimelineHandle, Props>(function Timeline({ ro
     return true;
   };
   useLayoutEffect(() => {
-    if (!ready) return;
     const saved = anchorKey ? readingAnchors.get(anchorKey) : undefined;
     if (saved && !saved.bottom && restoreTo(saved)) return;
     if (saved && !saved.bottom) awaiting.current = { id: saved.id, offset: saved.offset, until: Date.now() + 3000 };
     virtual.scrollToEnd();
-  }, [ready, virtual]);
+  }, [virtual]);
   useLayoutEffect(() => {
     const a = awaiting.current;
-    if (!a || !ready) return;
+    if (!a) return;
     if (Date.now() > a.until) { awaiting.current = null; return; }
     restoreTo(a);
-  }, [rows, ready]);
+  }, [rows]);
   // Rows measure in after the first scroll: re-align the anchor for ~300 ms, until the
   // reader scrolls on their own.
   const settleRestore = () => {
@@ -159,28 +160,51 @@ export const Timeline = forwardRef<TimelineHandle, Props>(function Timeline({ ro
     },
   }), [rows, onBottom, headerMessage, virtual]);
   useEffect(() => {
-    if (!ready || !target) return;
+    if (!target) return;
     const index = timelineTarget(rows, target);
     if (index >= 0) virtual.scrollToIndex(index, { align: 'center', behavior: 'auto' });
     else virtual.scrollToOffset(0, { behavior: 'auto' });
     const timer = setTimeout(() => setTarget(''), 1600);
     return () => clearTimeout(timer);
     // A highlight is not another navigation command when rows change.
-  }, [target, ready, jumpRequest, virtual]);
+  }, [target, jumpRequest, virtual]);
   useEffect(() => {
     const last = keys[keys.length - 1];
     if (previousLast.current && last !== previousLast.current && !stick.current) setFresh(n => n + 1);
     previousLast.current = last;
   }, [keys]);
   useEffect(() => {
-    if (!ready || seenLatest.current === toLatest) return;
+    if (seenLatest.current === toLatest) return;
     seenLatest.current = toLatest; restoring.current = null; awaiting.current = null; stick.current = true; setFresh(0); setTarget(''); virtual.scrollToEnd();
-  }, [toLatest, ready, virtual]);
+  }, [toLatest, virtual]);
   // my own send lands on the bottom wherever I had scrolled; incoming keeps the position
   useEffect(() => {
-    if (!ready || seenSent.current === sent) return;
+    if (seenSent.current === sent) return;
     seenSent.current = sent; restoring.current = null; awaiting.current = null; stick.current = true; setFresh(0); setTarget(''); virtual.scrollToEnd();
-  }, [sent, ready, virtual]);
+  }, [sent, virtual]);
+
+  // Real-usage scroll smoothness: frame gaps from the first scroll event until 250 ms of quiet.
+  const scrolling = useRef<{ quiet: number; stop: () => void } | null>(null);
+  const probeScroll = () => {
+    if (!isTauri) return;
+    const now = performance.now();
+    if (scrolling.current) { scrolling.current.quiet = now; return; }
+    const gaps: number[] = [];
+    let last = now, beatAt = now, jsMax = 0, frame = 0;
+    const beat = setInterval(() => { const t = performance.now(); jsMax = Math.max(jsMax, t - beatAt); beatAt = t; }, 4);
+    const state = scrolling.current = { quiet: now, stop: () => { cancelAnimationFrame(frame); clearInterval(beat); scrolling.current = null; } };
+    const tick = (t: number) => {
+      gaps.push(t - last); last = t;
+      if (t - state.quiet < 250 && gaps.length < 3000) { frame = requestAnimationFrame(tick); return; }
+      state.stop();
+      if (gaps.length < 60) return;
+      gaps.sort((a, b) => a - b);
+      void api.logJs(JSON.stringify({ event: 'timeline-scroll', provider: platformOf(probeScope), frames: gaps.length, p95Ms: Math.round(gaps[Math.floor(gaps.length * .95)]),
+        maxMs: Math.round(gaps[gaps.length - 1]), over25Ms: gaps.filter(n => n > 25).length, jsMaxMs: Math.round(jsMax), rows: rows.length })).catch(() => {});
+    };
+    frame = requestAnimationFrame(tick);
+  };
+  useEffect(() => () => scrolling.current?.stop(), []);
 
   const userGesture = () => { gesture.current = Date.now() + 800; restoring.current = null; awaiting.current = null; };
   const onScroll = () => {
@@ -192,28 +216,39 @@ export const Timeline = forwardRef<TimelineHandle, Props>(function Timeline({ ro
     stick.current = bottom; setAway(distance > 80);
     if (bottom) setFresh(0);
     onBottom?.(bottom);
-    if (Date.now() < gesture.current && !bottom && el.scrollTop < 200 && el.scrollHeight > el.clientHeight + 80) onTop?.();
+    // Ask for the older page two screens early: the provider read takes 1–4 s, and at 200 px
+    // the reader hit the top of the list long before it arrived.
+    if (Date.now() < gesture.current && !bottom && el.scrollTop < Math.max(1200, el.clientHeight * 2) && el.scrollHeight > el.clientHeight + 80) onTop?.();
+    probeScroll();
   };
   useEffect(() => {
-    if (!ready || !isTauri) return;
-    let frame = 0, previous = performance.now();
+    if (!isTauri) return;
+    const started = performance.now();
+    let frame = 0, previous = started;
     const gaps: number[] = [];
+    // A timer keeps firing while only the compositor/host main thread stalls; it stops with
+    // the frames when JS itself is busy. jsMaxMs ≈ maxMs → long JS task, jsMaxMs small → host.
+    let beatAt = previous, jsMax = 0;
+    const beat = setInterval(() => { const now = performance.now(); jsMax = Math.max(jsMax, now - beatAt); beatAt = now; }, 4);
     const sample = (now: number) => {
       gaps.push(now - previous); previous = now;
       if (gaps.length < 32) { frame = requestAnimationFrame(sample); return; }
+      clearInterval(beat);
       gaps.sort((a, b) => a - b);
       const average = gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length;
-      void api.logJs(JSON.stringify({ event: 'timeline-frames', provider: useApp.getState().accounts.find(a => probeScope?.includes(a.id))?.platform ?? 'unknown', p95Ms: Math.round(gaps[30] * 10) / 10,
+      void api.logJs(JSON.stringify({ event: 'timeline-frames', provider: platformOf(probeScope), from: platformOf(cameFrom), mountMs: Math.round(started - navigatedAt), p95Ms: Math.round(gaps[30] * 10) / 10,
         maxMs: Math.round(gaps[31] * 10) / 10, over25Ms: gaps.filter(n => n > 25).length,
         averageMs: Math.round(average * 10) / 10, averageFps: Math.round(1000 / average * 10) / 10,
-        mountedRows: box.current?.querySelectorAll('.msg').length ?? 0 })).catch(() => {});
+        mountedRows: box.current?.querySelectorAll('.msg').length ?? 0, jsMaxMs: Math.round(jsMax),
+        images: box.current?.querySelectorAll('img').length ?? 0, videos: box.current?.querySelectorAll('video').length ?? 0,
+        lotties: box.current?.querySelectorAll('.tgs').length ?? 0 })).catch(() => {});
     };
     frame = requestAnimationFrame(sample);
-    return () => cancelAnimationFrame(frame);
-  }, [ready, box, probeScope]);
+    return () => { cancelAnimationFrame(frame); clearInterval(beat); };
+  }, [box, probeScope]);
 
   return <div className="timeline" onWheelCapture={userGesture} onTouchMoveCapture={userGesture} onKeyDownCapture={userGesture} onPointerDownCapture={userGesture}>
-    {!ready ? <TimelineSkeleton /> : <div ref={setScroller} className="msgs virtual-scroller" style={{ height: '100%' }} onScroll={onScroll}>
+    <div ref={setScroller} className="msgs virtual-scroller" style={{ height: '100%' }} onScroll={onScroll}>
       <div ref={virtual.containerRef} style={{ position: 'relative', width: '100%' }}>
         <div ref={headerRef} style={{ position: 'absolute', top: 0, left: 0, width: '100%' }}><div className="timeline-row timeline-edge">{header}{!rows.length && empty}</div></div>
         {virtual.getVirtualItems().map(item => {
@@ -226,7 +261,7 @@ export const Timeline = forwardRef<TimelineHandle, Props>(function Timeline({ ro
         })}
         <div ref={footerRef} style={{ position: 'absolute', bottom: 0, left: 0, width: '100%' }}><div className="timeline-row timeline-edge">{footer}</div></div>
       </div>
-    </div>}
+    </div>
     <JumpBottom away={away} fresh={fresh} onClick={toBottom} />
   </div>;
 });

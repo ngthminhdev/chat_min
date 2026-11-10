@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { timelinePosition, timelineTarget, afterPaint } from './timeline.ts';
+import { timelinePosition, timelineTarget } from './timeline.ts';
 const row = (id, album) => ({ m: { id }, album });
 test('prepending history preserves absolute indexes of existing rows', () => {
   const before = timelinePosition(undefined, ['b','c']);
@@ -18,38 +18,4 @@ test('jump targets include virtualized album tiles and retired provider IDs', ()
   assert.equal(timelineTarget(rows,'c'),1);
   assert.equal(timelineTarget(rows,'temp'),2);
   assert.equal(timelineTarget(rows,'missing'),-1);
-});
-test('deferred mount yields a paint and cancelling a stale tab prevents its reveal', () => {
-  const frames = new Map(); let next=0, mounted=0;
-  const scheduler={request:fn=>{frames.set(++next,fn);return next;},cancel:id=>frames.delete(id)};
-  const cancel=afterPaint(()=>mounted++,scheduler);
-  assert.equal(mounted,0);
-  frames.get(1)(); frames.delete(1);
-  assert.equal(mounted,0);
-  cancel(); assert.equal(frames.size,0);
-  afterPaint(()=>mounted++,scheduler); frames.get(3)(); frames.get(4)();
-  assert.equal(mounted,1);
-});
-test('a suspended animation frame cannot leave a loaded conversation on the skeleton', (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
-  let reveal = 0;
-  const frames = new Map();
-  let frame = 0;
-  const scheduler = {
-    request: fn => { frames.set(++frame, fn); return frame; },
-    cancel: id => frames.delete(id),
-  };
-  const cancel = afterPaint(() => reveal++, scheduler);
-  const delayed = frames.get(frame);
-  t.mock.timers.tick(200);
-  assert.equal(reveal, 1);
-  delayed();
-  assert.equal(reveal, 1);
-  assert.equal(frames.size, 0);
-  cancel();
-
-  const cancelStale = afterPaint(() => reveal++, scheduler);
-  cancelStale();
-  t.mock.timers.tick(200);
-  assert.equal(reveal, 1);
 });

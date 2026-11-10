@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { dayLabel, fmtCount } from "../lib/format";
 import type { Msg } from "../lib/types";
@@ -217,7 +217,10 @@ function MessageList({ k }: { k: string }) {
       if (bottom && (c?.unread || c?.mention)) markRead(k, true);
     }
   };
-  useEffect(() => () => useApp.setState({ atBottom: true }), [k]);
+  // Reset the old tab before the new timeline restores its reading position.
+  useLayoutEffect(() => () => {
+    if (!useApp.getState().atBottom) useApp.setState({ atBottom: true });
+  }, [k]);
 
   useEffect(() => {
     if (!jumpTo) return;
@@ -314,12 +317,8 @@ function WebConversation({ chatKey }: { chatKey: string }) {
   const retryWeb = () => { setWebError(""); setSlow(false); void api.webReload(id).catch((e) => setWebError(String(e))); setAttempt((n) => n + 1); };
   useEffect(() => {
     const el = host.current;
-    if (!el || !id || isMobile) return;
+    if (!el || !id || isMobile || covered) return;
     const placement = mountWebview(id, chatId);
-    if (covered) {
-      placement.dispose();
-      return;
-    }
     const place = () => {
       const r = el.getBoundingClientRect();
       placement.place({ x: r.left, y: r.top, w: r.width, h: r.height });

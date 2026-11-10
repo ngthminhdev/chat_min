@@ -343,7 +343,7 @@ function TgsSticker({ path, poster }: { path: string; poster: string }) {
   }, [path]);
   return (
     <>
-      {!ready && poster && <img className="od-media" src={poster} alt="Sticker" />}
+      {!ready && poster && <img className="od-media" decoding="async" src={poster} alt="Sticker" />}
       <div className="od-media tgs" ref={box} style={ready ? undefined : { position: "absolute", inset: 0, opacity: 0 }} />
     </>
   );
@@ -418,7 +418,7 @@ function MediaView({ accountId, media, sending, tile, anchorId, chatKey, message
   if (media.mime === "application/x-tgsticker") {
     return (
       <figure className="img-msg sticker" data-message-id={messageId} style={{ aspectRatio: ratio }} onClick={isMobile ? (e) => menu(e, false) : undefined} onContextMenu={(e) => menu(e, false)}>
-        {dl.path ? <TgsSticker path={dl.path} poster={poster} /> : poster ? <img className="od-media" src={poster} alt="Sticker" /> : <span className="veil-spinner" />}
+        {dl.path ? <TgsSticker path={dl.path} poster={poster} /> : poster ? <img className="od-media" decoding="async" src={poster} alt="Sticker" /> : <span className="veil-spinner" />}
       </figure>
     );
   }
@@ -432,7 +432,7 @@ function MediaView({ accountId, media, sending, tile, anchorId, chatKey, message
         onClick={() => void view()}
         onContextMenu={(e) => menu(e, true)}
       >
-        {src ? <img className="od-media" src={src} alt={media.name} onError={dl.path ? dl.broken : () => setBadPoster(poster)} /> : unavailable ? (
+        {src ? <img className="od-media" decoding="async" src={src} alt={media.name} onError={dl.path ? dl.broken : () => setBadPoster(poster)} /> : unavailable ? (
           <span className="media-unavailable">
             <span>{media.kind === "sticker" ? "Không tải được sticker" : "Ảnh không còn khả dụng"}</span>
             {media.fileRef && <button type="button" className="btn" onClick={e => { e.stopPropagation(); void dl.get(true); }}>Thử tải lại</button>}
@@ -455,7 +455,7 @@ function MediaView({ accountId, media, sending, tile, anchorId, chatKey, message
       >
         {live && /\.gif$/i.test(dl.path) ? (
           // my own upload: Telegram serves the converted mp4, TDLib keeps the local .gif as its copy — <video> can't play that
-          <img className="od-media" src={fileSrc(dl.path)} alt="GIF" onError={() => { void api.logJs(`gif img error ${dl.path}`); dl.broken(); }} />
+          <img className="od-media" decoding="async" src={fileSrc(dl.path)} alt="GIF" onError={() => { void api.logJs(`gif img error ${dl.path}`); dl.broken(); }} />
         ) : live ? (
           <video
             className="od-media"
@@ -473,7 +473,7 @@ function MediaView({ accountId, media, sending, tile, anchorId, chatKey, message
             }}
           />
         ) : poster ? (
-          <img className="od-media" src={poster} alt={media.name} />
+          <img className="od-media" decoding="async" src={poster} alt={media.name} />
         ) : null}
         {!live && <span className="play">{busy ?? <Icon name="play" />}</span>}
         {media.name !== "Sticker" && <span className="media-badge">{media.name === "GIF" ? "GIF" : media.size > 0 ? fileSize(media.size) : "Video"}</span>}

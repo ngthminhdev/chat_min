@@ -696,17 +696,12 @@ fn ingest(core: &Arc<Core>, id: &str, v: Value) -> Result<(), String> {
         "seen" => {
             let chat = v["chatId"].as_str().unwrap_or("");
             let msg_id = v["msgId"].as_str().unwrap_or("");
-            let seen = core.store().msg(id, chat, msg_id)?;
-            if let Some(m) = seen {
-                let rows = core.store().msgs(id, chat, 0, 200)?;
-                for mut row in rows.into_iter().filter(|r| r.outgoing && r.sort <= m.sort) {
-                    row.status = "seen".into();
-                    core.put_msg(row, false);
-                }
+            let up_to = core.store().zalo_read_outbox(id, chat, msg_id)?;
+            if let Some(up_to) = up_to {
                 core.emit(Event::ReadOutbox {
                     account_id: id.into(),
                     chat_id: chat.into(),
-                    up_to: m.sort,
+                    up_to,
                 });
             }
         }
@@ -805,7 +800,10 @@ mod tests {
         assert_eq!(sticker.name, "Sticker.webp");
         assert!(media_url("https://file-stal-1.dlfl.vn/file").is_ok());
         assert!(media_url("https://video-stal-1.dlmd.me/video").is_ok());
+        // group videos: dlmd.me/gr/… answers 301 → mdchat.me → …-cne.dlmd.me
+        assert!(media_url("https://video-stal-27.mdchat.me/gr/video").is_ok());
         assert!(media_url("https://dlfl.vn.evil.test/file").is_err());
+        assert!(media_url("https://mdchat.me.evil.test/video").is_err());
     }
     #[test]
     #[cfg(unix)]
@@ -940,6 +938,8 @@ fn media_url(url: &str) -> Result<reqwest::Url, String> {
             "zalo.me",
             "dlfl.vn",
             "dlmd.me",
+            // dlmd.me/gr/… (group videos) redirects through here before landing on …-cne.dlmd.me
+            "mdchat.me",
         ]
         .iter()
         .any(|d| host == *d || host.ends_with(&format!(".{d}")))

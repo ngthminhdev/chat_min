@@ -7,14 +7,14 @@ const s0 = () => loadStore({ api: { cachedMessages: async () => [[], []] } });
 
 test('preview target: Google Chat reply opens its thread, threaded timeline message its space', () => {
   const s = s0();
-  const reply = { accountId: 'gc-1', id: 'spaces/S', kind: 'space', threaded: true, previewMsg: 'm9', previewThread: 'spaces/S/threads/t', previewKind: 'reply', previewContext: 'Release plan' };
+  const reply = { accountId: 'gc-1', id: 'spaces/S', kind: 'space', threaded: true, unread: 1, previewMsg: 'm9', previewThread: 'spaces/S/threads/t', previewKind: 'reply', previewContext: 'Release plan' };
   assert.deepEqual(plain(s.previewTarget(reply)), { accountId: 'gc-1', chatId: 'spaces/S', id: 'm9', threadId: 'spaces/S/threads/t', threadReply: true });
   assert.deepEqual(plain(s.previewTarget({ ...reply, previewKind: 'main', previewThread: '' })), { accountId: 'gc-1', chatId: 'spaces/S', id: 'm9', threadId: '', threadReply: false });
 });
 
 test('preview target: Telegram forum topic message opens that topic; plain chats and unknown previews open normally', () => {
   const s = s0();
-  const forum = { accountId: 'tg-1', id: '-100', kind: 'group', forum: true, previewMsg: '501', previewThread: '7', previewKind: 'topic', previewContext: 'Dev' };
+  const forum = { accountId: 'tg-1', id: '-100', kind: 'group', forum: true, unread: 1, previewMsg: '501', previewThread: '7', previewKind: 'topic', previewContext: 'Dev' };
   assert.deepEqual(plain(s.previewTarget(forum)), { accountId: 'tg-1', chatId: '-100', id: '501', threadId: '7', threadReply: false });
   assert.equal(s.previewTarget({ accountId: 'tg-1', id: '42', kind: 'dm', previewMsg: '9', previewKind: 'main' }), null, 'a plain chat keeps its normal open (reading position, newest)');
   assert.equal(s.previewTarget({ accountId: 'tg-1', id: '42', kind: 'group', previewMsg: '', previewKind: '' }), null);
@@ -24,12 +24,27 @@ test('preview target: Telegram forum topic message opens that topic; plain chats
 test('a topic preview opens its topic even when another topic was opened last, and becomes the last topic', async () => {
   const F = 'tg-1|-100';
   const s = loadStore({ api: { cachedMessages: async () => [[], []], topicHistory: async () => [{ accountId: 'tg-1', chatId: '-100', id: '501', sort: 501, threadId: '7', threadReply: false, text: 'hi' }] } });
-  s.set({ accounts: [{ id: 'tg-1', platform: 'telegram' }], chats: { [F]: { accountId: 'tg-1', id: '-100', kind: 'group', forum: true, title: 'Forum', previewMsg: '501', previewThread: '7', previewKind: 'topic', previewContext: 'Dev' } },
+  s.set({ accounts: [{ id: 'tg-1', platform: 'telegram' }], chats: { [F]: { accountId: 'tg-1', id: '-100', kind: 'group', forum: true, title: 'Forum', unread: 1, previewMsg: '501', previewThread: '7', previewKind: 'topic', previewContext: 'Dev' } },
     lastTopic: { [F]: '3' }, threadTabs: { ['thread:' + F + ':3']: { chatKey: F, threadId: '3', rootId: '', title: 'Ops', topic: true } } });
   await s.openMessage(s.previewTarget(s.state().chats[F]));
   assert.equal(s.state().active, 'thread:' + F + ':7');
   assert.equal(s.state().jumpTo, '501');
   assert.equal(s.state().lastTopic[F], '7');
+});
+
+test('a read Google Chat reply stops being a sidebar target even if another thread is unread', () => {
+  const s = s0();
+  const reply = { accountId: 'gc-1', id: 'spaces/S', kind: 'space', threaded: true, unread: 2, lastTs: 1200, previewMsg: 'm9', previewThread: 'spaces/S/threads/t', previewKind: 'reply' };
+  assert.equal(s.previewTarget({ ...reply, unread: 0 }), null);
+  assert.equal(s.previewTarget(reply, 1200), null);
+  assert.equal(s.previewTarget(reply, 1199).id, 'm9');
+});
+
+test('a Telegram topic preview stops being a target once its message ID has been seen', () => {
+  const s = s0();
+  const forum = { accountId: 'tg-1', id: '-100', kind: 'group', forum: true, unread: 2, lastTs: 1200, previewMsg: '501', previewThread: '7', previewKind: 'topic' };
+  assert.equal(s.previewTarget(forum, 501), null);
+  assert.equal(s.previewTarget({ ...forum, previewMsg: '502' }, 501).id, '502');
 });
 
 test('"Mở hội thoại chính" opens the forum timeline itself, not its last topic', async () => {

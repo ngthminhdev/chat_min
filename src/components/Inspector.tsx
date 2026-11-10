@@ -376,7 +376,7 @@ function MediaCell({ m }: { m: Msg }) {
         });
       }}
     >
-      {src ? <img className="od-media" src={src} alt="" /> : <div className="media-ph"><Icon name={m.media!.kind === "video" ? "film" : "image"} /></div>}
+      {src ? <img className="od-media" decoding="async" src={src} alt="" /> : <div className="media-ph"><Icon name={m.media!.kind === "video" ? "film" : "image"} /></div>}
       {m.media!.kind === "video" && <span className="media-video-mark" aria-hidden="true"><Icon name="play" /></span>}
       <figcaption>
         {(m.outgoing ? "Bạn" : m.senderName).split(" ").pop()} · {hm(m.ts)}
