@@ -60,11 +60,20 @@ impl Store {
                json_extract(data, '$.threadReply'), json_extract(data, '$.threadId'), sort);
              CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
                body, account_id UNINDEXED, chat_id UNINDEXED, id UNINDEXED,
-               tokenize = 'unicode61 remove_diacritics 2');
-             -- deleted Google Chat messages used to be kept as tombstones; they are hidden now
-             DELETE FROM messages WHERE json_extract(data, '$.deleted') = 1;",
+               tokenize = 'unicode61 remove_diacritics 2');",
         )
         .map_err(e)?;
+        // Deleted Google Chat messages used to be kept as tombstones; they are hidden now and no
+        // longer stored (Core::put_msg). Clearing the old ones scans every message's JSON, so it
+        // runs once per database, not on every launch.
+        let version: i64 = db.query_row("PRAGMA user_version", [], |row| row.get(0)).map_err(e)?;
+        if version < 1 {
+            db.execute_batch(
+                "DELETE FROM messages WHERE json_extract(data, '$.deleted') = 1;
+                 PRAGMA user_version = 1;",
+            )
+            .map_err(e)?;
+        }
         Ok(Self { db })
     }
 
@@ -860,17 +869,43 @@ fn write_msg(db: &Connection, m: &Msg) -> R<()> {
             return Ok(());
         }
     }
+    let data = serde_json::to_string(m).unwrap();
+    let old: Option<String> = db
+        .query_row(
+            "SELECT data FROM messages WHERE account_id = ?1 AND chat_id = ?2 AND id = ?3",
+            [&m.account_id, &m.chat_id, &m.id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(e)?;
+    // a history refresh writes the page it already has: nothing to do
+    if old.as_deref() == Some(data.as_str()) {
+        return Ok(());
+    }
     db.execute(
         "INSERT OR REPLACE INTO messages (account_id, chat_id, id, sort, data) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![m.account_id, m.chat_id, m.id, m.sort, serde_json::to_string(m).unwrap()],
+        params![m.account_id, m.chat_id, m.id, m.sort, data],
     )
     .map_err(e)?;
-    db.execute(
-        "DELETE FROM messages_fts WHERE account_id = ?1 AND chat_id = ?2 AND id = ?3",
-        [&m.account_id, &m.chat_id, &m.id],
-    )
-    .map_err(e)?;
+    // messages_fts has no index on a message's identity, so finding its row scans the whole
+    // table. Every writer keeps one row per message with a non-empty search_body, so the stored
+    // copy says what is indexed: touch the index only when that text changed.
     let body = search_body(m);
+    let indexed = match &old {
+        None => Some(String::new()),
+        // unreadable stored copy: unknown, so look for a row to replace
+        Some(s) => serde_json::from_str::<Msg>(s).ok().map(|o| search_body(&o)),
+    };
+    if indexed.as_deref() == Some(body.as_str()) {
+        return Ok(());
+    }
+    if indexed.as_deref() != Some("") {
+        db.execute(
+            "DELETE FROM messages_fts WHERE account_id = ?1 AND chat_id = ?2 AND id = ?3",
+            [&m.account_id, &m.chat_id, &m.id],
+        )
+        .map_err(e)?;
+    }
     if !body.is_empty() {
         db.execute(
             "INSERT INTO messages_fts (body, account_id, chat_id, id) VALUES (?1, ?2, ?3, ?4)",
@@ -951,6 +986,45 @@ mod tests {
             text: text.into(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn search_index_is_rewritten_only_when_the_searchable_text_changes() {
+        let mut s = Store::memory();
+        let fts = |s: &Store| -> Vec<(i64, String)> {
+            let mut st = s.db.prepare("SELECT rowid, body FROM messages_fts WHERE id = '1'").unwrap();
+            let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+            rows.map(|r| r.unwrap()).collect()
+        };
+        s.put_msgs(&[msg("1", 1, "hello world"), msg("2", 2, "other")]).unwrap();
+        let first = fts(&s);
+        assert_eq!(first.len(), 1);
+        // a history refresh writes the same page again
+        s.put_msgs(&[msg("1", 1, "hello world"), msg("2", 2, "other")]).unwrap();
+        assert_eq!(fts(&s), first, "unchanged message: index row untouched");
+        // status/reaction updates change the stored message, not what search matches
+        let mut seen = msg("1", 1, "hello world");
+        seen.status = "seen".into();
+        s.put_msg(&seen).unwrap();
+        assert_eq!(fts(&s), first, "non-text change: index row untouched");
+        assert_eq!(s.msg("a", "c", "1").unwrap().unwrap().status, "seen");
+        // an edit replaces the row: the old text is gone, the new one is found, no duplicate
+        s.put_msg(&msg("1", 1, "goodbye")).unwrap();
+        assert_eq!(fts(&s).len(), 1);
+        assert!(s.search("hello", None, 10).unwrap().is_empty());
+        assert_eq!(s.search("goodbye", None, 10).unwrap().len(), 1);
+        // nothing searchable left: the row goes; text again: it comes back once
+        let mut service = msg("1", 1, "goodbye");
+        service.kind = "service".into();
+        s.put_msg(&service).unwrap();
+        assert!(fts(&s).is_empty());
+        s.put_msg(&msg("1", 1, "goodbye")).unwrap();
+        s.put_msg(&msg("1", 1, "goodbye")).unwrap();
+        assert_eq!(fts(&s).len(), 1);
+        // removed and written again (redelivery): indexed again
+        s.remove_msg("a", "c", "1").unwrap();
+        s.put_msg(&msg("1", 1, "goodbye")).unwrap();
+        assert_eq!(s.search("goodbye", None, 10).unwrap().len(), 1);
     }
 
     #[test]

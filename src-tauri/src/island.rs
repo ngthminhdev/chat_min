@@ -75,6 +75,8 @@ struct Island {
     motion_active: bool,
     refresh_after_motion: bool,
     visual_mode: Mode,
+    /// what the mounted content tree was built from (see `render`)
+    rendered: String,
     actions: Retained<Actions>,
     queue: IslandQueue,
     mode: Mode,
@@ -277,6 +279,7 @@ impl Island {
             motion_active: false,
             refresh_after_motion: false,
             visual_mode: Mode::Compact,
+            rendered: String::new(),
             actions,
             queue: IslandQueue::default(),
             mode: Mode::Compact,
@@ -350,6 +353,7 @@ impl Island {
         self.motion_active = false;
         self.refresh_after_motion = false;
         self.motion_target = None;
+        self.rendered.clear();
         let frame = self.panel.frame();
         let target = rect(
             frame.origin.x + frame.size.width / 2.0 - 90.0,
@@ -620,6 +624,26 @@ impl Island {
             return true;
         }
         self.refresh_after_motion = false;
+        // Screen-parameter notifications come in bursts and ask for the frame that is already up.
+        // Rebuilding the tree for each one stalls the main thread, which also presents the
+        // webview's frames, so only the timers restart.
+        let state = format!("{mode:?} {notch} {body_top} {target:?} {:?} {:?}", self.appearance, self.queue.groups);
+        let frame = self.panel.frame();
+        let in_place = (frame.origin.x - target.origin.x).abs() < 1.0
+            && (frame.origin.y - target.origin.y).abs() < 1.0
+            && (frame.size.width - target.size.width).abs() < 1.0
+            && (frame.size.height - target.size.height).abs() < 1.0;
+        if !fresh && !self.motion_active && !screen_changed && old_mode == mode && in_place
+            && self.content.is_some() && self.rendered == state
+        {
+            self.hovered = within(target);
+            if self.hovered {
+                self.arm_hover();
+            }
+            self.arm();
+            return true;
+        }
+        self.rendered = state;
         stop(&mut self.timer);
         let animate = animate && !reduced() && !screen_changed && reanimate(old_mode, mode, fresh, geometry_changed);
         if !keep_motion {
@@ -998,6 +1022,30 @@ pub fn preview() {
             with_island(|i| {
                 i.collapse(MainThreadMarker::new().unwrap());
             })
+        });
+    }
+    if scene.trim() == "redundant-refresh" {
+        // The screen-parameters observer asks for the frame that is already up: it must not
+        // rebuild the tree. The log has one "[island] mode=" line (with render_us) per real render.
+        let _ = timer(0.65, || {
+            with_island(|i| {
+                i.collapse(MainThreadMarker::new().unwrap());
+            })
+        });
+        let _ = timer(2.0, || {
+            for _ in 0..200 {
+                unsafe {
+                    NSNotificationCenter::defaultCenter()
+                        .postNotificationName_object(NSApplicationDidChangeScreenParametersNotification, None);
+                }
+            }
+        });
+        // the observer runs on the main queue: give it a turn of the run loop before leaving
+        let _ = timer(3.0, || {
+            println!("REFRESH posts=200");
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+            std::process::exit(0); // provider-free preview only
         });
     }
     for t in [0.10, 0.18, 0.30, 0.50, 0.75, 1.18, 1.35, 2.05, 2.12, 2.24, 2.40, 5.8] {
