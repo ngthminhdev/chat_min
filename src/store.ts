@@ -374,6 +374,29 @@ export const fail = (e: unknown) => {
   toast(ERRORS.find(([re]) => re.test(raw))?.[1] ?? raw, "circle-alert");
 };
 
+/** The notification switch (Inspector and sidebar menu): shows the choice at once, and returns to
+ *  what the provider last accepted when saving fails, unless a newer choice is still on its way. */
+const muteChoice = new Map<string, number>();
+const muteSaved = new Map<string, boolean>();
+export function setMuted(k: string, muted: boolean) {
+  const chat = get().chats[k];
+  if (!chat) return;
+  if (!muteSaved.has(k)) muteSaved.set(k, !!chat.muted);
+  const choice = (muteChoice.get(k) ?? 0) + 1;
+  muteChoice.set(k, choice);
+  const show = (value: boolean) => set((s) => (s.chats[k] ? { chats: { ...s.chats, [k]: { ...s.chats[k], muted: value } } } : {}));
+  show(muted);
+  api.setMuted(chat.accountId, chat.id, muted).then(
+    () => { if (muteChoice.get(k) === choice) muteSaved.delete(k); else muteSaved.set(k, muted); },
+    (e) => {
+      if (muteChoice.get(k) !== choice) return;
+      show(muteSaved.get(k) ?? !muted);
+      muteSaved.delete(k);
+      toast(`Chưa lưu được cài đặt thông báo: ${String(e)}`, "circle-alert");
+    },
+  );
+}
+
 // ── boot & events ───────────────────────────────────────────────────────────
 let eventOff: ReturnType<typeof onEvent> | null = null;
 let bootPending: Promise<void> | null = null;
@@ -502,7 +525,10 @@ export function applyEvent(e: CoreEvent) {
     }
     case "health":
       // just came online: Telegram's chat list is still streaming in, so give it a moment
-      if (e.health === "ok" && get().health[e.accountId]?.health !== "ok") setTimeout(() => void prefetchUnread(e.accountId), 3000);
+      if (e.health === "ok" && get().health[e.accountId]?.health !== "ok") {
+        latestAt.clear(); // events may have been missed while it was away
+        setTimeout(() => void prefetchUnread(e.accountId), 3000);
+      }
       set((s) => ({ health: { ...s.health, [e.accountId]: { health: e.health, text: e.text, until: e.until } } }));
       return;
     case "auth":
@@ -690,8 +716,13 @@ export async function openChat(k: string, _landed = false): Promise<void> {
     return loading;
   }
   if (!get().msgs[chatKey]) await showCached(chatKey);
+  // Back in a chat whose newest page was just read: live events kept it current, so the same
+  // page is not fetched (and rewritten to the cache) again. Anything unread refreshes at once.
+  // ponytail: fixed window; an edit made elsewhere while the chat was closed shows on the first open after it
+  const opened = get().chats[chatKey];
+  const current = Date.now() - (latestAt.get(chatKey) ?? 0) < LATEST_FRESH_MS && !opened?.unread && !opened?.mention;
   if (!get().msgs[chatKey]) await loadLatest(chatKey);
-  else void loadLatest(chatKey);
+  else if (!current) void loadLatest(chatKey);
   if (get().chats[chatKey]?.threaded) {
     void primeRoots(chatKey);
     // cache only: the reply counts under thread starters, without touching the network
@@ -1096,6 +1127,9 @@ function trimLoaded(k: string) {
 const pageSize = (k: string) => (get().chats[k]?.threaded ? 100 : PAGE);
 
 const latestPending = new Map<string, Promise<void>>();
+/** When each chat's newest page last came from the provider (see openChat). */
+const latestAt = new Map<string, number>();
+const LATEST_FRESH_MS = 30_000;
 export function loadLatest(k: string): Promise<void> {
   const pending = latestPending.get(k);
   if (pending) return pending;
@@ -1138,6 +1172,7 @@ async function refreshLatest(k: string) {
         unreadMark: mark,
       };
     });
+    latestAt.set(k, Date.now());
     void api.logJs(JSON.stringify({ event: "history", phase: "live", chat: k, fetched: fetched.length, elapsedMs: Date.now() - started }));
     void fillRoots(k);
   } catch (e) {
@@ -1365,6 +1400,22 @@ export function closeTab(k: string) {
   });
   const closed = isThreadTab(k) ? null : k;
   if (closed && chatKeyOf(get().active) !== closed) void api.setOpen(...splitKey(closed), false).catch(() => {});
+  // No tab shows this chat any more: its messages leave memory (the local cache has them), so a
+  // long session does not keep, and keep appending to, every chat it ever opened.
+  if (closed && !get().tabs.some((t) => chatKeyOf(t) === closed)) {
+    set((s) => {
+      const { [closed]: list, ...msgs } = s.msgs;
+      if (!list) return {};
+      const fresh = { ...s.fresh };
+      for (const m of list) delete fresh[m.id];
+      const { [closed]: _, ...older } = s.older;
+      return { msgs, fresh, older };
+    });
+    cursor.delete(closed);
+    primaryCursor.delete(closed);
+    latestAt.delete(closed);
+    readingAnchors.delete(closed);
+  }
   const a = get().active;
   if (a) void openChat(a);
 }

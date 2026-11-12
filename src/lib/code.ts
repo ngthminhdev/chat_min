@@ -24,11 +24,19 @@ import xml from "highlight.js/lib/languages/xml";
 import yaml from "highlight.js/lib/languages/yaml";
 
 const LANGS: Record<string, unknown> = { bash, c, cpp, csharp, css, dart, go, java, javascript, json, kotlin, php, python, ruby, rust, sql, swift, typescript, xml, yaml };
-for (const [name, lang] of Object.entries(LANGS)) hljs.registerLanguage(name, lang as Parameters<typeof hljs.registerLanguage>[1]);
+// Registered on first use, not at import: format.ts is also imported by the window for its small
+// helpers, and a top-level registration would pull the whole highlighter into that bundle too.
+let registered = false;
+function register() {
+  if (registered) return;
+  registered = true;
+  for (const [name, lang] of Object.entries(LANGS)) hljs.registerLanguage(name, lang as Parameters<typeof hljs.registerLanguage>[1]);
+}
 const ALIAS: Record<string, string> = { js: "javascript", ts: "typescript", py: "python", sh: "bash", shell: "bash", zsh: "bash", "c++": "cpp", cs: "csharp", rb: "ruby", rs: "rust", yml: "yaml", html: "xml", golang: "go", jsx: "javascript", tsx: "typescript" };
 
 /** HTML for a code block: escaped and coloured; `lang` is the name actually used ("" when plain). */
 export function highlight(code: string, lang: string): { html: string; lang: string } {
+  register();
   const name = ALIAS[lang.toLowerCase()] ?? lang.toLowerCase();
   if (name && hljs.getLanguage(name)) return { html: hljs.highlight(code, { language: name, ignoreIllegals: true }).value, lang: name };
   // ponytail: auto-detect only for blocks with a few lines; one-liners stay plain

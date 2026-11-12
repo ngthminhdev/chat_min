@@ -2021,7 +2021,7 @@ async fn search(
         let scope = account_id
             .as_deref()
             .map(|a| (a, chat_id.as_deref().unwrap_or("")));
-        core.store().search(&query, scope, limit.clamp(1, 200))
+        core.store().search(&query, scope, limit.clamp(1, 1000))
     })
     .await
     .map_err(|e| e.to_string())?

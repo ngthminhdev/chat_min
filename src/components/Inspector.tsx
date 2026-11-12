@@ -7,7 +7,7 @@ import type { Member, Msg, ThreadSummary } from "../lib/types";
 import { fileActionLabel, mediaSection, threadTotalLabel } from "../lib/micro-ux";
 import { useWhenVisible } from "./useWhenVisible";
 import { isMobile } from "../lib/mobile";
-import { capsOf, chatKeyOf, fail, loadThreadList, loadTopics, openMessage, openThreadTab, openTopicTab, saveMedia, threadTabKey, threadUnread, toast, useApp, wantThreadCount, type InspTab } from "../store";
+import { capsOf, chatKeyOf, fail, loadOlder, loadThreadList, loadTopics, openMessage, openThreadTab, openTopicTab, saveMedia, setMuted, threadTabKey, threadUnread, toast, useApp, wantThreadCount, type InspTab } from "../store";
 import { ChatAvatar, PersonAvatar } from "../ui/Avatar";
 import { Glyph, Icon } from "../ui/Icon";
 import { useDownload } from "./Conversation";
@@ -66,7 +66,8 @@ export function Inspector() {
     // threads lead in a space (and topics in a forum): that's what you open the panel for
     ...(chat.threaded || chat.forum ? [["threads", chat.forum ? "Chủ đề" : "Luồng trả lời"] as [InspTab, string]] : []),
     ["info", "Thông tin"],
-    ["members", "Thành viên", chat.kind === "dm" ? undefined : chat.memberCount || undefined],
+    // a 1-1 chat has nobody to list
+    ...(chat.kind === "dm" ? [] : [["members", "Thành viên", chat.memberCount || undefined] as [InspTab, string, number?]]),
     ["files", "Tệp", files.length || undefined],
     ["media", "Ảnh & video", imgs.length || undefined],
     ...(caps.pin ? [["pinned", "Ghim"] as [InspTab, string]] : []),
@@ -93,14 +94,27 @@ export function Inspector() {
           <div className="inspector-surface">
           {tab === "info" && <InfoTab k={active} files={files} />}
           {tab === "members" && <MembersTab k={active} />}
-          {tab === "files" && <><p className="history-scope">{files.length} tệp và tin nhắn thoại trong phần lịch sử đã tải của chat này · cuộn lên trong hội thoại để tải thêm</p><FilesTab files={files} /></>}
-          {tab === "media" && <><p className="history-scope">{imgs.length} ảnh và video trong phần lịch sử đã tải của chat này · cuộn lên trong hội thoại để tải thêm</p><MediaTab imgs={imgs} /></>}
+          {tab === "files" && <><HistoryScope k={chatKeyOf(active) ?? active} found={`${files.length} tệp và tin nhắn thoại`} /><FilesTab files={files} /></>}
+          {tab === "media" && <><HistoryScope k={chatKeyOf(active) ?? active} found={`${imgs.length} ảnh và video`} /><MediaTab imgs={imgs} /></>}
           {tab === "pinned" && <PinnedTab k={active} />}
           {tab === "threads" && (chat.forum ? <TopicsTab k={active} /> : chat.threaded ? <ThreadsTab k={active} /> : null)}
           </div>
         </motion.div>
       </AnimatePresence>
     </aside>
+  );
+}
+
+/** What the Files/Media lists cover, with the way to reach further back right here: no trip to
+ *  the timeline to scroll up. */
+function HistoryScope({ k, found }: { k: string; found: string }) {
+  const older = useApp((s) => s.older[k] ?? "idle");
+  // ponytail: a failed page just re-enables the button (loadOlder reports no error); add an inline message if that proves confusing
+  return (
+    <p className="history-scope">
+      {found} trong phần lịch sử đã tải của chat này ·{" "}
+      {older === "done" ? "đã tải hết lịch sử" : <button className="inspector-link" disabled={older === "loading"} onClick={() => void loadOlder(k)}>{older === "loading" ? "Đang tải thêm…" : "Tải thêm lịch sử"}</button>}
+    </p>
   );
 }
 
@@ -175,10 +189,6 @@ function InfoTabBody({ k, files }: { k: string; files: Msg[] }) {
           </span>
         </span>
       </div>
-      <div className="kv">
-        <span>ID hội thoại</span>
-        <span className="chat-id-value"><code>{chat.id}</code><button className="tool-btn icon-only" aria-label="Sao chép ID hội thoại" data-tip="Sao chép ID hội thoại" onClick={() => void navigator.clipboard.writeText(chat.id).then(() => toast("Đã sao chép ID hội thoại")).catch(fail)}><Icon name="copy" /></button></span>
-      </div>
       {chat.created && (
         <div className="kv">
           <span>Tạo</span>
@@ -192,11 +202,7 @@ function InfoTabBody({ k, files }: { k: string; files: Msg[] }) {
             type="checkbox"
             checked={!chat.muted}
             aria-label="Bật thông báo"
-            onChange={(e) => {
-              const muted = !e.target.checked;
-              useApp.setState((s) => ({ chats: { ...s.chats, [k]: { ...chat, muted } } }));
-              api.setMuted(chat.accountId, chat.id, muted).catch(fail);
-            }}
+            onChange={(e) => setMuted(k, !e.target.checked)}
           />
           <span />
         </label>
@@ -216,6 +222,14 @@ function InfoTabBody({ k, files }: { k: string; files: Msg[] }) {
             .map((m) => <FileRow key={m.id} m={m} recent />)}
         </>
       )}
+      {/* for debugging and support: kept, but below what the panel is opened for */}
+      <details className="capabilities">
+        <summary>Thông tin kỹ thuật</summary>
+        <div className="kv">
+          <span>ID hội thoại</span>
+          <span className="chat-id-value"><code>{chat.id}</code><button className="tool-btn icon-only" aria-label="Sao chép ID hội thoại" data-tip="Sao chép ID hội thoại" onClick={() => void navigator.clipboard.writeText(chat.id).then(() => toast("Đã sao chép ID hội thoại")).catch(fail)}><Icon name="copy" /></button></span>
+        </div>
+      </details>
       <details className="capabilities">
         <summary>Khả năng · {pl.name}</summary>
         {(Object.entries(pl.caps) as [Cap, boolean][]).map(([c, v]) => (
@@ -243,7 +257,6 @@ function MembersTabBody({ k }: { k: string }) {
     setErr(""); setMembers(null);
     api.members(chat.accountId, chat.id).then(setMembers).catch((e) => setErr(String(e)));
   }, [chat.accountId, chat.id, chat.kind, attempt]);
-  if (chat.kind === "dm") return <div className="insp-empty"><Icon name="users" />Chat 1-1 với {chat.title}</div>;
   if (err) return <div className="insp-empty" role="alert"><Icon name="circle-alert" />Chưa tải được danh sách thành viên: {err}<button className="tool-btn" onClick={() => setAttempt((n) => n + 1)}><Icon name="rotate-cw" />Thử lại</button></div>;
   if (!members) return <div className="insp-empty"><span className="veil-spinner" /></div>;
   const shown = members.filter((m) => !q || norm(m.name).includes(norm(q)));

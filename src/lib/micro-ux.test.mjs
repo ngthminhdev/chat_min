@@ -68,3 +68,27 @@ test('thread reply badges distinguish preview lower bounds from completed counts
   assert.equal(threadReplyCountLabel(20,''), '20');
   assert.equal(threadReplyCountLabel(7,''), '7');
 });
+
+test('mute switch returns to the saved state when saving fails, unless a newer choice was made', async () => {
+  const { loadStore, settle, deferred } = await import('./store-harness.mjs');
+  const K = 'tg-1|42';
+  const calls = [];
+  const s = loadStore({ api: { setMuted: () => { const d = deferred(); calls.push(d); return d.promise; } } });
+  s.set({ chats: { [K]: { accountId: 'tg-1', id: '42', kind: 'dm', title: 'A', muted: false } } });
+  const muted = () => s.state().chats[K].muted;
+  s.setMuted(K, true);
+  assert.equal(muted(), true, 'shown at once');
+  calls[0].reject('offline (fake)'); await settle();
+  assert.equal(muted(), false, 'failed: back to what is really saved');
+  assert.ok(s.state().toasts.length >= 1, 'and the failure is said');
+  // two quick choices: the older response must not undo the newer one
+  s.setMuted(K, true); s.setMuted(K, false);
+  calls[1].reject('late failure'); await settle();
+  assert.equal(muted(), false);
+  calls[2].resolve(); await settle();
+  assert.equal(muted(), false);
+  // first saved, second failed: back to the first, which the provider has
+  s.setMuted(K, true); s.setMuted(K, false);
+  calls[3].resolve(); calls[4].reject('offline (fake)'); await settle();
+  assert.equal(muted(), true);
+});

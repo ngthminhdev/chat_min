@@ -8,7 +8,7 @@ import { HEALTH_LABELS, PLATFORMS } from "../lib/platforms";
 import type { Account, Chat, Msg } from "../lib/types";
 import {
   chatKeyOf, confirmDialog, fail, hideChat, key, loadTopics, openMainTimeline, openMessage, previewTarget, openTopicTab, threadTabKey, loadLatest, markRead, openChat, openThreadTab, orderedAccounts, sortedChats, toast, toggleFavorite,
-  totalUnread, useApp, type MenuItem,
+  totalUnread, setMuted, useApp, type MenuItem,
 } from "../store";
 import { ChatAvatar } from "../ui/Avatar";
 import { Glyph, Icon } from "../ui/Icon";
@@ -401,18 +401,25 @@ function sections(list: Chat[]): [string, string, Chat[]][] {
 }
 
 function Section({ id, label, chats, forceOpen, children }: { id: string; label: string; chats: Chat[]; forceOpen: boolean; children: React.ReactNode }) {
-  const collapsed = useApp((s) => !!s.collapsed[id]) && !forceOpen;
+  const saved = useApp((s) => !!s.collapsed[id]);
+  // A filter opens every section, and the chevron still folds one away: that choice lasts for
+  // the filter only, the saved layout comes back untouched.
+  const [folded, setFolded] = useState(false);
+  useEffect(() => { if (!forceOpen) setFolded(false); }, [forceOpen]);
+  const collapsed = forceOpen ? folded : saved;
   const unread = chats.filter((c) => !c.muted).reduce((s, c) => s + c.unread, 0);
   return (
     <>
       <button
         className={`sec-head${collapsed ? " collapsed" : ""}`}
         aria-expanded={!collapsed}
-        onClick={() => useApp.setState((s) => ({ collapsed: { ...s.collapsed, [id]: !s.collapsed[id] } }))}
+        aria-label={`${label}: ${chats.length} hội thoại${unread > 0 ? `, ${unread} tin chưa đọc` : ""}`}
+        onClick={() => (forceOpen ? setFolded((v) => !v) : useApp.setState((s) => ({ collapsed: { ...s.collapsed, [id]: !s.collapsed[id] } })))}
       >
         <Icon name="chevron-down" className="chev" />
         <span>{label}</span>
-        <span className="sec-count">{unread > 0 && collapsed ? <span className="badge unread">{unread > 999 ? "999+" : unread}</span> : chats.length}</span>
+        {/* the number is always conversations; unread messages are the badge beside it */}
+        <span className="sec-count">{unread > 0 && collapsed && <span className="badge unread">{unread > 999 ? "999+" : unread}</span>}{chats.length}</span>
       </button>
       <AnimatePresence initial={false}>
         {!collapsed && (
@@ -446,10 +453,7 @@ export function chatMenu(k: string, c: Chat, mobile = false): MenuItem[] {
     {
       icon: c.muted ? "bell" : "bell-off",
       label: c.muted ? "Bật thông báo" : "Tắt thông báo",
-      run: () => {
-        useApp.setState((s) => ({ chats: { ...s.chats, [k]: { ...c, muted: !c.muted } } }));
-        api.setMuted(c.accountId, c.id, !c.muted).catch(fail);
-      },
+      run: () => setMuted(k, !c.muted),
     },
     !mobile && { icon: "copy", label: "Sao chép ID chat", run: () => void navigator.clipboard.writeText(c.id).then(() => toast("Đã sao chép ID")) },
     ...(mobile ? [] : folderItems(k)),

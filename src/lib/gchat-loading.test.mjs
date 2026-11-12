@@ -246,8 +246,10 @@ test('rapidly reopening a chat coalesces the in-flight latest refresh', async ()
   await f.openChat(K); await f.openChat(K); await settle();
   assert.equal(requests, 1, 'switching back while the page is pending must reuse its request');
   pending.resolve([msg('root', 1, false)]); await settle();
+  // the page just read stays good for 30 s (see openChat), unless something arrived meanwhile
+  f.set((st) => ({ chats: { ...st.chats, [K]: { ...st.chats[K], unread: 1 } } }));
   await f.openChat(K); await settle();
-  assert.equal(requests, 2, 'a completed request does not suppress subsequent refreshes');
+  assert.equal(requests, 2, 'a completed request does not suppress the refresh a new message needs');
 });
 
 test('a failed latest request is released so opening the chat can retry', async () => {

@@ -12,7 +12,6 @@ import { api } from "../lib/bridge";
 import { PersonAvatar, useAvatar } from "../ui/Avatar";
 import { Icon, type IconName } from "../ui/Icon";
 import { useDownload } from "./Conversation";
-import lottie from "lottie-web/build/player/lottie_light";
 import { translateMsg, trKey } from "../ai";
 import { fileActionLabel, threadTotalLabel } from "../lib/micro-ux";
 import { useWhenVisible } from "./useWhenVisible";
@@ -326,12 +325,14 @@ function TgsSticker({ path, poster }: { path: string; poster: string }) {
   useEffect(() => {
     const el = box.current;
     if (!el) return;
-    let anim: ReturnType<typeof lottie.loadAnimation> | undefined;
+    let anim: { destroy: () => void } | undefined;
     let gone = false;
     (async () => {
       try {
         const res = await fetch(fileSrc(path));
         const json = await new Response(res.body!.pipeThrough(new DecompressionStream("gzip"))).json();
+        // loaded on first use: the player is 170 KB that most sessions never need
+        const { default: lottie } = await import("lottie-web/build/player/lottie_light");
         if (gone) return;
         anim = lottie.loadAnimation({ container: el, renderer: "svg", loop: true, autoplay: true, animationData: json });
         setReady(true);
